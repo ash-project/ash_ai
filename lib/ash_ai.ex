@@ -31,6 +31,10 @@ defmodule AshAi do
           Used to provide conversation history.
           """
         ],
+        otp_app: [
+          type: :atom,
+          doc: "If present, allows discovering resource actions automatically."
+        ],
         system_prompt: [
           type: {:fun, 1},
           doc: """
@@ -116,8 +120,7 @@ defmodule AshAi do
   def instruct(prompt, opts \\ []) do
     opts = Options.validate!(opts)
 
-    otp_app = Mix.Project.config()[:app]
-    functions = functions(otp_app, opts)
+    functions = functions(opts)
 
     apikey = System.fetch_env!("OPEN_AI_API_KEY")
     openai = OpenaiEx.new(apikey)
@@ -348,9 +351,9 @@ defmodule AshAi do
     OpenaiEx.ChatMessage.tool(id, name, result)
   end
 
-  defp functions(otp_app, opts) do
-    otp_app
-    |> actions(opts)
+  defp functions(opts) do
+    opts
+    |> actions()
     |> Enum.map(fn {domain, resource, action} ->
       inputs =
         AshJsonApi.OpenApi.write_attributes(
@@ -485,24 +488,52 @@ defmodule AshAi do
 
   defp add_action_specific_properties(properties, _resource, _action), do: properties
 
-  defp actions(otp_app, opts) do
-    for domain <- Application.get_env(otp_app, :ash_domains) || [],
-        resource <- Ash.Domain.Info.resources(domain),
-        action <- Ash.Resource.Info.actions(resource) do
-      {domain, resource, action}
-    end
-    |> Enum.uniq_by(fn {_domain, resource, action} ->
-      {resource, action}
-    end)
-    |> Enum.filter(fn {_domain, resource, action} ->
-      if opts.actions do
-        Enum.any?(opts.actions, fn {allowed_resource, allowed_actions} ->
-          allowed_resource == resource and (allowed_actions == :* or action in allowed_actions)
-        end)
-      else
-        true
+  defp actions(opts) do
+    if opts.actions do
+      Enum.flat_map(opts.actions, fn {resource, actions} ->
+        if !Ash.Resource.Info.domain(resource) do
+          raise "Cannot use an ash resource that does not have a domain"
+        end
+
+        if actions == :* do
+          Enum.map(Ash.Resource.Info.actions(resource), fn action ->
+            {Ash.Resource.Info.domain(resource), resource, action}
+          end)
+        else
+          Enum.map(List.wrap(actions), fn action ->
+            action_struct = Ash.Resource.Info.action(resource, action)
+
+            unless action_struct do
+              raise "Action #{inspect(action)} does not exist on resource #{inspect(resource)}"
+            end
+
+            {Ash.Resource.Info.domain(resource), resource, action_struct}
+          end)
+        end
+      end)
+    else
+      if !opts.otp_app do
+        raise "Must specify `otp_app` if you do not specify `actions`"
       end
-    end)
-    |> Enum.take(32)
+
+      for domain <- Application.get_env(opts.otp_app, :ash_domains) || [],
+          resource <- Ash.Domain.Info.resources(domain),
+          action <- Ash.Resource.Info.actions(resource) do
+        {domain, resource, action}
+      end
+      |> Enum.uniq_by(fn {_domain, resource, action} ->
+        {resource, action}
+      end)
+      |> Enum.filter(fn {_domain, resource, action} ->
+        if opts.actions do
+          Enum.any?(opts.actions, fn {allowed_resource, allowed_actions} ->
+            allowed_resource == resource and (allowed_actions == :* or action in allowed_actions)
+          end)
+        else
+          true
+        end
+      end)
+      |> Enum.take(32)
+    end
   end
 end
