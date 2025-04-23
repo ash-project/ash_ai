@@ -8,6 +8,7 @@ defmodule AshAi do
   defstruct []
 
   require Logger
+  require Ash.Expr
 
   @full_text %Spark.Dsl.Section{
     name: :full_text,
@@ -70,7 +71,7 @@ defmodule AshAi do
 
   defmodule Tool do
     @moduledoc "An action exposed to LLM agents"
-    defstruct [:name, :resource, :action, :load, :async, :domain]
+    defstruct [:name, :resource, :action, :load, :async, :domain, :identity]
   end
 
   @tool %Spark.Dsl.Entity{
@@ -81,7 +82,13 @@ defmodule AshAi do
       resource: [type: {:spark, Ash.Resource}, required: true],
       action: [type: :atom, required: true],
       load: [type: :any, default: []],
-      async: [type: :boolean, default: true]
+      async: [type: :boolean, default: true],
+      identity: [
+        type: :atom,
+        default: nil,
+        doc:
+          "The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely."
+      ]
     ],
     args: [:name, :resource, :action]
   }
@@ -296,6 +303,7 @@ defmodule AshAi do
          resource: resource,
          action: action,
          load: load,
+         identity: identity,
          async: async
        }) do
     name = to_string(name)
@@ -456,38 +464,66 @@ defmodule AshAi do
               end)
 
             :update ->
-              pkey =
-                Map.new(Ash.Resource.Info.primary_key(resource), fn key ->
-                  {key, arguments[to_string(key)]}
-                end)
+              filter = identity_filter(identity, resource, arguments)
 
               resource
-              |> Ash.get!(pkey)
-              |> Ash.Changeset.for_update(action.name, input, opts)
-              |> Ash.update!(load: load)
-              |> then(fn result ->
-                result
-                |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
-                |> Jason.encode!()
-                |> then(&{:ok, &1, result})
-              end)
+              |> Ash.Query.do_filter(filter)
+              |> Ash.Query.limit(1)
+              |> Ash.bulk_update!(
+                action,
+                input,
+                Keyword.merge(opts,
+                  return_errors?: true,
+                  notify?: true,
+                  strategy: [:atomic, :stream, :atomic_batches],
+                  load: load,
+                  allow_stream_with: :full_read,
+                  return_records?: true
+                )
+              )
+              |> case do
+                %Ash.BulkResult{status: :success, records: [result]} ->
+                  result
+                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> Jason.encode!()
+                  |> then(&{:ok, &1, result})
+
+                %Ash.BulkResult{status: :success, records: []} ->
+                  raise Ash.Error.to_error_class(
+                          Ash.Error.Query.NotFound.exception(primary_key: filter)
+                        )
+              end
 
             :destroy ->
-              pkey =
-                Map.new(Ash.Resource.Info.primary_key(resource), fn key ->
-                  {key, arguments[to_string(key)]}
-                end)
+              filter = identity_filter(identity, resource, arguments)
 
               resource
-              |> Ash.get!(pkey)
-              |> Ash.Changeset.for_destroy(action.name, input, opts)
-              |> Ash.destroy!(return_destroyed?: true, load: load)
-              |> then(fn result ->
-                result
-                |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
-                |> Jason.encode!()
-                |> then(&{:ok, &1, result})
-              end)
+              |> Ash.Query.do_filter(filter)
+              |> Ash.Query.limit(1)
+              |> Ash.bulk_destroy!(
+                action,
+                input,
+                Keyword.merge(opts,
+                  return_errors?: true,
+                  notify?: true,
+                  load: load,
+                  strategy: [:atomic, :stream, :atomic_batches],
+                  allow_stream_with: :full_read,
+                  return_records?: true
+                )
+              )
+              |> case do
+                %Ash.BulkResult{status: :success, records: [result]} ->
+                  result
+                  |> AshJsonApi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> Jason.encode!()
+                  |> then(&{:ok, &1, result})
+
+                %Ash.BulkResult{status: :success, records: []} ->
+                  raise Ash.Error.to_error_class(
+                          Ash.Error.Query.NotFound.exception(primary_key: filter)
+                        )
+              end
 
             :create ->
               resource
@@ -527,6 +563,34 @@ defmodule AshAi do
         end
       end
     })
+  end
+
+  defp identity_filter(false, _resource, _arguments) do
+    nil
+  end
+
+  defp identity_filter(nil, resource, arguments) do
+    resource
+    |> Ash.Resource.Info.primary_key()
+    |> Enum.reduce(nil, fn key, expr ->
+      value = Map.get(arguments, to_string(key))
+
+      if expr do
+        Ash.Expr.expr(^expr and ^Ash.Expr.ref(key) == ^value)
+      else
+        Ash.Expr.expr(^Ash.Expr.ref(key) == ^value)
+      end
+    end)
+  end
+
+  defp identity_filter(identity, resource, arguments) do
+    resource
+    |> Ash.Resource.Info.identities()
+    |> Enum.find(&(&1.name == identity))
+    |> Map.get(:keys)
+    |> Enum.map(fn key ->
+      {key, Map.get(arguments, to_string(key))}
+    end)
   end
 
   def to_json_api_errors(domain, resource, errors, type) when is_list(errors) do

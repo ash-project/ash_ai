@@ -143,7 +143,7 @@ defmodule AshAi.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, "~> 3.5 and >= 3.5.5"},
+      {:ash, ash_version("~> 3.5 and >= 3.5.5")},
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
       {:langchain, "~> 0.3"},
@@ -186,5 +186,14 @@ defmodule AshAi.MixProject do
       "test.reset": ["test.drop", "test.create", "test.migrate", "ash_postgres.migrate --tenants"],
       "test.drop": "ash_postgres.drop"
     ]
+  end
+
+  defp ash_version(default_version) do
+    case System.get_env("ASH_VERSION") do
+      nil -> default_version
+      "local" -> [path: "../ash", override: true]
+      "main" -> [git: "https://github.com/ash-project/ash.git", override: true]
+      version -> "~> #{version}"
+    end
   end
 end

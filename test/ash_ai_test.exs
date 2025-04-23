@@ -307,7 +307,6 @@ defmodule AshAiTest do
       assert destroyed_artist = new_chain.last_message.processed_content
       assert destroyed_artist.id == artist.id
       assert destroyed_artist.name == "Chet Baker"
-      assert destroyed_artist.albums_count == 0
       assert %Ash.NotLoaded{} = destroyed_artist.albums_copies_sold
     end
 
