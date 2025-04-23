@@ -124,6 +124,8 @@ defmodule AshAi.Test.Music.ArtistOban do
 
   attributes do
     uuid_v7_primary_key :id, writable?: true
+    create_timestamp :created_at, public?: true
+    update_timestamp :updated_at, public?: true
     attribute :name, :string, public?: true
     attribute :bio, :string, public?: true
   end

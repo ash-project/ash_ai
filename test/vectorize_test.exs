@@ -52,5 +52,15 @@ defmodule AshAiVectorizeTest do
 
     artist = Ash.load!(artist, [:full_text_vector])
     assert is_list(Ash.Vector.to_list(artist.full_text_vector))
+
+    updated_artist =
+      Music.update_artist_oban!(artist, %{name: "Jane Doe", bio: "Jane Doe is a musician"})
+
+    assert %{success: 1, failure: 0} =
+             Oban.drain_queue(queue: :artist_oban_ash_ai_update_embeddings)
+
+    updated_vector_artist = Ash.load!(updated_artist, [:full_text_vector])
+    assert DateTime.after?(updated_vector_artist.updated_at, updated_artist.updated_at)
+    assert is_list(Ash.Vector.to_list(artist.full_text_vector))
   end
 end
