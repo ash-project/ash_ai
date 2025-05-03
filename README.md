@@ -3,7 +3,7 @@
 
 ## `mix ash_ai.gen.chat`
 
-This is a new and experimental tool to generate a chat feature for your Ash & Phoenix application. It is backed by `ash_oban` and `ash_postgres`, using `pub_sub` to stream messages to the client. This is primarily a tool to get started with chat features and is by no means intended to handle very case you can come up with.
+This is a new and experimental tool to generate a chat feature for your Ash & Phoenix application. It is backed by `ash_oban` and `ash_postgres`, using `pub_sub` to stream messages to the client. This is primarily a tool to get started with chat features and is by no means intended to handle every case you can come up with.
 
 To get started:
 ```
