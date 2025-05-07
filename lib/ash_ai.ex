@@ -71,7 +71,7 @@ defmodule AshAi do
 
   defmodule Tool do
     @moduledoc "An action exposed to LLM agents"
-    defstruct [:name, :resource, :action, :load, :async, :domain, :identity]
+    defstruct [:name, :resource, :action, :load, :async, :domain, :identity, :description]
   end
 
   @tool %Spark.Dsl.Entity{
@@ -83,6 +83,10 @@ defmodule AshAi do
       action: [type: :atom, required: true],
       load: [type: :any, default: []],
       async: [type: :boolean, default: true],
+      description: [
+        type: :string,
+        doc: "A description for the tool. Defaults to the action's description."
+      ],
       identity: [
         type: :atom,
         default: nil,
@@ -148,6 +152,13 @@ defmodule AshAi do
           default: [],
           doc: """
           Used to provide conversation history.
+          """
+        ],
+        context: [
+          type: :map,
+          default: %{},
+          doc: """
+          Context passed to each action invocation.
           """
         ],
         otp_app: [
@@ -290,6 +301,7 @@ defmodule AshAi do
             }
           }
           |> add_action_specific_properties(resource, action),
+        required: [:input],
         additionalProperties: false
       }
     end)
@@ -304,13 +316,16 @@ defmodule AshAi do
          action: action,
          load: load,
          identity: identity,
-         async: async
+         async: async,
+         description: description
        }) do
     name = to_string(name)
 
     description =
-      action.description ||
-        "Call the #{action.name} action on the #{inspect(resource)} resource"
+      String.trim(
+        description || action.description ||
+          "Call the #{action.name} action on the #{inspect(resource)} resource"
+      )
 
     parameter_schema = parameter_schema(domain, resource, action)
 
@@ -324,7 +339,7 @@ defmodule AshAi do
         actor = context[:actor]
         tenant = context[:tenant]
         input = arguments["input"] || %{}
-        opts = [domain: domain, actor: actor, tenant: tenant]
+        opts = [domain: domain, actor: actor, tenant: tenant, context: context[:context]]
 
         try do
           case action.type do

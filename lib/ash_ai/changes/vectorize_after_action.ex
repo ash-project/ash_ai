@@ -17,7 +17,6 @@ defmodule AshAi.Changes.VectorizeAfterAction do
 
           changes =
             opts[:vectors]
-            # TODO: get all vectors in one request? or Task.async_stream
             |> Enum.flat_map(fn
               {source, dest} ->
                 if Ash.Changeset.changing_attribute?(changeset, source) do

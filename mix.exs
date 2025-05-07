@@ -42,7 +42,8 @@ defmodule AshAi.MixProject do
   # Run "mix help compile.app" to learn about applications.
   def application do
     [
-      extra_applications: [:logger]
+      extra_applications: [:logger],
+      mod: {AshAi.Application, []}
     ]
   end
 
@@ -69,7 +70,8 @@ defmodule AshAi.MixProject do
       end,
       extras: [
         {"README.md", title: "Home"},
-        {"documentation/dsls/DSL-AshAi.md", search_data: Spark.Docs.search_data_for(AshAi)}
+        {"documentation/dsls/DSL-AshAi.md", search_data: Spark.Docs.search_data_for(AshAi)},
+        "documentation/topics/mcp.md"
         # "CHANGELOG.md"
       ],
       groups_for_extras: [
@@ -151,6 +153,7 @@ defmodule AshAi.MixProject do
       {:ash_oban, "~> 0.4.3", optional: true},
       {:ash_phoenix, "~> 2.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
+      {:plug, "~> 1.17", optional: true},
       # dev/test deps
       {:phx_new, "~> 1.7", optional: true},
       {:ex_doc, "~> 0.37-rc", only: [:dev, :test], runtime: false},
