@@ -347,7 +347,7 @@ defmodule AshAi.Mcp.Server do
 
         {:json_response, Jason.encode!(response), session_id}
 
-      %{"method" => _method, "params" => _params} ->
+      %{"method" => _method} ->
         # Handle other notifications (no id)
         {:no_response, nil, session_id}
 
