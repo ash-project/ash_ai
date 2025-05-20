@@ -20,7 +20,7 @@ defmodule AshAi.DevTools.Tools do
       subtype_of: :map,
       constraints: [
         fields: [
-          name: [type: :string, allow_nil?: false, doc: "The name of the resource module"],
+          name: [type: :string, allow_nil?: false, description: "The name of the resource module"],
           domain: [
             type: :string,
             allow_nil?: false,
