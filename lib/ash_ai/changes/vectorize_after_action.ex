@@ -4,13 +4,10 @@ defmodule AshAi.Changes.VectorizeAfterAction do
 
   # TODO add bulk action callbacks here?
   def change(changeset, opts, context) do
-    Ash.Changeset.after_transaction(changeset, fn
-      _changeset, {:error, error} ->
-        {:error, error}
-
-      changeset, {:ok, result} ->
+    Ash.Changeset.after_action(changeset, fn
+      changeset, record ->
         if changeset.action.name == :ash_ai_update_embeddings do
-          {:ok, result}
+          {:ok, record}
         else
           {embedding_model, vector_opts} =
             AshAi.Info.vectorize_embedding_model!(changeset.resource)
@@ -20,7 +17,7 @@ defmodule AshAi.Changes.VectorizeAfterAction do
             |> Enum.flat_map(fn
               {source, dest} ->
                 if Ash.Changeset.changing_attribute?(changeset, source) do
-                  text = Map.get(result, source)
+                  text = Map.get(record, source)
 
                   [{dest, text}]
                 else
@@ -30,7 +27,7 @@ defmodule AshAi.Changes.VectorizeAfterAction do
               {:full_text, name, used_attrs, fun} ->
                 if is_nil(used_attrs) ||
                      Enum.any?(used_attrs, &Ash.Changeset.changing_attribute?(changeset, &1)) do
-                  text = fun.(result)
+                  text = fun.(record)
 
                   [{name, text}]
                 else
@@ -47,7 +44,7 @@ defmodule AshAi.Changes.VectorizeAfterAction do
                   {k, r}
                 end)
 
-              result
+              record
               |> Ash.Changeset.for_update(
                 :ash_ai_update_embeddings,
                 changes,
