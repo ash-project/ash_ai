@@ -205,6 +205,31 @@ action :analyze_sentiment, :atom do
 end
 ```
 
+### Dynamic LLM Configuration
+
+For runtime configuration (like environment variables), use a function to define the LLM:
+
+```elixir
+action :analyze_sentiment, :atom do
+  argument :text, :string, allow_nil?: false
+  
+  run prompt(
+    fn _input, _context -> 
+      LangChain.ChatModels.ChatOpenAI.new!(%{
+        model: "gpt-4o",
+        api_key: System.get_env("OPENAI_API_KEY"),
+        endpoint: System.get_env("OPENAI_ENDPOINT")
+      })
+    end,
+    tools: false
+  )
+end
+```
+
+The function receives:
+1. `input` - The action input
+2. `context` - The execution context
+
 ### Best Practices for Prompt-Backed Actions
 
 - Write clear, detailed descriptions for the action and its arguments

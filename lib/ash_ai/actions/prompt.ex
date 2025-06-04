@@ -57,6 +57,24 @@ defmodule AshAi.Actions.Prompt do
   The first argument to `prompt/2` is the `LangChain` model. It can also be a 2-arity function which will be invoked
   with the input and the context, useful for dynamically selecting the model.
 
+  ## Dynamic Configuration (using 2-arity function)
+
+  For runtime configuration (like using environment variables), pass a function
+  as the first argument to `prompt/2`:
+
+      run prompt(
+        fn _input, _context ->
+          LangChain.ChatModels.ChatOpenAI.new!(%{
+            model: "gpt-4o",
+            api_key: System.get_env("OPENAI_API_KEY"),
+            endpoint: System.get_env("OPENAI_ENDPOINT")
+          })
+        end,
+        tools: false
+      )
+
+  This function will be executed just before the prompt is sent to the LLM.
+
   ## Options
 
   - `:tools`: A list of tool names to expose to the agent call.
