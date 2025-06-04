@@ -8,14 +8,17 @@ defmodule AshAi.Actions.Prompt.Adapter.CompletionTool do
     before the action is considered failed.
   """
   @behaviour AshAi.Actions.Prompt.Adapter
+  # ignoring dialyzer warning on Message.new_system! as it will be fixed in next release: https://github.com/brainlid/langchain/pull/315
+  @dialyzer {:nowarn_function, [run: 2]}
 
   alias AshAi.Actions.Prompt.Adapter.Data
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
 
   def run(%Data{} = data, opts) do
     messages = [
-      Message.new_system!(data.system_prompt),
+      [ContentPart.text!(data.system_prompt, cache_control: true)] |> Message.new_system!(),
       Message.new_user!(data.user_message)
     ]
 
