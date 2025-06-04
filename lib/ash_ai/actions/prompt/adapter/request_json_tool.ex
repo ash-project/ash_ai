@@ -73,7 +73,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJsonTool do
     end
   end
 
-  defp process_response(%Message{processed_content: content}, data, _attempt) when is_map(content) do
+  defp process_response(%Message{processed_content: content}, data, _attempt)
+       when is_map(content) do
     # JsonProcessor successfully extracted JSON
     validate_and_cast_result(content, data)
   end
@@ -85,7 +86,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJsonTool do
         validate_and_cast_result(decoded, data)
 
       {:error, _} ->
-        {:error, "Response did not contain valid JSON. Please format your response as a JSON code block."}
+        {:error,
+         "Response did not contain valid JSON. Please format your response as a JSON code block."}
     end
   end
 
@@ -118,37 +120,39 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJsonTool do
   defp build_enhanced_prompt(data, format, include_examples) do
     schema_json = Jason.encode!(data.json_schema, pretty: true)
 
-    format_instructions = case format do
-      :xml ->
-        """
-        <json>
-        {
-          "result": <your response matching the schema>
-        }
-        </json>
+    format_instructions =
+      case format do
+        :xml ->
+          """
+          <json>
+          {
+            "result": <your response matching the schema>
+          }
+          </json>
+          """
+
+        _ ->
+          """
+          ```json
+          {
+            "result": <your response matching the schema>
+          }
+          ```
+          """
+      end
+
+    example_section =
+      if include_examples do
+        example = generate_example_for_schema(data.json_schema)
+
         """
 
-      _ ->
+        Example of a valid response:
+        #{format_example(example, format)}
         """
-        ```json
-        {
-          "result": <your response matching the schema>
-        }
-        ```
-        """
-    end
-
-    example_section = if include_examples do
-      example = generate_example_for_schema(data.json_schema)
-
-      """
-
-      Example of a valid response:
-      #{format_example(example, format)}
-      """
-    else
-      ""
-    end
+      else
+        ""
+      end
 
     """
     #{data.system_prompt}
