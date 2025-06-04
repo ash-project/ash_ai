@@ -66,6 +66,7 @@ defmodule AshAi.Actions.Prompt do
         fn _input, _context ->
           LangChain.ChatModels.ChatOpenAI.new!(%{
             model: "gpt-4o",
+            # this can also be configured in application config, see langchain docs for more.
             api_key: System.get_env("OPENAI_API_KEY"),
             endpoint: System.get_env("OPENAI_ENDPOINT")
           })
