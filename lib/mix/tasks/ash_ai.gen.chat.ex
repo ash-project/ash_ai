@@ -205,7 +205,7 @@ if Code.ensure_loaded?(Igniter) do
           system_prompt =
             LangChain.Message.new_system!(\"""
             Provide a short name for the current conversation.
-            2-8 words, preferring more succint names.
+            2-8 words, preferring more succinct names.
             RESPOND WITH ONLY THE NEW CONVERSATION NAME.
             \""")
 
