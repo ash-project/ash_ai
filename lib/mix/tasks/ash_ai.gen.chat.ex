@@ -96,9 +96,16 @@ if Code.ensure_loaded?(Igniter) do
           {Igniter.Project.Deps.add_dep(igniter, {:ash_oban, "~> 0.4"}), true}
         end
 
+      {igniter, install_earmark?} =
+        if Igniter.Project.Deps.has_dep?(igniter, :earmark) do
+          {igniter, false}
+        else
+          {Igniter.Project.Deps.add_dep(igniter, {:earmark, "~> 1.4"}), true}
+        end
+
       igniter
       |> then(fn igniter ->
-        if install_ash_phoenix? || install_ash_oban? do
+        if install_ash_phoenix? || install_ash_oban? || install_earmark? do
           if igniter.assigns[:test_mode?] do
             igniter
           else
@@ -1018,7 +1025,7 @@ if Code.ensure_loaded?(Igniter) do
                         </div>
                       </div>
                       <div class="chat-bubble">
-                        {message.text}
+                        <%= to_markdown(message.text) %>
                       </div>
                     </div>
                   <% end %>
@@ -1213,6 +1220,33 @@ if Code.ensure_loaded?(Igniter) do
             :message_form,
             form
           )
+        end
+
+        defp to_markdown(text) do
+          Earmark.as_html(text)
+          |> case do
+            {:ok, html, _} ->
+              html
+              |> naive_sanitize()
+              |> Phoenix.HTML.raw()
+
+            {:error, _html, _errors} -> text
+          end
+        end
+
+        defp naive_sanitize(html) do
+          # TODO: Use a different sanitization library for something more robust.
+          # Remove script, style, and other dangerous tags completely.
+          html
+          |> String.replace(~r/<script[^>]*>.*?<\\/script>/is, "")
+          |> String.replace(~r/<style[^>]*>.*?<\\/style>/is, "")
+          |> String.replace(~r/<iframe[^>]*>.*?<\\/iframe>/is, "")
+          |> String.replace(~r/<object[^>]*>.*?<\\/object>/is, "")
+          |> String.replace(~r/<embed[^>]*>/i, "")
+          |> String.replace(~r/<form[^>]*>.*?<\\/form>/is, "")
+          # Remove event handlers
+          |> String.replace(~r/\\s*on\\w+\\s*=\\s*["'][^"']*["']/i, "")
+          |> String.replace(~r/\\s*javascript\\s*:/i, "")
         end
       """
     end
