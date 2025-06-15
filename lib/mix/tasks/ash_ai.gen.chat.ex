@@ -97,7 +97,7 @@ if Code.ensure_loaded?(Igniter) do
         end
 
       {igniter, install_mdex?} =
-        if Igniter.Project.Deps.has_dep?(igniter, :mdx) do
+        if Igniter.Project.Deps.has_dep?(igniter, :mdex) do
           {igniter, false}
         else
           {Igniter.Project.Deps.add_dep(igniter, {:mdex, "~> 0.7"}), true}
