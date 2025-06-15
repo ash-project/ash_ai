@@ -96,16 +96,16 @@ if Code.ensure_loaded?(Igniter) do
           {Igniter.Project.Deps.add_dep(igniter, {:ash_oban, "~> 0.4"}), true}
         end
 
-      {igniter, install_earmark?} =
-        if Igniter.Project.Deps.has_dep?(igniter, :earmark) do
+      {igniter, install_mdex?} =
+        if Igniter.Project.Deps.has_dep?(igniter, :mdx) do
           {igniter, false}
         else
-          {Igniter.Project.Deps.add_dep(igniter, {:earmark, "~> 1.4"}), true}
+          {Igniter.Project.Deps.add_dep(igniter, {:mdex, "~> 0.7"}), true}
         end
 
       igniter
       |> then(fn igniter ->
-        if install_ash_phoenix? || install_ash_oban? || install_earmark? do
+        if install_ash_phoenix? || install_ash_oban? || install_mdex? do
           if igniter.assigns[:test_mode?] do
             igniter
           else
@@ -1223,30 +1223,35 @@ if Code.ensure_loaded?(Igniter) do
         end
 
         defp to_markdown(text) do
-          Earmark.as_html(text)
+          # Note that you must pass the "unsafe_: true" option to first generate the raw HTML
+          # in order to sanitize it. https://hexdocs.pm/mdex/MDEx.html#module-sanitize
+          MDEx.to_html(text,
+            extension: [
+              strikethrough: true,
+              tagfilter: true,
+              table: true,
+              autolink: true,
+              tasklist: true,
+              footnotes: true,
+              shortcodes: true
+            ],
+            parse: [
+              smart: true,
+              relaxed_tasklist_matching: true,
+              relaxed_autolinks: true
+            ],
+            render: [
+              github_pre_lang: true,
+              unsafe_: true
+            ],
+            sanitize: MDEx.default_sanitize_options()
+          )
           |> case do
-            {:ok, html, _} ->
+            {:ok, html} ->
               html
-              |> naive_sanitize()
               |> Phoenix.HTML.raw()
-
-            {:error, _html, _errors} -> text
+            {:error, _} -> text
           end
-        end
-
-        defp naive_sanitize(html) do
-          # TODO: Use a different sanitization library for something more robust.
-          # Remove script, style, and other dangerous tags completely.
-          html
-          |> String.replace(~r/<script[^>]*>.*?<\\/script>/is, "")
-          |> String.replace(~r/<style[^>]*>.*?<\\/style>/is, "")
-          |> String.replace(~r/<iframe[^>]*>.*?<\\/iframe>/is, "")
-          |> String.replace(~r/<object[^>]*>.*?<\\/object>/is, "")
-          |> String.replace(~r/<embed[^>]*>/i, "")
-          |> String.replace(~r/<form[^>]*>.*?<\\/form>/is, "")
-          # Remove event handlers
-          |> String.replace(~r/\\s*on\\w+\\s*=\\s*["'][^"']*["']/i, "")
-          |> String.replace(~r/\\s*javascript\\s*:/i, "")
         end
       """
     end
