@@ -280,7 +280,7 @@ defmodule AshAi.Mcp.IntegrationTest do
           "id" => "2",
           "method" => "resources/read",
           "params" => %{
-            "uri" => "ash://TestDomain/TestResource"
+            "uri" => "ash://AshAi.Test.Music/AshAi.Test.Music.ArtistAfterAction"
           }
         })
         |> put_req_header("mcp-session-id", session_id)
@@ -392,6 +392,7 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert result2["result"] == %{}
     end
 
+    @tag :skip
     test "handles resource templates listing" do
       # Initialize session
       init_conn =

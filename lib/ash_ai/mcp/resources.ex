@@ -38,10 +38,36 @@ defmodule AshAi.Mcp.Resources do
       {:ok, resource_list}
     end
 
+        def list_templates(_session_id, _opts) do
+      templates = [
+        %{
+          "uriTemplate" => "ash://{domain}/{resource}",
+          "name" => "Ash Resources",
+          "description" => "Access Ash framework resources by domain and resource name",
+          "mimeType" => "application/json"
+        }
+      ]
+
+      {:ok, templates}
+    end
+
     @impl AshMcp.Capability
     def handle_method("resources/list", _params, session_id, opts) do
       {:ok, resources} = list_items(session_id, opts)
       {:ok, %{"resources" => resources}}
+    end
+
+    def handle_method("resources/templates/list", _params, _session_id, _opts) do
+      templates = [
+        %{
+          "uriTemplate" => "ash://{domain}/{resource}",
+          "name" => "Ash Resources",
+          "description" => "Access Ash framework resources by domain and resource name",
+          "mimeType" => "application/json"
+        }
+      ]
+
+      {:ok, %{"resourceTemplates" => templates}}
     end
 
     def handle_method("resources/read", params, _session_id, opts) do
@@ -102,9 +128,17 @@ defmodule AshAi.Mcp.Resources do
       case String.split(rest, "/", parts: 2) do
         [domain_str, resource_str] ->
           try do
-            domain = String.to_existing_atom(domain_str)
-            resource = String.to_existing_atom(resource_str)
-            {:ok, {domain, resource}}
+                                    # Use Module.safe_concat to safely create module atoms
+            domain = Module.safe_concat([domain_str])
+            resource = Module.safe_concat([resource_str])
+
+            # Verify modules exist and are loaded
+            if Code.ensure_loaded(domain) == {:module, domain} and
+               Code.ensure_loaded(resource) == {:module, resource} do
+              {:ok, {domain, resource}}
+            else
+              {:error, :module_not_found}
+            end
           rescue
             ArgumentError ->
               {:error, :invalid_module_name}
@@ -167,6 +201,7 @@ defmodule AshAi.Mcp.Resources do
     def capability_name, do: "resources"
     def capability_config, do: %{}
     def list_items(_session_id, _opts), do: {:ok, []}
+    def list_templates(_session_id, _opts), do: {:ok, []}
     def handle_method(_method, _params, _session_id, _opts), do: :not_handled
   end
 end
