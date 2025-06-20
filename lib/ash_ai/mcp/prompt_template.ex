@@ -209,10 +209,16 @@ defmodule AshAi.Mcp.PromptTemplate do
   end
 
   defp render_system_prompt(prompt_info, arguments) do
+    # Convert string keys to atoms for EEx template rendering
+    assigns =
+      arguments
+      |> Enum.map(fn {key, value} -> {String.to_atom(key), value} end)
+      |> Enum.into(%{})
+
     case prompt_info.template do
       {system_prompt, user_message} ->
-        system_content = EEx.eval_string(system_prompt, assigns: arguments)
-        user_content = EEx.eval_string(user_message, assigns: arguments)
+        system_content = EEx.eval_string(system_prompt, assigns: assigns)
+        user_content = EEx.eval_string(user_message, assigns: assigns)
 
         {:ok,
          %{
@@ -223,7 +229,7 @@ defmodule AshAi.Mcp.PromptTemplate do
          }}
 
       single_prompt ->
-        content = EEx.eval_string(single_prompt, assigns: arguments)
+        content = EEx.eval_string(single_prompt, assigns: assigns)
 
         {:ok,
          %{
