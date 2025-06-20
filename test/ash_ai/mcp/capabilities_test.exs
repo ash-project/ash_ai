@@ -169,11 +169,13 @@ defmodule AshAi.Mcp.CapabilitiesTest do
       assert retrieved_session.id == session.id
 
       # Test session update
-      assert :ok = Session.update_session("test-session", %{last_activity: DateTime.utc_now()})
+      assert {:ok, _updated_session} = Session.update_session("test-session", %{last_activity: DateTime.utc_now()})
 
       # Test session cleanup  
       assert :ok = Session.terminate_session("test-session")
-      assert {:error, :session_not_found} = Session.get_session("test-session")
+      # After termination, session exists but is marked as terminated
+      assert {:ok, terminated_session} = Session.get_session("test-session")
+      assert terminated_session.status == :terminated
     end
 
     test "session timeout and cleanup" do
