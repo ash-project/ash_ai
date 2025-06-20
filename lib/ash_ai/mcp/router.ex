@@ -45,13 +45,27 @@ if Code.ensure_loaded?(Plug) do
         AshAi.Mcp.Resources
       ]
 
+      # Add legacy capabilities if they exist
+      legacy_capabilities =
+        []
+        |> maybe_add_capability(AshAi.Mcp.Capabilities.Prompts)
+        |> maybe_add_capability(AshAi.Mcp.Capabilities.Sampling)
+
       additional_capabilities = opts[:capabilities] || []
 
       opts
-      |> Keyword.put(:capabilities, base_capabilities ++ additional_capabilities)
+      |> Keyword.put(:capabilities, base_capabilities ++ legacy_capabilities ++ additional_capabilities)
       |> Keyword.put_new(:server_name, "AshAi MCP Server")
       |> Keyword.put_new(:server_version, get_ash_ai_version())
       |> Keyword.put_new(:protocol_version, "2025-03-26")
+    end
+
+    defp maybe_add_capability(capabilities, module) do
+      if Code.ensure_loaded?(module) do
+        [module | capabilities]
+      else
+        capabilities
+      end
     end
 
     defp get_ash_ai_version do

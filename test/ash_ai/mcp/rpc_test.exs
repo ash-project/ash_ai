@@ -14,12 +14,13 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
-            method: "initialize",
-            id: "1",
-            params: %{
-              client: %{
-                name: "test_client",
-                version: "1.0.0"
+            "jsonrpc" => "2.0",
+            "method" => "initialize",
+            "id" => "1",
+            "params" => %{
+              "clientInfo" => %{
+                "name" => "test_client",
+                "version" => "1.0.0"
               }
             }
           }
@@ -27,15 +28,15 @@ defmodule AshAi.Mcp.ServerTest do
 
       response = Router.call(conn, @opts)
       assert response.status == 200
-      assert get_resp_header(response, "content-type") == ["application/json"]
+      assert ["application/json" <> _] = get_resp_header(response, "content-type")
 
-      session_id = List.first(get_resp_header(response, "mcp-session-id"))
+                  session_id = List.first(get_resp_header(response, "mcp-session-id"))
       assert session_id != nil
 
       resp = Jason.decode!(response.resp_body)
       assert resp["jsonrpc"] == "2.0"
       assert resp["id"] == "1"
-      assert resp["result"]["serverInfo"]["name"] == "MCP Server"
+      assert resp["result"]["serverInfo"]["name"] == "AshAi MCP Server"
     end
 
     test "handles tool execution requests" do
@@ -45,12 +46,13 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
-            method: "initialize",
-            id: "1",
-            params: %{
-              client: %{
-                name: "test_client",
-                version: "1.0.0"
+            "jsonrpc" => "2.0",
+            "method" => "initialize",
+            "id" => "1",
+            "params" => %{
+              "clientInfo" => %{
+                "name" => "test_client",
+                "version" => "1.0.0"
               }
             }
           }
@@ -71,14 +73,15 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
-            method: "tools/call",
-            id: "2",
-            params: %{
-              name: "list_artists"
+            "jsonrpc" => "2.0",
+            "method" => "tools/call",
+            "id" => "2",
+            "params" => %{
+              "name" => "list_artists"
             }
           }
         )
-        |> put_req_header("mcp-session-id", session_id)
+        |> put_req_header("mcp-session-id", session_id || "default-session")
 
       response = Router.call(conn, @opts)
       assert response.status == 200
