@@ -9,28 +9,27 @@ defmodule AshAi.Mcp.ServerTest do
 
   describe "MCP RPC Protocol" do
     test "initialization creates a session" do
-      conn =
-        conn(
-          :post,
-          "/",
-          %{
-            "jsonrpc" => "2.0",
-            "method" => "initialize",
-            "id" => "1",
-            "params" => %{
-              "clientInfo" => %{
-                "name" => "test_client",
-                "version" => "1.0.0"
-              }
-            }
+      body = Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "id" => "1",
+        "params" => %{
+          "clientInfo" => %{
+            "name" => "test_client",
+            "version" => "1.0.0"
           }
-        )
+        }
+      })
+
+      conn =
+        conn(:post, "/", body)
+        |> put_req_header("content-type", "application/json")
 
       response = Router.call(conn, @opts)
       assert response.status == 200
       assert ["application/json" <> _] = get_resp_header(response, "content-type")
 
-                  session_id = List.first(get_resp_header(response, "mcp-session-id"))
+      session_id = List.first(get_resp_header(response, "mcp-session-id"))
       assert session_id != nil
 
       resp = Jason.decode!(response.resp_body)
@@ -41,22 +40,21 @@ defmodule AshAi.Mcp.ServerTest do
 
     test "handles tool execution requests" do
       # First initialize a session
-      conn =
-        conn(
-          :post,
-          "/",
-          %{
-            "jsonrpc" => "2.0",
-            "method" => "initialize",
-            "id" => "1",
-            "params" => %{
-              "clientInfo" => %{
-                "name" => "test_client",
-                "version" => "1.0.0"
-              }
-            }
+      init_body = Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "id" => "1",
+        "params" => %{
+          "clientInfo" => %{
+            "name" => "test_client",
+            "version" => "1.0.0"
           }
-        )
+        }
+      })
+
+      conn =
+        conn(:post, "/", init_body)
+        |> put_req_header("content-type", "application/json")
 
       response = Router.call(conn, @opts)
       session_id = List.first(get_resp_header(response, "mcp-session-id"))
@@ -68,19 +66,18 @@ defmodule AshAi.Mcp.ServerTest do
       })
 
       # Now try to execute the list_artists tool
+      call_body = Jason.encode!(%{
+        "jsonrpc" => "2.0",
+        "method" => "tools/call",
+        "id" => "2",
+        "params" => %{
+          "name" => "list_artists"
+        }
+      })
+
       conn =
-        conn(
-          :post,
-          "/",
-          %{
-            "jsonrpc" => "2.0",
-            "method" => "tools/call",
-            "id" => "2",
-            "params" => %{
-              "name" => "list_artists"
-            }
-          }
-        )
+        conn(:post, "/", call_body)
+        |> put_req_header("content-type", "application/json")
         |> put_req_header("mcp-session-id", session_id || "default-session")
 
       response = Router.call(conn, @opts)

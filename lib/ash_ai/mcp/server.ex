@@ -5,13 +5,7 @@ defmodule AshAi.Mcp.Server do
   This module handles HTTP requests and responses according to the MCP specification,
   supporting both synchronous and streaming communication patterns.
   It also handles the core JSON-RPC message processing for the protocol.
-
-  The server uses a capability registry system to dynamically discover and handle
-  different MCP capabilities like tools, resources, and prompts.
   """
-
-  alias AshAi.Mcp.Registry
-  alias AshAi.Mcp.Session
 
   @doc """
   Process an HTTP POST request containing JSON-RPC messages
@@ -90,8 +84,6 @@ defmodule AshAi.Mcp.Server do
   """
   def handle_delete(conn, session_id) do
     if session_id do
-      Session.terminate_session(session_id)
-
       conn
       |> Plug.Conn.send_resp(200, "")
     else
@@ -142,9 +134,9 @@ defmodule AshAi.Mcp.Server do
       opts[:mcp_name]
     else
       if opts[:otp_app] do
-        "MCP Server"
+        "AshAi MCP Server"
       else
-        "#{opts[:otp_app]} MCP Server"
+        "MCP Server"
       end
     end
   end
@@ -185,67 +177,33 @@ defmodule AshAi.Mcp.Server do
   """
   def process_message(message, session_id, opts) do
     case message do
-      %{"method" => "initialize", "id" => id, "params" => params} ->
+      %{"method" => "initialize", "id" => id, "params" => _params} ->
         # Handle initialize request
         new_session_id = session_id || Ash.UUIDv7.generate()
 
-        # Create or update session
-        auth_context = %{
-          actor: opts[:actor],
-          tenant: opts[:tenant],
-          context: opts[:context]
+        protocol_version_statement = opts[:protocol_version_statement] || "2025-03-26"
+
+        # Return capabilities
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{
+            "serverInfo" => %{
+              "name" => get_server_name(opts),
+              "version" => get_server_version(opts)
+            },
+            "protocolVersion" => protocol_version_statement,
+            "capabilities" => %{
+              "tools" => %{
+                "listChanged" => false
+              }
+            }
+          }
         }
 
-        session_opts = [
-          client_info: params["clientInfo"] || %{},
-          auth_context: auth_context
-        ]
-
-        case Session.create_session(new_session_id, session_opts) do
-          {:ok, _session} ->
-            protocol_version_statement = opts[:protocol_version_statement] || "2025-03-26"
-
-            # Return capabilities from registry
-            capabilities = Registry.build_capabilities_config(new_session_id, opts)
-
-            # Mark session as initialized
-            Session.initialize_session(new_session_id, capabilities)
-
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => %{
-                "serverInfo" => %{
-                  "name" => get_server_name(opts),
-                  "version" => get_server_version(opts)
-                },
-                "protocolVersion" => protocol_version_statement,
-                "capabilities" => capabilities
-              }
-            }
-
-            {:initialize_response, Jason.encode!(response), new_session_id}
-
-          {:error, error} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32_000,
-                "message" => "Session creation failed",
-                "data" => %{"error" => inspect(error)}
-              }
-            }
-
-            {:json_response, Jason.encode!(response), session_id}
-        end
+        {:initialize_response, Jason.encode!(response), new_session_id}
 
       %{"method" => "shutdown", "id" => id, "params" => _params} ->
-        # Terminate session
-        if session_id do
-          Session.terminate_session(session_id)
-        end
-
         # Return success
         response = %{
           "jsonrpc" => "2.0",
@@ -259,63 +217,46 @@ defmodule AshAi.Mcp.Server do
         # TODO: Cancel request?
         {:no_response, nil, session_id}
 
-      %{"method" => "ping", "id" => id, "params" => _params} ->
-        # Handle ping request according to MCP specification
-        # Update session activity if we have one
-        if session_id do
-          Session.touch_session(session_id)
-        end
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "result" => %{}
-        }
-
-        {:json_response, Jason.encode!(response), session_id}
-
-      %{"method" => "ping", "id" => id} ->
-        # Handle ping request according to MCP specification
-        # Update session activity if we have one
-        if session_id do
-          Session.touch_session(session_id)
-        end
-
-        response = %{
-          "jsonrpc" => "2.0",
-          "id" => id,
-          "result" => %{}
-        }
-
-        {:json_response, Jason.encode!(response), session_id}
-
-      %{"method" => method, "id" => id, "params" => params}
-      when method in [
-             "tools/list",
-             "tools/call",
-             "resources/list",
-             "resources/read",
-             "resources/templates/list",
-             "prompts/list",
-             "prompts/get"
-           ] ->
-        # Update session activity
-        if session_id do
-          Session.touch_session(session_id)
-        end
-
-        # Handle capability methods through registry
-        case Registry.handle_method(method, params, session_id, opts) do
-          {:ok, result} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => result
+      %{"method" => "tools/list", "id" => id} ->
+        tools =
+          opts
+          |> tools()
+          |> Enum.map(fn function ->
+            %{
+              "name" => function.name,
+              "description" => function.description,
+              "inputSchema" => function.parameters_schema
             }
+          end)
 
-            {:json_response, Jason.encode!(response), session_id}
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{
+            "tools" => tools
+          }
+        }
 
-          {:error, {:tool_not_found, tool_name}} ->
+        {:json_response, Jason.encode!(response), session_id}
+
+      %{"method" => "tools/call", "id" => id, "params" => params} ->
+        tool_name = params["name"]
+        tool_args = params["arguments"] || %{}
+
+        opts =
+          opts
+          |> Keyword.update(
+            :context,
+            %{mcp_session_id: session_id},
+            &Map.put(&1, :mcp_session_id, session_id)
+          )
+          |> Keyword.put(:filter, fn tool -> tool.mcp == :tool end)
+
+        opts
+        |> tools()
+        |> Enum.find(&(&1.name == tool_name))
+        |> case do
+          nil ->
             response = %{
               "jsonrpc" => "2.0",
               "id" => id,
@@ -327,44 +268,43 @@ defmodule AshAi.Mcp.Server do
 
             {:json_response, Jason.encode!(response), session_id}
 
-          {:error, {:tool_execution_failed, error}} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32_000,
-                "message" => "Tool execution failed",
-                "data" => %{"error" => inspect(error)}
-              }
-            }
+          tool ->
+            context =
+              opts
+              |> Keyword.take([:actor, :tenant, :context])
+              |> Map.new()
+              |> Map.update(
+                :context,
+                %{otp_app: opts[:otp_app]},
+                &Map.put(&1, :otp_app, opts[:otp_app])
+              )
 
-            {:json_response, Jason.encode!(response), session_id}
+            case tool.function.(tool_args, context) do
+              {:ok, result, _} ->
+                response = %{
+                  "jsonrpc" => "2.0",
+                  "id" => id,
+                  "result" => %{
+                    "isError" => false,
+                    "content" => [%{"type" => "text", "text" => result}]
+                  }
+                }
 
-          {:error, error} ->
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32_000,
-                "message" => "Capability error",
-                "data" => %{"error" => inspect(error)}
-              }
-            }
+                {:json_response, Jason.encode!(response), session_id}
 
-            {:json_response, Jason.encode!(response), session_id}
+              {:error, error} ->
+                response = %{
+                  "jsonrpc" => "2.0",
+                  "id" => id,
+                  "error" => %{
+                    "code" => -32_000,
+                    "message" => "Tool execution failed",
+                    "data" => %{"error" => error}
+                  }
+                }
 
-          :not_handled ->
-            # Fall back to method not implemented
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "error" => %{
-                "code" => -32_601,
-                "message" => "Method not implemented: #{method}"
-              }
-            }
-
-            {:json_response, Jason.encode!(response), session_id}
+                {:json_response, Jason.encode!(response), session_id}
+            end
         end
 
       %{"method" => method, "id" => id, "params" => _params} ->
@@ -388,6 +328,31 @@ defmodule AshAi.Mcp.Server do
         # Invalid message
         {:json_response, json_rpc_error_response(nil, -32_600, "Invalid Request"), session_id}
     end
+  end
+
+  defp tools(opts) do
+    opts =
+      if opts[:tools] == :ash_dev_tools do
+        opts
+        |> Keyword.put(:actions, [{AshAi.DevTools.Tools, :*}])
+        |> Keyword.put(:tools, [
+          :list_ash_resources,
+          :list_generators,
+          :get_usage_rules,
+          :list_packages_with_rules
+        ])
+      else
+        opts
+      end
+
+    opts
+    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions])
+    |> Keyword.update(
+      :context,
+      %{otp_app: opts[:otp_app]},
+      &Map.put(&1, :otp_app, opts[:otp_app])
+    )
+    |> AshAi.functions()
   end
 
   @doc """

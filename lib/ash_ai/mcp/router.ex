@@ -1,25 +1,20 @@
 if Code.ensure_loaded?(Plug) do
   defmodule AshAi.Mcp.Router do
     @moduledoc """
-    MCP Router for AshAi applications.
-
-    This router provides a simplified interface to AshMcp.Router with
-    Ash-specific defaults and capabilities.
+    MCP Router that provides a simple implementation for Ash applications.
 
     ## Usage
 
     ```elixir
-    # Basic usage without authentication
-    forward "/mcp", AshAi.Mcp.Router, tools: [:tool1, :tool2], otp_app: :my_app
+    # In your Phoenix router
+    forward "/mcp", AshAi.Mcp.Router
 
-    # With OAuth authentication (requires AshAuthentication)
-    forward "/mcp", AshAi.Mcp.Router,
-      tools: [:tool1, :tool2],
-      otp_app: :my_app,
-      auth_enabled?: true,
-      auth_strategies: [:github, :google],
-      require_auth?: false
+    # With tools enabled
+    forward "/mcp", AshAi.Mcp.Router, tools: [:tool1, :tool2]
     ```
+
+    This router implements the basic MCP protocol with tools capability.
+    For more advanced features, consider using the ash_mcp library directly.
     """
 
     use Plug.Router, copy_opts_to_assign: :router_opts
@@ -28,50 +23,29 @@ if Code.ensure_loaded?(Plug) do
     plug(:dispatch)
 
     match _ do
-      # Use AshMcp.Router with Ash-specific options
-      opts = build_ash_mcp_opts(conn.assigns.router_opts)
+      opts = conn.assigns.router_opts
+      
+      # Extract session from headers
+      session_id = 
+        case Plug.Conn.get_req_header(conn, "mcp-session-id") do
+          [] -> nil
+          [session_id] -> session_id
+        end
 
-      if Code.ensure_loaded?(AshMcp.Router) do
-        AshMcp.Router.call(conn, AshMcp.Router.init(opts))
-      else
-        send_resp(conn, 503, "MCP functionality requires ash_mcp dependency")
-      end
-    end
+      case conn.method do
+        "POST" ->
+          # Read body
+          {:ok, body, _conn} = Plug.Conn.read_body(conn)
+          AshAi.Mcp.Server.handle_post(conn, body, session_id, opts)
 
-    # Build options with Ash-specific defaults
-    defp build_ash_mcp_opts(opts) do
-      base_capabilities = [
-        AshAi.Mcp.Tools,
-        AshAi.Mcp.Resources
-      ]
+        "GET" ->
+          AshAi.Mcp.Server.handle_get(conn, session_id)
 
-      # Add legacy capabilities if they exist
-      legacy_capabilities =
-        []
-        |> maybe_add_capability(AshAi.Mcp.Capabilities.Prompts)
-        |> maybe_add_capability(AshAi.Mcp.Capabilities.Sampling)
+        "DELETE" ->
+          AshAi.Mcp.Server.handle_delete(conn, session_id)
 
-      additional_capabilities = opts[:capabilities] || []
-
-      opts
-      |> Keyword.put(:capabilities, base_capabilities ++ legacy_capabilities ++ additional_capabilities)
-      |> Keyword.put_new(:server_name, "AshAi MCP Server")
-      |> Keyword.put_new(:server_version, get_ash_ai_version())
-      |> Keyword.put_new(:protocol_version, "2025-03-26")
-    end
-
-    defp maybe_add_capability(capabilities, module) do
-      if Code.ensure_loaded?(module) do
-        [module | capabilities]
-      else
-        capabilities
-      end
-    end
-
-    defp get_ash_ai_version do
-      case Application.spec(:ash_ai, :vsn) do
-        nil -> "0.1.0"
-        version -> List.to_string(version)
+        _ ->
+          send_resp(conn, 405, "Method not allowed")
       end
     end
   end

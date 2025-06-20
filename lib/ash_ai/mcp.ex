@@ -1,73 +1,50 @@
 defmodule AshAi.Mcp do
   @moduledoc """
-  Integration module for Model Context Protocol (MCP) in AshAi.
+  Model Context Protocol (MCP) implementation for Ash Framework.
 
-  This module provides a clean interface to the AshMcp library with
-  Ash-specific capabilities and integrations.
+  This module implements a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server
+  that integrates with Ash Framework, following the MCP [Streamable HTTP Transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http) specification.
 
-  ## Usage
+  ## Overview
 
-  In your Phoenix router:
+  This MCP implementation provides:
 
-      scope "/mcp" do
-        pipe_through :api
-        forward "/", AshAi.Mcp.Router,
-          otp_app: :my_app,
-          tools: [:my_tool],
-          auth_enabled?: true
-      end
+  * A fully compliant MCP server with JSON-RPC message processing
+  * Session management with unique session IDs
+  * Support for both JSON and Server-Sent Events (SSE) responses
+  * Batch request handling
+  * A foundation for integrating Ash resources with MCP clients
+  * Integration with AshAi tools for AI-assisted operations
 
-  Or for development:
+  ## Current Features
 
-      scope "/dev" do
-        plug AshAi.Mcp.Dev,
-          otp_app: :my_app,
-          tools: :ash_dev_tools
-      end
+  * `initialize` and `shutdown` method handlers
+  * Session management via GenServer processes
+  * Support for streaming responses
+  * Plug-compatible router for easy integration
+  * Tool support for AshAi functions
+
+  ## Future Enhancements
+
+  * OAuth integration with AshAuthentication
+  * Resource-specific method handlers
+  * Advanced streaming capabilities
+
+  ## Integration
+
+  ### With Phoenix
+
+  ```elixir
+  # In your Phoenix router
+  forward "/mcp", AshAi.Mcp.Router
+
+  # With tools enabled
+  forward "/mcp", AshAi.Mcp.Router, tools: [:tool1, :tool2]
+  ```
+
+  ### With Any Plug-Based Application
+
+  The MCP router is a standard Plug, so it can be integrated into any Plug-based application.
+  You are responsible for hosting the Plug however you prefer.
   """
-
-  @doc """
-  Register an Ash domain's tools as MCP capabilities.
-
-  This automatically registers all tools defined in the domain
-  with the MCP server.
-  """
-  def register_domain_tools(domain) when is_atom(domain) do
-    if Code.ensure_loaded?(domain) and function_exported?(domain, :__ash_ai_tools__, 0) do
-      tools = domain.__ash_ai_tools__()
-
-      # Register the domain as a tools capability
-      if Code.ensure_loaded?(AshMcp) do
-        AshMcp.register_capability(domain, AshAi.Mcp.DomainTools, domain: domain, tools: tools)
-      end
-    end
-  end
-
-  @doc """
-  Get all tools from registered Ash domains.
-  """
-  def get_ash_tools(opts \\ []) do
-    if Code.ensure_loaded?(AshAi) do
-      AshAi.functions(opts)
-    else
-      []
-    end
-  end
-
-  @doc """
-  Create an MCP server configuration for Ash applications.
-  """
-  def ash_mcp_config(opts) do
-    base_capabilities = [
-      AshAi.Mcp.Tools,
-      AshAi.Mcp.Resources
-    ]
-
-    additional_capabilities = opts[:capabilities] || []
-
-    opts
-    |> Keyword.put(:capabilities, base_capabilities ++ additional_capabilities)
-    |> Keyword.put_new(:server_name, "AshAi MCP Server")
-    |> Keyword.put_new(:server_version, Application.spec(:ash_ai, :vsn) |> to_string())
-  end
 end
