@@ -48,7 +48,14 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
 
   defp validate_sampling_params(params) do
     required_fields = ["messages"]
-    optional_fields = ["modelPreferences", "systemPrompt", "includeContext", "maxTokens", "temperature"]
+
+    optional_fields = [
+      "modelPreferences",
+      "systemPrompt",
+      "includeContext",
+      "maxTokens",
+      "temperature"
+    ]
 
     case validate_required_fields(params, required_fields) do
       :ok ->
@@ -61,7 +68,7 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
   end
 
   defp validate_required_fields(params, required_fields) do
-    missing_fields = 
+    missing_fields =
       required_fields
       |> Enum.reject(&Map.has_key?(params, &1))
 
@@ -85,14 +92,15 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
     # Create the message chain
     case build_message_chain(messages, system_prompt, chat_model_opts, opts) do
       {:ok, response_message} ->
-        {:ok, %{
-          "model" => get_model_name(chat_model_opts),
-          "role" => "assistant", 
-          "content" => %{
-            "type" => "text",
-            "text" => response_message
-          }
-        }}
+        {:ok,
+         %{
+           "model" => get_model_name(chat_model_opts),
+           "role" => "assistant",
+           "content" => %{
+             "type" => "text",
+             "text" => response_message
+           }
+         }}
 
       {:error, reason} ->
         {:error, {:sampling_failed, reason}}
@@ -112,46 +120,45 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp build_message_chain(messages, system_prompt, chat_model_opts, opts) do
-    try do
-      # Get the default chat model from configuration or use OpenAI as fallback
-      chat_model = get_chat_model(chat_model_opts, opts)
-      
-      # Build LangChain messages
-      langchain_messages = build_langchain_messages(messages, system_prompt)
+    # Get the default chat model from configuration or use OpenAI as fallback
+    chat_model = get_chat_model(chat_model_opts, opts)
 
-      # Create and execute the chain
-      chain_opts = %{
-        llm: chat_model,
-        verbose: false
-      }
+    # Build LangChain messages
+    langchain_messages = build_langchain_messages(messages, system_prompt)
 
-      case LangChain.Chains.LLMChain.new(chain_opts) do
-        {:ok, chain} ->
-          # Add messages to the chain
-          updated_chain = Enum.reduce(langchain_messages, chain, fn message, acc ->
+    # Create and execute the chain
+    chain_opts = %{
+      llm: chat_model,
+      verbose: false
+    }
+
+    case LangChain.Chains.LLMChain.new(chain_opts) do
+      {:ok, chain} ->
+        # Add messages to the chain
+        updated_chain =
+          Enum.reduce(langchain_messages, chain, fn message, acc ->
             LangChain.Chains.LLMChain.add_message(acc, message)
           end)
 
-          # Execute the chain
-          case LangChain.Chains.LLMChain.run(updated_chain, mode: :while_needs_response) do
-            {:ok, %LangChain.Chains.LLMChain{last_message: %{content: content}}} 
-            when is_binary(content) ->
-              {:ok, content}
+        # Execute the chain
+        case LangChain.Chains.LLMChain.run(updated_chain, mode: :while_needs_response) do
+          {:ok, %LangChain.Chains.LLMChain{last_message: %{content: content}}}
+          when is_binary(content) ->
+            {:ok, content}
 
-            {:ok, _chain} ->
-              {:error, :no_response_content}
+          {:ok, _chain} ->
+            {:error, :no_response_content}
 
-            {:error, _chain, reason} ->
-              {:error, {:chain_execution_failed, reason}}
-          end
+          {:error, _chain, reason} ->
+            {:error, {:chain_execution_failed, reason}}
+        end
 
-        {:error, reason} ->
-          {:error, {:chain_creation_failed, reason}}
-      end
-    rescue
-      error ->
-        {:error, {:sampling_error, error}}
+      {:error, reason} ->
+        {:error, {:chain_creation_failed, reason}}
     end
+  rescue
+    error ->
+      {:error, {:sampling_error, error}}
   end
 
   defp get_chat_model(chat_model_opts, opts) do
@@ -163,10 +170,11 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
       nil ->
         # Fallback to default OpenAI model
         model_name = chat_model_opts[:model] || "gpt-4o"
-        
-        openai_opts = %{model: model_name}
-        |> maybe_put(:max_tokens, chat_model_opts[:max_tokens])
-        |> maybe_put(:temperature, chat_model_opts[:temperature])
+
+        openai_opts =
+          %{model: model_name}
+          |> maybe_put(:max_tokens, chat_model_opts[:max_tokens])
+          |> maybe_put(:temperature, chat_model_opts[:temperature])
 
         LangChain.ChatModels.ChatOpenAI.new!(openai_opts)
     end
@@ -176,7 +184,7 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
     langchain_messages = []
 
     # Add system prompt if provided
-    langchain_messages = 
+    langchain_messages =
       if system_prompt do
         [LangChain.Message.new_system!(system_prompt) | langchain_messages]
       else
@@ -185,7 +193,7 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
 
     # Convert MCP messages to LangChain messages
     mcp_messages = Enum.map(messages, &convert_mcp_message_to_langchain/1)
-    
+
     Enum.reverse(langchain_messages) ++ mcp_messages
   end
 
@@ -196,13 +204,13 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
     case role do
       "user" ->
         LangChain.Message.new_user!(content)
-      
+
       "assistant" ->
         LangChain.Message.new_assistant!(content)
-      
+
       "system" ->
         LangChain.Message.new_system!(content)
-      
+
       _ ->
         # Default to user for unknown roles
         LangChain.Message.new_user!(content)
@@ -223,20 +231,17 @@ defmodule AshAi.Mcp.Capabilities.Sampling do
 
   defp extract_message_content(content) when is_list(content) do
     # Handle content arrays by joining text parts
-    content
-    |> Enum.map(fn
+    Enum.map_join(content, " ", fn
       %{"type" => "text", "text" => text} -> text
       %{"text" => text} -> text
       text when is_binary(text) -> text
       _ -> ""
     end)
-    |> Enum.join(" ")
   end
 
   defp extract_message_content(_content) do
     ""
   end
-
 
   defp get_model_name(chat_model_opts) do
     chat_model_opts[:model] || "gpt-4o"

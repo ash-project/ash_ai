@@ -10,21 +10,22 @@ defmodule AshAi.Mcp.IntegrationTest do
   describe "MCP Protocol Integration" do
     test "complete MCP workflow: initialize -> list capabilities -> execute tool" do
       # Step 1: Initialize MCP session
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{
-            "name" => "test_client",
-            "version" => "1.0.0"
-          },
-          "capabilities" => %{
-            "roots" => %{"listChanged" => false}
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{
+              "name" => "test_client",
+              "version" => "1.0.0"
+            },
+            "capabilities" => %{
+              "roots" => %{"listChanged" => false}
+            }
           }
-        }
-      })
+        })
 
       init_response = Router.call(init_conn, @opts)
       assert init_response.status == 200
@@ -46,12 +47,13 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert Map.has_key?(capabilities, "sampling")
 
       # Step 2: List available tools
-      tools_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "tools/list"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      tools_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "tools/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       tools_response = Router.call(tools_conn, @opts)
       assert tools_response.status in [200, 202]
@@ -69,12 +71,13 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert is_list(tools_result["result"]["tools"])
 
       # Step 3: List available resources
-      resources_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "3",
-        "method" => "resources/list"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      resources_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "3",
+          "method" => "resources/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       resources_response = Router.call(resources_conn, @opts)
       assert resources_response.status == 200
@@ -85,12 +88,13 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert Map.has_key?(resources_result["result"], "resources")
 
       # Step 4: List available prompts
-      prompts_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "4",
-        "method" => "prompts/list"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      prompts_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "4",
+          "method" => "prompts/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       prompts_response = Router.call(prompts_conn, @opts)
       assert prompts_response.status == 200
@@ -106,15 +110,16 @@ defmodule AshAi.Mcp.IntegrationTest do
         bio: "Created for MCP integration testing"
       })
 
-      tool_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "5",
-        "method" => "tools/call",
-        "params" => %{
-          "name" => "list_artists"
-        }
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      tool_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "5",
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "list_artists"
+          }
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       tool_response = Router.call(tool_conn, @opts)
       assert tool_response.status == 200
@@ -140,9 +145,10 @@ defmodule AshAi.Mcp.IntegrationTest do
 
     test "handles invalid JSON-RPC requests properly" do
       # Test malformed JSON-RPC
-      invalid_conn = conn(:post, "/", %{
-        "not_jsonrpc" => true
-      })
+      invalid_conn =
+        conn(:post, "/", %{
+          "not_jsonrpc" => true
+        })
 
       response = Router.call(invalid_conn, @opts)
       assert response.status == 200
@@ -150,30 +156,33 @@ defmodule AshAi.Mcp.IntegrationTest do
       result = Jason.decode!(response.resp_body)
       assert result["jsonrpc"] == "2.0"
       assert Map.has_key?(result, "error")
-      assert result["error"]["code"] == -32600 # Invalid Request
+      # Invalid Request
+      assert result["error"]["code"] == -32_600
     end
 
     test "handles unknown methods properly" do
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # Try unknown method
-      unknown_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "unknown/method"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      unknown_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "unknown/method"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       response = Router.call(unknown_conn, @opts)
       assert response.status in [200, 202]
@@ -182,32 +191,35 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert result["jsonrpc"] == "2.0"
       assert result["id"] == "2"
       assert Map.has_key?(result, "error")
-      assert result["error"]["code"] == -32601 # Method not found
+      # Method not found
+      assert result["error"]["code"] == -32_601
     end
 
     test "session management across multiple requests" do
       # Initialize session
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # Make multiple requests with the same session
       for i <- 1..5 do
-        request_conn = conn(:post, "/", %{
-          "jsonrpc" => "2.0",
-          "id" => "#{i + 1}",
-          "method" => "tools/list"
-        })
-        |> put_req_header("mcp-session-id", session_id)
+        request_conn =
+          conn(:post, "/", %{
+            "jsonrpc" => "2.0",
+            "id" => "#{i + 1}",
+            "method" => "tools/list"
+          })
+          |> put_req_header("mcp-session-id", session_id)
 
         response = Router.call(request_conn, @opts)
         assert response.status in [200, 202]
@@ -219,12 +231,13 @@ defmodule AshAi.Mcp.IntegrationTest do
       end
 
       # Verify session is still active
-      final_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "final",
-        "method" => "tools/list"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      final_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "final",
+          "method" => "tools/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       final_response = Router.call(final_conn, @opts)
       assert final_response.status == 200
@@ -232,29 +245,31 @@ defmodule AshAi.Mcp.IntegrationTest do
 
     test "handles resource reading with valid URIs" do
       # Initialize session
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # Read a resource
-      resource_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "resources/read",
-        "params" => %{
-          "uri" => "ash://TestDomain/TestResource"
-        }
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      resource_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "resources/read",
+          "params" => %{
+            "uri" => "ash://TestDomain/TestResource"
+          }
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       response = Router.call(resource_conn, @opts)
       assert response.status == 200
@@ -267,26 +282,28 @@ defmodule AshAi.Mcp.IntegrationTest do
 
     test "handles prompt listing" do
       # Initialize session
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # List available prompts instead of rendering (to avoid EEx template issues in tests)
-      prompt_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "prompts/list"
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      prompt_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "prompts/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       response = Router.call(prompt_conn, @opts)
       assert response.status in [200, 202]
@@ -296,11 +313,11 @@ defmodule AshAi.Mcp.IntegrationTest do
       assert result["id"] == "2"
       assert Map.has_key?(result["result"], "prompts")
       assert is_list(result["result"]["prompts"])
-      
+
       # Verify system prompts are available
       prompts = result["result"]["prompts"]
       assert length(prompts) > 0
-      
+
       # Check that we have system prompts
       system_prompt = Enum.find(prompts, &(&1["name"] == "ash_ai.simple_task"))
       assert system_prompt != nil
@@ -311,11 +328,13 @@ defmodule AshAi.Mcp.IntegrationTest do
   describe "Error Cases" do
     test "handles missing session ID gracefully" do
       # Try to make a request without session ID after initialization phase
-      conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "tools/list"
-      })
+      conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "tools/list"
+        })
+
       # Deliberately not adding mcp-session-id header
 
       response = Router.call(conn, @opts)
@@ -329,29 +348,31 @@ defmodule AshAi.Mcp.IntegrationTest do
 
     test "handles invalid tool calls" do
       # Initialize session
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1",
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # Try to call non-existent tool
-      tool_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "tools/call",
-        "params" => %{
-          "name" => "nonexistent_tool"
-        }
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      tool_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "nonexistent_tool"
+          }
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       response = Router.call(tool_conn, @opts)
       assert response.status == 200
@@ -363,29 +384,31 @@ defmodule AshAi.Mcp.IntegrationTest do
     end
 
     test "handles invalid resource URIs" do
-      init_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "1", 
-        "method" => "initialize",
-        "params" => %{
-          "protocolVersion" => "2024-11-05",
-          "clientInfo" => %{"name" => "test", "version" => "1.0"}
-        }
-      })
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
 
       init_response = Router.call(init_conn, @opts)
       session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
 
       # Try invalid URI
-      resource_conn = conn(:post, "/", %{
-        "jsonrpc" => "2.0",
-        "id" => "2",
-        "method" => "resources/read",
-        "params" => %{
-          "uri" => "invalid://uri/format"
-        }
-      })
-      |> put_req_header("mcp-session-id", session_id)
+      resource_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "resources/read",
+          "params" => %{
+            "uri" => "invalid://uri/format"
+          }
+        })
+        |> put_req_header("mcp-session-id", session_id)
 
       response = Router.call(resource_conn, @opts)
       assert response.status == 200

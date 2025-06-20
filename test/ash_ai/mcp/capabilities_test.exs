@@ -2,14 +2,14 @@ defmodule AshAi.Mcp.CapabilitiesTest do
   use AshAi.RepoCase, async: false
 
   alias AshAi.Mcp.{Registry, Session}
-  alias AshAi.Mcp.Capabilities.{Tools, Resources, Prompts, Sampling}
+  alias AshAi.Mcp.Capabilities.{Prompts, Resources, Sampling, Tools}
 
   describe "Registry" do
     test "registers default capabilities on startup" do
       capabilities = Registry.list_capabilities()
-      
+
       capability_names = Enum.map(capabilities, fn {name, _module, _opts} -> name end)
-      
+
       assert :tools in capability_names
       assert :resources in capability_names
       assert :prompts in capability_names
@@ -19,7 +19,7 @@ defmodule AshAi.Mcp.CapabilitiesTest do
     test "can register and retrieve custom capabilities" do
       defmodule TestCapability do
         @behaviour AshAi.Mcp.Capability
-        
+
         def capability_name, do: "test"
         def capability_config, do: %{"test" => %{}}
         def list_items(_opts), do: {:ok, []}
@@ -28,14 +28,14 @@ defmodule AshAi.Mcp.CapabilitiesTest do
 
       assert :ok = Registry.register_capability(:test, TestCapability, [])
       assert {:ok, {TestCapability, []}} = Registry.get_capability(:test)
-      
+
       # Cleanup
       Registry.unregister_capability(:test)
     end
 
     test "builds capabilities config correctly" do
       config = Registry.build_capabilities_config("test-session")
-      
+
       assert Map.has_key?(config, "tools")
       assert Map.has_key?(config, "resources")
       assert Map.has_key?(config, "prompts")
@@ -65,7 +65,11 @@ defmodule AshAi.Mcp.CapabilitiesTest do
 
     test "handles tools/call method with valid tool" do
       # This would need a real tool to test properly
-      result = Tools.handle_method("tools/call", %{"name" => "nonexistent"}, "test-session", otp_app: :ash_ai)
+      result =
+        Tools.handle_method("tools/call", %{"name" => "nonexistent"}, "test-session",
+          otp_app: :ash_ai
+        )
+
       # Should return an error for nonexistent tool
       assert {:error, _} = result
     end
@@ -112,6 +116,7 @@ defmodule AshAi.Mcp.CapabilitiesTest do
         "name" => "ash_ai.simple_task",
         "arguments" => %{"task" => "Test task"}
       }
+
       result = Prompts.handle_method("prompts/get", params, "test-session", otp_app: :ash_ai)
       assert {:ok, %{"description" => _, "messages" => messages}} = result
       assert is_list(messages)
@@ -138,7 +143,7 @@ defmodule AshAi.Mcp.CapabilitiesTest do
           %{"role" => "user", "content" => %{"type" => "text", "text" => "Hello"}}
         ]
       }
-      
+
       # This will fail because we don't have a real LLM configured in tests
       # but it tests the parameter validation
       result = Sampling.handle_method("sampling/createMessage", valid_params, "test-session", [])
@@ -169,9 +174,10 @@ defmodule AshAi.Mcp.CapabilitiesTest do
       assert retrieved_session.id == session.id
 
       # Test session update
-      assert {:ok, _updated_session} = Session.update_session("test-session", %{last_activity: DateTime.utc_now()})
+      assert {:ok, _updated_session} =
+               Session.update_session("test-session", %{last_activity: DateTime.utc_now()})
 
-      # Test session cleanup  
+      # Test session cleanup
       assert :ok = Session.terminate_session("test-session")
       # After termination, session exists but is marked as terminated
       assert {:ok, terminated_session} = Session.get_session("test-session")
