@@ -9,17 +9,18 @@ defmodule AshAi.Mcp.ServerTest do
 
   describe "MCP RPC Protocol" do
     test "initialization creates a session" do
-      body = Jason.encode!(%{
-        "jsonrpc" => "2.0",
-        "method" => "initialize",
-        "id" => "1",
-        "params" => %{
-          "clientInfo" => %{
-            "name" => "test_client",
-            "version" => "1.0.0"
+      body =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => "1",
+          "params" => %{
+            "clientInfo" => %{
+              "name" => "test_client",
+              "version" => "1.0.0"
+            }
           }
-        }
-      })
+        })
 
       conn =
         conn(:post, "/", body)
@@ -35,22 +36,23 @@ defmodule AshAi.Mcp.ServerTest do
       resp = Jason.decode!(response.resp_body)
       assert resp["jsonrpc"] == "2.0"
       assert resp["id"] == "1"
-      assert resp["result"]["serverInfo"]["name"] == "AshAi MCP Server"
+      assert resp["result"]["serverInfo"]["name"] == "ash_ai MCP Server"
     end
 
     test "handles tool execution requests" do
       # First initialize a session
-      init_body = Jason.encode!(%{
-        "jsonrpc" => "2.0",
-        "method" => "initialize",
-        "id" => "1",
-        "params" => %{
-          "clientInfo" => %{
-            "name" => "test_client",
-            "version" => "1.0.0"
+      init_body =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => "1",
+          "params" => %{
+            "clientInfo" => %{
+              "name" => "test_client",
+              "version" => "1.0.0"
+            }
           }
-        }
-      })
+        })
 
       conn =
         conn(:post, "/", init_body)
@@ -66,14 +68,15 @@ defmodule AshAi.Mcp.ServerTest do
       })
 
       # Now try to execute the list_artists tool
-      call_body = Jason.encode!(%{
-        "jsonrpc" => "2.0",
-        "method" => "tools/call",
-        "id" => "2",
-        "params" => %{
-          "name" => "list_artists"
-        }
-      })
+      call_body =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "method" => "tools/call",
+          "id" => "2",
+          "params" => %{
+            "name" => "list_artists"
+          }
+        })
 
       conn =
         conn(:post, "/", call_body)

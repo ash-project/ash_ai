@@ -134,7 +134,7 @@ defmodule AshAi.Mcp.Server do
       opts[:mcp_name]
     else
       if opts[:otp_app] do
-        "AshAi MCP Server"
+        "#{opts[:otp_app]} MCP Server"
       else
         "MCP Server"
       end

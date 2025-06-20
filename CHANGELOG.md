@@ -7,53 +7,39 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 ## [Unreleased]
 
-### Bug Fixes:
-
-* implement MCP ping utility for connection health checking according to MCP specification
-* fix EEx template rendering error in prompts capability for proper string-to-atom conversion
-
-### Features:
+### Features
 
 * implement MCP resource templates capability for parameterized resource access
 
 ## [v0.2.2](https://github.com/ash-project/ash_ai/compare/v0.2.1...v0.2.2) (2025-06-11)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * properly close connection after sending the endpoint by [@zachdaniel](https://github.com/zachdaniel)
 
-### Improvements:
+### Improvements
 
 * use relative paths in usage rules MCP by [@zachdaniel](https://github.com/zachdaniel)
 
 ## [v0.2.1](https://github.com/ash-project/ash_ai/compare/v0.2.0...v0.2.1) (2025-06-11)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * fix installer waiting for input by [@zachdaniel](https://github.com/zachdaniel)
 
-### Improvements:
+### Improvements
 
 * make usage rules display all and show file paths instead of by [@zachdaniel](https://github.com/zachdaniel)
 
 ## [v0.2.0](https://github.com/ash-project/ash_ai/compare/v0.1.11...v0.2.0) (2025-06-10)
 
-
-
-
-### Features:
+### Features
 
 * Json Processor for providers that do not support json_schema or tool calling (#49) by [@TwistingTwists](https://github.com/TwistingTwists)
 
 * improvement: Usage rules mcp integration (#60) by [Barnabas Jovanovics](https://https://github.com/barnabasJ)
 
-### Bug Fixes:
+### Bug Fixes
 
 * tasks: fix prompt typo (#62) by ChristianAlexander
 
@@ -65,7 +51,7 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 * pass tenant to AshOban.run_trigger by [@zachdaniel](https://github.com/zachdaniel)
 
-### Improvements:
+### Improvements
 
 * sync usage rules on project creation by [@zachdaniel](https://github.com/zachdaniel)
 
@@ -77,10 +63,7 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 ## [v0.1.11](https://github.com/ash-project/ash_ai/compare/v0.1.10...v0.1.11) (2025-06-04)
 
-
-
-
-### Improvements:
+### Improvements
 
 * adapters for prompt-backed actions
 
@@ -88,28 +71,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 ## [v0.1.10](https://github.com/ash-project/ash_ai/compare/v0.1.9...v0.1.10) (2025-05-30)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * use after_action instead of after_transaction to afford atomic_updates (#43)
 
 ## [v0.1.9](https://github.com/ash-project/ash_ai/compare/v0.1.8...v0.1.9) (2025-05-27)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * remove unnecessary source type from generated chat code
 
 ## [v0.1.8](https://github.com/ash-project/ash_ai/compare/v0.1.7...v0.1.8) (2025-05-27)
 
-
-
-
-### Improvements:
+### Improvements
 
 * overhaul ash_ai.gen.chat to store tool calls
 
@@ -117,87 +91,65 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 ## [v0.1.7](https://github.com/ash-project/ash_ai/compare/v0.1.6...v0.1.7) (2025-05-21)
 
-
-
-
-### Improvements:
+### Improvements
 
 * Add usage rules for Ash AI
 
 ## [v0.1.6](https://github.com/ash-project/ash_ai/compare/v0.1.5...v0.1.6) (2025-05-21)
 
-### Improvements:
+### Improvements
 
 * Rename package_ruels to usage_rules
 
-
 ## [v0.1.5](https://github.com/ash-project/ash_ai/compare/v0.1.4...v0.1.5) (2025-05-21)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * properly display generators, add new usage-rules.md dev tool
 
-### Improvements:
+### Improvements
 
 * add `ash_ai.gen.package_rules` task to create a rules file
 
 ## [v0.1.4](https://github.com/ash-project/ash_ai/compare/v0.1.3...v0.1.4) (2025-05-20)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * Replace doc with description (#36)
 
 ## [v0.1.3](https://github.com/ash-project/ash_ai/compare/v0.1.2...v0.1.3) (2025-05-20)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * use `description` not `doc`
 
 ## [v0.1.2](https://github.com/ash-project/ash_ai/compare/v0.1.1...v0.1.2) (2025-05-20)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * improve chat ui heex template
 
 * don't reply to the initialized notification (#35)
 
-### Improvements:
+### Improvements
 
 * update chat heex template. (#33)
 
 ## [v0.1.1](https://github.com/ash-project/ash_ai/compare/v0.1.0...v0.1.1) (2025-05-14)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * more fixes for gen.chat message order
 
 * properly generate chat message log
 
-### Improvements:
+### Improvements
 
 * fix update pre_flight permission request for tools
 
 ## [v0.1.0](https://github.com/ash-project/ash_ai/compare/v0.1.0...v0.1.0) (2025-05-14)
 
-
-
-
-### Bug Fixes:
+### Bug Fixes
 
 * always configure chat queues
 
@@ -215,7 +167,7 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 * use `message` instead of `reason`
 
-### Improvements:
+### Improvements
 
 * add `mix ash_ai.gen.mcp`
 

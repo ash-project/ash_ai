@@ -148,7 +148,7 @@ defmodule AshAi.MixProject do
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
       {:langchain, "~> 0.3"},
-      {:ash_mcp, path: "../ash_mcp"},
+      {:ash_mcp, github: "norbu09/ash_mcp"},
       {:ash_postgres, "~> 2.5", optional: true},
       {:ash_oban, "~> 0.4.3", optional: true},
       {:ash_phoenix, "~> 2.0", optional: true},
