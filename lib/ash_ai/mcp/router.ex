@@ -28,11 +28,14 @@ if Code.ensure_loaded?(Plug) do
     plug(:dispatch)
 
     match _ do
-      # Determine target and build opts at runtime
-      target = if Code.ensure_loaded?(AshMcp.Router), do: AshMcp.Router, else: AshAi.Mcp.Server
+      # Use AshMcp.Router with Ash-specific options
       opts = build_ash_mcp_opts(conn.assigns.router_opts)
 
-      target.call(conn, target.init(opts))
+      if Code.ensure_loaded?(AshMcp.Router) do
+        AshMcp.Router.call(conn, AshMcp.Router.init(opts))
+      else
+        send_resp(conn, 503, "MCP functionality requires ash_mcp dependency")
+      end
     end
 
     # Build options with Ash-specific defaults

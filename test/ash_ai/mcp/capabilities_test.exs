@@ -10,8 +10,8 @@ defmodule AshAi.Mcp.CapabilitiesTest do
 
       capability_names = Enum.map(capabilities, fn {name, _module, _opts} -> name end)
 
-      assert :tools in capability_names
-      assert :resources in capability_names
+      assert :ash_tools in capability_names
+      assert :ash_resources in capability_names
       assert :prompts in capability_names
       assert :sampling in capability_names
     end
@@ -202,9 +202,8 @@ defmodule AshAi.Mcp.CapabilitiesTest do
 
       # Test session cleanup
       assert :ok = Session.terminate_session("test-session")
-      # After termination, session exists but is marked as terminated
-      assert {:ok, terminated_session} = Session.get_session("test-session")
-      assert terminated_session.status == :terminated
+      # After termination, session is removed from storage
+      assert {:error, :not_found} = Session.get_session("test-session")
     end
 
     test "session timeout and cleanup" do
@@ -223,7 +222,7 @@ defmodule AshAi.Mcp.CapabilitiesTest do
       Process.sleep(100)
 
       # Session should be cleaned up
-      assert {:error, :session_not_found} = Session.get_session("timeout-session")
+      assert {:error, :not_found} = Session.get_session("timeout-session")
     end
   end
 
