@@ -147,6 +147,7 @@ defmodule AshAi.Mcp.Registry do
     :ets.insert(@table_name, {:tools, AshAi.Mcp.Capabilities.Tools, []})
     :ets.insert(@table_name, {:resources, AshAi.Mcp.Capabilities.Resources, []})
     :ets.insert(@table_name, {:prompts, AshAi.Mcp.Capabilities.Prompts, []})
+    :ets.insert(@table_name, {:sampling, AshAi.Mcp.Capabilities.Sampling, []})
   end
 
   defp extract_capability_from_method(method) do

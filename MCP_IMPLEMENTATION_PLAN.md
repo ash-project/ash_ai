@@ -58,12 +58,12 @@
   - Integration with AshAi's existing prompt systems
 - **Integration**: Expose prompts defined in Ash domains
 
-#### 2.3 Sampling Capability (Optional) ⏳
+#### 2.3 Sampling Capability ✅
 - **Goal**: Expose AshAi's LLM capabilities through MCP sampling
 - **Files to create**:
   - `lib/ash_ai/mcp/capabilities/sampling.ex` - Sampling implementation
 - **Features**: Text generation through AshAi's LLM providers
-- **Integration**: Leverage existing AshAi.ChatModel functionality
+- **Integration**: Leverage existing LangChain functionality with proper API usage
 
 ### Phase 3: Protocol Compliance & Security (2-3 days)
 
@@ -87,23 +87,24 @@
 
 ### Phase 4: Testing & Quality Assurance (3-4 days)
 
-#### 4.1 Comprehensive Test Suite ⏳
+#### 4.1 Comprehensive Test Suite ✅
 - **Goal**: Ensure reliability and protocol compliance
 - **Files to create**:
-  - `test/ash_ai/mcp/server_test.exs` - Core server functionality
-  - `test/ash_ai/mcp/capabilities/` - Capability-specific tests
-  - `test/ash_ai/mcp/integration_test.exs` - End-to-end protocol tests
+  - `test/ash_ai/mcp/capabilities_test.exs` - Capability-specific tests ✅
+  - `test/ash_ai/mcp/integration_test.exs` - End-to-end protocol tests ✅
 - **Features**:
-  - Protocol compliance testing
-  - Capability negotiation tests
-  - Error handling validation
+  - Protocol compliance testing ✅
+  - Capability negotiation tests ✅ 
+  - Error handling validation ✅
+  - Session management testing ✅
 
-#### 4.2 Documentation & Examples ⏳
+#### 4.2 Documentation & Examples ✅
 - **Goal**: Clear usage patterns and integration examples
 - **Files to enhance**:
-  - Update `lib/ash_ai/mcp.ex` with new capabilities
-  - Add client connection examples
-  - Integration guides for Phoenix applications
+  - Update `lib/ash_ai/mcp.ex` with new capabilities ✅
+  - Add client connection examples ✅
+  - Integration guides for Phoenix applications ✅
+  - Complete MCP tutorial with step-by-step guide ✅
 
 ### Phase 5: Advanced Features (Future/Optional - 2-3 days)
 
@@ -111,9 +112,10 @@
 - **Goal**: Real-time resource change notifications
 - **Implementation**: SSE-based subscription system for Ash resource changes
 
-#### 5.2 OAuth2 Authentication ⏳
+#### 5.2 OAuth2 Authentication ✅
 - **Goal**: Enterprise-grade authentication
 - **Implementation**: OAuth2 flow integration with AshAuthentication
+- **Features**: Full OAuth2 flow with multiple providers (GitHub, Google, Discord, Microsoft)
 
 #### 5.3 Multi-tenant Session Management ⏳
 - **Goal**: Support for tenant-aware MCP sessions
@@ -224,6 +226,39 @@ end
 ## Progress Tracking
 
 **All Core Phases Complete! 🎉**
+
+### ✅ **Phase 2.3 Complete: Sampling Capability**
+
+**Sampling Capability ✅**
+- Created `AshAi.Mcp.Capabilities.Sampling` implementing MCP sampling specification
+- Supports `sampling/createMessage` method for text generation
+- Integrates with LangChain for LLM interactions
+- Handles message validation and conversion between MCP and LangChain formats
+- Registered in capability registry for automatic discovery
+
+### ✅ **Phase 4 Complete: Testing & Quality Assurance**
+
+**Comprehensive Test Suite ✅**
+- Created `test/ash_ai/mcp/capabilities_test.exs` with 21 test cases
+- Created `test/ash_ai/mcp/integration_test.exs` for end-to-end protocol testing
+- Tests cover all capabilities: Tools, Resources, Prompts, Sampling
+- Session management and error handling thoroughly tested
+- Protocol compliance validated with real JSON-RPC interactions
+
+**Documentation & Examples ✅**
+- Created comprehensive MCP tutorial (`documentation/MCP_TUTORIAL.md`)
+- Updated README with feature status and tutorial links
+- Covers setup, authentication, client integration, and troubleshooting
+- Python and TypeScript client examples included
+
+### ✅ **Phase 5.2 Complete: OAuth2 Authentication**
+
+**Full OAuth2 Implementation ✅**
+- Complete OAuth2 flow with AshAuthentication integration
+- Support for GitHub, Google, Discord, Microsoft providers
+- Session-based and bearer token authentication
+- CSRF protection with state parameters
+- Success/failure pages with auto-close functionality
 
 **Legend:**
 - ⏳ Pending
