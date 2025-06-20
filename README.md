@@ -3,6 +3,8 @@
 
 ## MCP (Model Context Protocol) Server
 
+📖 **[Complete MCP Tutorial](documentation/MCP_TUTORIAL.md)** - Step-by-step guide to setting up and using MCP servers
+
 Both the dev & production MCP servers can be installed with
 
 `mix ash_ai.gen.mcp`
@@ -35,17 +37,26 @@ The protocol version we implement is 2025-03-26. As of this writing, many tools 
 
 However, as of the writing of this guide, it requires setting a previous protocol version as noted above.
 
+#### Features
+
+✅ **OAuth2 Authentication** - Full OAuth2 flow with AshAuthentication integration  
+✅ **Resources & Prompts** - Support for MCP resources and prompt templates  
+✅ **Session Management** - Complete session handling with timeout and cleanup  
+✅ **Capability Registry** - Extensible capability system for custom MCP features  
+
 #### Roadmap
 
-- Implement OAuth2 flow with AshAuthentication (long term)
-- Implement support for more than just tools, i.e resources etc.
-- Implement sessions, and provide a session id context to tools (this code is just commented out, and can be uncommented, just needs timeout logic for inactive sesions)
+- Enhanced security features and rate limiting
+- WebSocket support for real-time MCP communication  
+- Advanced caching and performance optimizations
 
 #### Installation
 
 ##### Authentication
 
-We don't currently support the OAuth2 flow out of the box with AshAi, but the goal is to eventually support this with AshAuthentication. You can always implement that yourself, but the quikest way to value is to use the new `api_key` strategy.
+AshAi now supports **OAuth2 authentication** with AshAuthentication integration! For a complete setup guide, see the [MCP Tutorial](documentation/MCP_TUTORIAL.md#authentication-setup).
+
+For simpler setups, you can also use the `api_key` strategy:
 
 Use `mix ash_authentication.add_strategy api_key` to install it if you haven't already.
 
