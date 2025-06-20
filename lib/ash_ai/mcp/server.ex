@@ -259,12 +259,43 @@ defmodule AshAi.Mcp.Server do
         # TODO: Cancel request?
         {:no_response, nil, session_id}
 
+      %{"method" => "ping", "id" => id, "params" => _params} ->
+        # Handle ping request according to MCP specification
+        # Update session activity if we have one
+        if session_id do
+          Session.touch_session(session_id)
+        end
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{}
+        }
+
+        {:json_response, Jason.encode!(response), session_id}
+
+      %{"method" => "ping", "id" => id} ->
+        # Handle ping request according to MCP specification
+        # Update session activity if we have one
+        if session_id do
+          Session.touch_session(session_id)
+        end
+
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => %{}
+        }
+
+        {:json_response, Jason.encode!(response), session_id}
+
       %{"method" => method, "id" => id, "params" => params}
       when method in [
              "tools/list",
              "tools/call",
              "resources/list",
              "resources/read",
+             "resources/templates/list",
              "prompts/list",
              "prompts/get"
            ] ->

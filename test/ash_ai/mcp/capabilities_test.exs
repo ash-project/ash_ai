@@ -95,6 +95,29 @@ defmodule AshAi.Mcp.CapabilitiesTest do
       result = Resources.handle_method("resources/read", params, "test-session", otp_app: :ash_ai)
       assert {:ok, %{"contents" => _}} = result
     end
+
+    test "handles resources/templates/list method" do
+      result =
+        Resources.handle_method("resources/templates/list", %{}, "test-session", otp_app: :ash_ai)
+
+      assert {:ok, %{"resourceTemplates" => templates}} = result
+      assert is_list(templates)
+      assert length(templates) > 0
+
+      # Verify that each template has the required fields
+      Enum.each(templates, fn template ->
+        assert Map.has_key?(template, "uriTemplate")
+        assert Map.has_key?(template, "name")
+        assert Map.has_key?(template, "description")
+        assert Map.has_key?(template, "mimeType")
+        assert template["mimeType"] == "application/json"
+      end)
+
+      # Verify that we have at least one general template
+      general_template = Enum.find(templates, &(&1["uriTemplate"] == "ash://{domain}/{resource}"))
+      assert general_template != nil
+      assert general_template["name"] == "Ash Resources"
+    end
   end
 
   describe "Prompts Capability" do

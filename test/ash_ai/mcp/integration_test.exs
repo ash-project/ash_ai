@@ -339,6 +339,107 @@ defmodule AshAi.Mcp.IntegrationTest do
         assert system_prompt["description"] != nil
       end
     end
+
+    test "handles ping requests correctly" do
+      # Initialize session
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
+
+      init_response = Router.call(init_conn, @opts)
+      session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
+
+      # Test ping without params
+      ping_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "ping"
+        })
+        |> put_req_header("mcp-session-id", session_id)
+
+      response = Router.call(ping_conn, @opts)
+      assert response.status == 200
+
+      result = Jason.decode!(response.resp_body)
+      assert result["jsonrpc"] == "2.0"
+      assert result["id"] == "2"
+      assert result["result"] == %{}
+
+      # Test ping with params (like in the user's example)
+      ping_with_params_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "3",
+          "method" => "ping",
+          "params" => %{"_meta" => %{"progressToken" => 10}}
+        })
+        |> put_req_header("mcp-session-id", session_id)
+
+      response2 = Router.call(ping_with_params_conn, @opts)
+      assert response2.status == 200
+
+      result2 = Jason.decode!(response2.resp_body)
+      assert result2["jsonrpc"] == "2.0"
+      assert result2["id"] == "3"
+      assert result2["result"] == %{}
+    end
+
+    test "handles resource templates listing" do
+      # Initialize session
+      init_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{
+            "protocolVersion" => "2024-11-05",
+            "clientInfo" => %{"name" => "test", "version" => "1.0"}
+          }
+        })
+
+      init_response = Router.call(init_conn, @opts)
+      session_id = List.first(get_resp_header(init_response, "mcp-session-id"))
+
+      # List available resource templates
+      templates_conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "2",
+          "method" => "resources/templates/list"
+        })
+        |> put_req_header("mcp-session-id", session_id)
+
+      response = Router.call(templates_conn, @opts)
+      assert response.status in [200, 202]
+
+      if response.status == 200 do
+        result = Jason.decode!(response.resp_body)
+        assert result["jsonrpc"] == "2.0"
+        assert result["id"] == "2"
+        assert Map.has_key?(result["result"], "resourceTemplates")
+        assert is_list(result["result"]["resourceTemplates"])
+
+        # Verify templates structure
+        templates = result["result"]["resourceTemplates"]
+        assert length(templates) > 0
+
+        # Check that we have the general Ash resources template
+        general_template =
+          Enum.find(templates, &(&1["uriTemplate"] == "ash://{domain}/{resource}"))
+
+        assert general_template != nil
+        assert general_template["name"] == "Ash Resources"
+        assert general_template["mimeType"] == "application/json"
+      end
+    end
   end
 
   describe "Error Cases" do

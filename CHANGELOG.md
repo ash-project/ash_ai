@@ -5,6 +5,17 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [Unreleased]
+
+### Bug Fixes:
+
+* implement MCP ping utility for connection health checking according to MCP specification
+* fix EEx template rendering error in prompts capability for proper string-to-atom conversion
+
+### Features:
+
+* implement MCP resource templates capability for parameterized resource access
+
 ## [v0.2.2](https://github.com/ash-project/ash_ai/compare/v0.2.1...v0.2.2) (2025-06-11)
 
 

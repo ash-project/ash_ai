@@ -96,7 +96,48 @@ defmodule AshAi.Mcp.ResourceAdapter do
     end
   end
 
+  @doc """
+  Lists resource templates for parameterized resource access.
+  """
+  def list_resource_templates(opts \\ []) do
+    case get_domains_and_resources(opts[:otp_app]) do
+      {:ok, domains_and_resources} ->
+        templates = build_resource_templates(domains_and_resources)
+        {:ok, templates}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   # Private functions
+
+  defp build_resource_templates(domains_and_resources) do
+    domain_templates =
+      domains_and_resources
+      |> Enum.map(fn {domain, _resources} ->
+        domain_name = domain |> Module.split() |> List.last()
+
+        %{
+          "uriTemplate" => "ash://#{domain_name}/{resource}",
+          "name" => "#{domain_name} Resources",
+          "description" => "Access any resource in the #{domain_name} domain by name",
+          "mimeType" => "application/json"
+        }
+      end)
+
+    # Add a general template for all domains and resources
+    general_templates = [
+      %{
+        "uriTemplate" => "ash://{domain}/{resource}",
+        "name" => "Ash Resources",
+        "description" => "Access any Ash resource by domain and resource name",
+        "mimeType" => "application/json"
+      }
+    ]
+
+    domain_templates ++ general_templates
+  end
 
   defp get_domains_and_resources(nil) do
     {:error, :otp_app_required}

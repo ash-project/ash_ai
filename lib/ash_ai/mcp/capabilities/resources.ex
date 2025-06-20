@@ -61,7 +61,30 @@ defmodule AshAi.Mcp.Capabilities.Resources do
     end
   end
 
+  def handle_method("resources/templates/list", _params, _session_id, opts) do
+    case get_resource_templates(opts) do
+      {:ok, templates} ->
+        {:ok, %{"resourceTemplates" => templates}}
+
+      {:error, :otp_app_required} ->
+        {:error, {:missing_configuration, "otp_app is required for resource template discovery"}}
+
+      {:error, {:discovery_failed, error}} ->
+        Logger.warning("Resource template discovery failed: #{inspect(error)}")
+        {:error, {:discovery_failed, "Failed to discover resource templates"}}
+    end
+  end
+
   def handle_method(_method, _params, _session_id, _opts) do
     :not_handled
+  end
+
+  # Private functions
+
+  defp get_resource_templates(opts) do
+    case ResourceAdapter.list_resource_templates(opts) do
+      {:ok, templates} -> {:ok, templates}
+      {:error, reason} -> {:error, reason}
+    end
   end
 end
