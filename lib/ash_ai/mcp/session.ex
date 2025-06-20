@@ -114,13 +114,8 @@ defmodule AshAi.Mcp.Session do
   Lists all active sessions.
   """
   def list_sessions do
-    case :ets.tab2list(@table_name) do
-      sessions when is_list(sessions) ->
-        Enum.map(sessions, fn {_id, session} -> session end)
-
-      _ ->
-        []
-    end
+    :ets.tab2list(@table_name)
+    |> Enum.map(fn {_id, session} -> session end)
   end
 
   @doc """

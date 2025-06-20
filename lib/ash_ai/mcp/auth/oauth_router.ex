@@ -29,11 +29,7 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     |> Keyword.put_new(:failure_redirect, "/mcp/auth/failure")
   end
 
-  @doc """
-  OAuth authorization endpoint.
-
-  Initiates OAuth flow for the specified provider.
-  """
+  # OAuth authorization endpoint - initiates OAuth flow for the specified provider
   get "/auth/:provider" do
     provider = String.to_existing_atom(provider)
     opts = conn.assigns[:oauth_opts] || []
@@ -45,11 +41,7 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     end
   end
 
-  @doc """
-  OAuth callback endpoint.
-
-  Handles OAuth provider callbacks and completes authentication.
-  """
+  # OAuth callback endpoint - handles OAuth provider callbacks and completes authentication
   get "/auth/:provider/callback" do
     provider = String.to_existing_atom(provider)
     opts = conn.assigns[:oauth_opts] || []
@@ -57,11 +49,7 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     handle_oauth_callback(conn, provider, opts)
   end
 
-  @doc """
-  OAuth success page.
-
-  Displays authentication success and provides session information.
-  """
+  # OAuth success page - displays authentication success and provides session information
   get "/auth/success" do
     mcp_session = conn.assigns[:mcp_session]
     user = conn.assigns[:current_user]
@@ -116,11 +104,7 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     |> send_resp(200, success_html)
   end
 
-  @doc """
-  OAuth failure page.
-
-  Displays authentication failure information.
-  """
+  # OAuth failure page - displays authentication failure information
   get "/auth/failure" do
     error = conn.params["error"] || "unknown_error"
     error_description = conn.params["error_description"] || "Authentication failed"
@@ -173,11 +157,7 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     |> send_resp(200, failure_html)
   end
 
-  @doc """
-  MCP session status endpoint.
-
-  Returns current authentication status for MCP clients.
-  """
+  # MCP session status endpoint - returns current authentication status for MCP clients
   get "/status" do
     user = conn.assigns[:current_user]
     mcp_session = conn.assigns[:mcp_session]
@@ -250,14 +230,14 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
       # Process successful callback
       true ->
         case AshAi.Mcp.Auth.handle_oauth_callback(conn, provider, opts) do
-          conn when is_map(conn) ->
+          %Plug.Conn{} = updated_conn ->
             # Clear OAuth session data
-            conn =
-              conn
+            updated_conn =
+              updated_conn
               |> delete_session(:oauth_state)
               |> delete_session(:oauth_provider)
 
-            redirect_to_success(conn)
+            redirect_to_success(updated_conn)
 
           {:error, reason} ->
             Logger.error("OAuth callback processing failed: #{inspect(reason)}")
@@ -309,17 +289,9 @@ defmodule AshAi.Mcp.Auth.OAuthRouter do
     |> send_resp(200, Jason.encode!(data))
   end
 
-  defp send_error(conn, status, message) do
-    status_code =
-      case status do
-        :not_found -> 404
-        :unauthorized -> 401
-        :bad_request -> 400
-        _ -> 500
-      end
-
+  defp send_error(conn, :not_found, message) do
     conn
     |> put_resp_content_type("application/json")
-    |> send_resp(status_code, Jason.encode!(%{error: message}))
+    |> send_resp(404, Jason.encode!(%{error: message}))
   end
 end

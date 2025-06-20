@@ -103,13 +103,11 @@ defmodule AshAi.Mcp.ResourceAdapter do
   end
 
   defp get_domains_and_resources(otp_app) do
-    try do
-      domains_and_resources = Ash.Info.domains_and_resources(otp_app)
-      {:ok, domains_and_resources}
-    rescue
-      error ->
-        {:error, {:discovery_failed, error}}
-    end
+    domains_and_resources = Ash.Info.domains_and_resources(otp_app)
+    {:ok, domains_and_resources}
+  rescue
+    error ->
+      {:error, {:discovery_failed, error}}
   end
 
   defp build_resource_uri(domain, resource) do
@@ -139,13 +137,11 @@ defmodule AshAi.Mcp.ResourceAdapter do
   end
 
   defp resource_description(resource) do
-    try do
-      case Ash.Resource.Info.description(resource) do
-        description when is_binary(description) -> description
-        _ -> "Ash resource: #{resource_name(resource)}"
-      end
-    rescue
+    case Ash.Resource.Info.description(resource) do
+      description when is_binary(description) -> description
       _ -> "Ash resource: #{resource_name(resource)}"
     end
+  rescue
+    _ -> "Ash resource: #{resource_name(resource)}"
   end
 end

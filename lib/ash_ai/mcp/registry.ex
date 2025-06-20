@@ -42,13 +42,8 @@ defmodule AshAi.Mcp.Registry do
   Lists all registered capabilities.
   """
   def list_capabilities do
-    case :ets.tab2list(@table_name) do
-      capabilities when is_list(capabilities) ->
-        Enum.map(capabilities, fn {name, module, opts} -> {name, module, opts} end)
-
-      _ ->
-        []
-    end
+    :ets.tab2list(@table_name)
+    |> Enum.map(fn {name, module, opts} -> {name, module, opts} end)
   end
 
   @doc """
@@ -125,19 +120,17 @@ defmodule AshAi.Mcp.Registry do
 
   @impl GenServer
   def handle_call({:register, name, module, opts}, _from, state) do
-    try do
-      # Validate that the module implements the capability behavior
-      unless function_exported?(module, :capability_name, 0) do
-        raise ArgumentError, "Module #{inspect(module)} does not implement capability_name/0"
-      end
-
+    # Validate that the module implements the capability behavior
+    if function_exported?(module, :capability_name, 0) do
       :ets.insert(@table_name, {name, module, opts})
       Logger.debug("Registered MCP capability: #{name} -> #{inspect(module)}")
       {:reply, :ok, state}
-    rescue
-      error ->
-        {:reply, {:error, error}, state}
+    else
+      {:reply, {:error, {:invalid_capability_module, module}}, state}
     end
+  rescue
+    error ->
+      {:reply, {:error, error}, state}
   end
 
   @impl GenServer

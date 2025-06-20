@@ -80,35 +80,31 @@ defmodule AshAi.Mcp.PromptTemplate do
   end
 
   defp get_domains_and_resources(otp_app) do
-    try do
-      domains_and_resources = Ash.Info.domains_and_resources(otp_app)
-      {:ok, domains_and_resources}
-    rescue
-      error ->
-        {:error, {:discovery_failed, error}}
-    end
+    domains_and_resources = Ash.Info.domains_and_resources(otp_app)
+    {:ok, domains_and_resources}
+  rescue
+    error ->
+      {:error, {:discovery_failed, error}}
   end
 
   defp get_resource_prompts(domain, resource) do
-    try do
-      # Get all prompt-backed actions from the resource
-      resource
-      |> Ash.Resource.Info.actions()
-      |> Enum.filter(&prompt_action?/1)
-      |> Enum.map(fn action ->
-        %{
-          name: "#{domain_name(domain)}.#{resource_name(resource)}.#{action.name}",
-          description: action.description || "Prompt-backed action: #{action.name}",
-          type: :action_prompt,
-          domain: domain,
-          resource: resource,
-          action: action,
-          arguments: get_action_arguments(action)
-        }
-      end)
-    rescue
-      _ -> []
-    end
+    # Get all prompt-backed actions from the resource
+    resource
+    |> Ash.Resource.Info.actions()
+    |> Enum.filter(&prompt_action?/1)
+    |> Enum.map(fn action ->
+      %{
+        name: "#{domain_name(domain)}.#{resource_name(resource)}.#{action.name}",
+        description: action.description || "Prompt-backed action: #{action.name}",
+        type: :action_prompt,
+        domain: domain,
+        resource: resource,
+        action: action,
+        arguments: get_action_arguments(action)
+      }
+    end)
+  rescue
+    _ -> []
   end
 
   defp get_system_prompts do
@@ -191,58 +187,54 @@ defmodule AshAi.Mcp.PromptTemplate do
   end
 
   defp render_action_prompt(prompt_info, arguments) do
-    try do
-      # This would need access to actual action input and context
-      # For now, return a simplified template
-      {:ok,
-       %{
-         messages: [
-           %{
-             "role" => "system",
-             "content" =>
-               "You are responsible for performing the #{prompt_info.action.name} action."
-           },
-           %{
-             "role" => "user",
-             "content" => "Perform the action with arguments: #{Jason.encode!(arguments)}"
-           }
-         ]
-       }}
-    rescue
-      error ->
-        {:error, {:render_failed, error}}
-    end
+    # This would need access to actual action input and context
+    # For now, return a simplified template
+    {:ok,
+     %{
+       messages: [
+         %{
+           "role" => "system",
+           "content" =>
+             "You are responsible for performing the #{prompt_info.action.name} action."
+         },
+         %{
+           "role" => "user",
+           "content" => "Perform the action with arguments: #{Jason.encode!(arguments)}"
+         }
+       ]
+     }}
+  rescue
+    error ->
+      {:error, {:render_failed, error}}
   end
 
   defp render_system_prompt(prompt_info, arguments) do
-    try do
-      case prompt_info.template do
-        {system_prompt, user_message} ->
-          system_content = EEx.eval_string(system_prompt, assigns: arguments)
-          user_content = EEx.eval_string(user_message, assigns: arguments)
+    case prompt_info.template do
+      {system_prompt, user_message} ->
+        system_content = EEx.eval_string(system_prompt, assigns: arguments)
+        user_content = EEx.eval_string(user_message, assigns: arguments)
 
-          {:ok,
-           %{
-             messages: [
-               %{"role" => "system", "content" => system_content},
-               %{"role" => "user", "content" => user_content}
-             ]
-           }}
+        {:ok,
+         %{
+           messages: [
+             %{"role" => "system", "content" => system_content},
+             %{"role" => "user", "content" => user_content}
+           ]
+         }}
 
-        single_prompt ->
-          content = EEx.eval_string(single_prompt, assigns: arguments)
+      single_prompt ->
+        content = EEx.eval_string(single_prompt, assigns: arguments)
 
-          {:ok,
-           %{
-             messages: [
-               %{"role" => "user", "content" => content}
-             ]
-           }}
-      end
-    rescue
-      error ->
-        {:error, {:render_failed, error}}
+        {:ok,
+         %{
+           messages: [
+             %{"role" => "user", "content" => content}
+           ]
+         }}
     end
+  rescue
+    error ->
+      {:error, {:render_failed, error}}
   end
 
   defp get_default_action_template do

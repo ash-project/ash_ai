@@ -180,15 +180,15 @@ defmodule AshAi.Mcp.Auth.Strategy do
 
   defp make_token_request(url, params) do
     headers = [
-      {"Accept", "application/json"},
-      {"Content-Type", "application/x-www-form-urlencoded"}
+      {~c"Accept", ~c"application/json"},
+      {~c"Content-Type", ~c"application/x-www-form-urlencoded"}
     ]
 
-    body = URI.encode_query(params)
+    body = URI.encode_query(params) |> to_charlist()
 
     case :httpc.request(
            :post,
-           {to_charlist(url), headers, ~c"application/x-www-form-urlencoded", to_charlist(body)},
+           {to_charlist(url), headers, ~c"application/x-www-form-urlencoded", body},
            [],
            []
          ) do
@@ -279,20 +279,24 @@ defmodule AshAi.Mcp.Auth.Strategy do
     end
   end
 
-  defp get_ash_authentication_config(_otp_app) do
+  defp get_ash_authentication_config(otp_app) do
     # This would integrate with AshAuthentication to get the actual configuration
-    # For now, return a placeholder structure
-    {:ok,
-     %{
-       strategies: [
-         %{
-           name: :github,
-           provider: :github,
-           client_id: System.get_env("GITHUB_CLIENT_ID"),
-           client_secret: System.get_env("GITHUB_CLIENT_SECRET")
-         }
-       ]
-     }}
+    # For now, return a placeholder structure that could fail
+    if otp_app do
+      {:ok,
+       %{
+         strategies: [
+           %{
+             name: :github,
+             provider: :github,
+             client_id: System.get_env("GITHUB_CLIENT_ID"),
+             client_secret: System.get_env("GITHUB_CLIENT_SECRET")
+           }
+         ]
+       }}
+    else
+      {:error, :invalid_otp_app}
+    end
   end
 
   defp find_oauth_strategy(config, provider) do

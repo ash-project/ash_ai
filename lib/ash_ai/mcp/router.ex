@@ -24,8 +24,8 @@ if Code.ensure_loaded?(Plug) do
 
     use Plug.Router, copy_opts_to_assign: :router_opts
 
-    alias AshAi.Mcp.Server
     alias AshAi.Mcp.Auth
+    alias AshAi.Mcp.Server
 
     # Parse the request body for JSON
     plug(Plug.Parsers,
@@ -45,14 +45,14 @@ if Code.ensure_loaded?(Plug) do
       handle_auth_route(conn, fn conn ->
         user = conn.assigns[:current_user]
         mcp_session = conn.assigns[:mcp_session]
-        
+
         status = %{
           authenticated: not is_nil(user),
           user: if(user, do: %{id: user.id, email: user.email}, else: nil),
           session_id: mcp_session && mcp_session.id,
           auth_method: conn.assigns[:auth_method]
         }
-        
+
         conn
         |> put_resp_content_type("application/json")
         |> send_resp(200, Jason.encode!(status))
@@ -114,7 +114,7 @@ if Code.ensure_loaded?(Plug) do
 
     # Merge authentication context into opts
     defp merge_auth_context(opts, conn) do
-      auth_context = %{
+      auth_context = [
         actor: conn.assigns[:current_user],
         tenant: conn.assigns[:current_tenant],
         context: %{
@@ -122,11 +122,13 @@ if Code.ensure_loaded?(Plug) do
           auth_method: conn.assigns[:auth_method],
           mcp_session: conn.assigns[:mcp_session]
         }
-      }
+      ]
 
       opts
       |> Keyword.merge(auth_context)
-      |> Keyword.update(:context, auth_context.context, &Map.merge(&1, auth_context.context))
+      |> Keyword.update(:context, auth_context[:context], fn existing_context ->
+        Map.merge(existing_context || %{}, auth_context[:context])
+      end)
     end
   end
 end

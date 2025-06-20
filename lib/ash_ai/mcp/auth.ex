@@ -100,8 +100,10 @@ defmodule AshAi.Mcp.Auth do
     otp_app = Keyword.fetch!(opts, :otp_app)
 
     with {:ok, strategy} <- get_oauth_strategy(otp_app, provider),
-         {:ok, user_info} <- exchange_code_for_token(conn, strategy),
-         {:ok, user} <- create_or_update_user(user_info, strategy, opts) do
+         {:ok, user_info} <- exchange_code_for_token(conn, strategy) do
+      # For now, use user_info directly as the user object
+      # In a full implementation, this would create/update a user record
+      user = %{id: user_info.id, email: user_info.email, name: user_info.name}
       # Create MCP session with authenticated user
       session_opts = [
         auth_context: %{
@@ -241,10 +243,14 @@ defmodule AshAi.Mcp.Auth do
     end
   end
 
-  defp load_user_from_session(user_id, opts) do
+  defp load_user_from_session(user_id, _opts) do
     # This would need to be implemented based on the user resource
-    # For now, return a placeholder
-    {:ok, %{id: user_id, email: "user@example.com"}}
+    # For now, return a placeholder that could fail
+    if user_id do
+      {:ok, %{id: user_id, email: "user@example.com"}}
+    else
+      {:error, :user_not_found}
+    end
   end
 
   defp get_mcp_session(session_id) do
@@ -270,6 +276,8 @@ defmodule AshAi.Mcp.Auth do
       {:ok, token_data} -> {:ok, token_data.user_info}
       {:error, reason} -> {:error, reason}
     end
+  rescue
+    _error -> {:error, :token_exchange_failed}
   end
 
   defp build_callback_url(conn, provider) do
@@ -280,11 +288,13 @@ defmodule AshAi.Mcp.Auth do
     "#{scheme}://#{host}#{port}/mcp/auth/#{provider}/callback"
   end
 
-  defp create_or_update_user(user_info, strategy, opts) do
-    # This would create or update the user based on OAuth user info
-    # For now, return a placeholder
-    {:ok, %{id: 1, email: user_info.email, name: user_info.name}}
-  end
+  # This function is reserved for future OAuth user creation/update functionality
+  # Currently unused but kept for future implementation
+  # defp create_or_update_user(user_info, _strategy, _opts) do
+  #   # This would create or update the user based on OAuth user info
+  #   # For now, return a placeholder
+  #   {:ok, %{id: 1, email: user_info.email, name: user_info.name}}
+  # end
 
   defp generate_state do
     :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
