@@ -57,6 +57,20 @@ defmodule AshAi.Actions.Prompt do
   The first argument to `prompt/2` is the `LangChain` model. It can also be a 2-arity function which will be invoked
   with the input and the context, useful for dynamically selecting the model.
 
+  ## Dynamic Configuration (using 2-arity function)
+  For runtime configuration (like using environment variables), pass a function
+  as the first argument to `prompt/2`:
+      run prompt(
+        fn _input, _context ->
+          LangChain.ChatModels.ChatOpenAI.new!(%{
+            model: "gpt-4o",
+            # this can also be configured in application config, see langchain docs for more.
+            api_key: System.get_env("OPENAI_API_KEY"),
+            endpoint: System.get_env("OPENAI_ENDPOINT")
+          })
+        end,
+        tools: false
+      )
 
 
   This function will be executed just before the prompt is sent to the LLM.
@@ -285,7 +299,7 @@ defmodule AshAi.Actions.Prompt do
   # sobelow_skip ["RCE.EEx"]
   defp get_messages(input, opts, context) do
     template_vars = %{input: input, context: context}
-    
+
     case Keyword.get(opts, :prompt, @prompt_template) do
       # Format 1: String (EEx template)
       prompt when is_binary(prompt) ->
@@ -295,7 +309,7 @@ defmodule AshAi.Actions.Prompt do
           LangChain.Message.new_user!("Perform the action")
         ]
         {messages, system_prompt, "Perform the action"}
-      
+
       # Format 2: Tuple {system, user} (EEx templates)
       {system, user} when is_binary(system) and is_binary(user) ->
         system_prompt = EEx.eval_string(system, assigns: [input: input, context: context])
@@ -305,13 +319,13 @@ defmodule AshAi.Actions.Prompt do
           LangChain.Message.new_user!(user_message)
         ]
         {messages, system_prompt, user_message}
-      
+
       # Format 3: Messages list (LangChain Messages)
       messages when is_list(messages) ->
         processed_messages = process_message_templates(messages, template_vars)
         {system_prompt, user_message} = extract_legacy_prompts(processed_messages)
         {processed_messages, system_prompt, user_message}
-      
+
       # Format 4: Function returning any of the above
       func when is_function(func, 2) ->
         result = func.(input, context)
@@ -321,11 +335,11 @@ defmodule AshAi.Actions.Prompt do
 
   defp get_messages_from_result(result, input, context) do
     case result do
-      prompt when is_binary(prompt) -> 
+      prompt when is_binary(prompt) ->
         get_messages(input, [prompt: prompt], context)
-      {system, user} when is_binary(system) and is_binary(user) -> 
+      {system, user} when is_binary(system) and is_binary(user) ->
         get_messages(input, [prompt: {system, user}], context)
-      messages when is_list(messages) -> 
+      messages when is_list(messages) ->
         get_messages(input, [prompt: messages], context)
       _ ->
         raise ArgumentError, "Function must return string, {system, user} tuple, or list of Messages. Got: #{inspect(result)}"
@@ -347,17 +361,17 @@ defmodule AshAi.Actions.Prompt do
   end
 
   defp extract_legacy_prompts(messages) do
-    system_prompt = 
+    system_prompt =
       case Enum.find(messages, &(&1.role == :system)) do
         %LangChain.Message{content: content} when is_binary(content) -> content
         %LangChain.Message{content: content} when is_list(content) -> extract_text_content(content)
         _ -> ""
       end
 
-    user_message = 
+    user_message =
       case Enum.find(messages, &(&1.role == :user)) do
         %LangChain.Message{content: content} when is_binary(content) -> content
-        %LangChain.Message{content: content} when is_list(content) -> 
+        %LangChain.Message{content: content} when is_list(content) ->
           text = extract_text_content(content)
           if text == "", do: "Process the provided content", else: text
         _ -> "Process the provided content"
