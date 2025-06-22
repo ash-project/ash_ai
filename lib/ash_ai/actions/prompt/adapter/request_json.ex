@@ -33,13 +33,17 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     json_format = opts[:json_format] || :markdown
     include_examples = Keyword.get(opts, :include_examples, true)
 
-    # Build enhanced system prompt with JSON schema instructions
-    enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
-
-    messages = [
-      Message.new_system!(enhanced_system_prompt),
-      Message.new_user!(data.user_message)
-    ]
+    # Use messages directly if available, fallback to legacy prompts
+    messages = if data.messages do
+      enhance_messages_with_schema(data.messages, data, json_format, include_examples)
+    else
+      # Legacy fallback
+      enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
+      [
+        Message.new_system!(enhanced_system_prompt),
+        Message.new_user!(data.user_message)
+      ]
+    end
 
     Logger.debug("Message processing completed: #{inspect(messages)}")
 
@@ -61,10 +65,88 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
       custom_context: Map.new(Ash.Context.to_opts(data.context))
     }
     |> LLMChain.new!()
-    |> LLMChain.add_messages(messages)
+    |> AshAi.Actions.Prompt.Adapter.Helpers.add_messages_with_templates(messages, data)
     |> LLMChain.add_tools(data.tools)
     |> LLMChain.message_processors([json_processor])
     |> run_with_retries(data, max_retries, 0)
+  end
+
+  defp enhance_messages_with_schema(messages, data, json_format, include_examples) do
+    # Find system message and enhance it with schema instructions
+    enhanced_messages = Enum.map(messages, fn message ->
+      case message.role do
+        :system ->
+          enhanced_content = enhance_system_content(message.content, data, json_format, include_examples)
+          %{message | content: enhanced_content}
+        _ ->
+          message
+      end
+    end)
+
+    # If no system message found, add one at the beginning
+    case Enum.find(enhanced_messages, &(&1.role == :system)) do
+      nil ->
+        schema_instructions = build_schema_instructions(data, json_format, include_examples)
+        [Message.new_system!(schema_instructions) | enhanced_messages]
+      _ ->
+        enhanced_messages
+    end
+  end
+
+  defp enhance_system_content(content, data, json_format, include_examples) when is_binary(content) do
+    schema_instructions = build_schema_instructions(data, json_format, include_examples)
+    
+    """
+    #{content}
+
+    #{schema_instructions}
+    """
+  end
+
+  defp enhance_system_content(content, data, json_format, include_examples) when is_list(content) do
+    # For ContentPart lists, add schema instructions as a text part
+    schema_instructions = build_schema_instructions(data, json_format, include_examples)
+    content ++ [LangChain.Message.ContentPart.text!(schema_instructions)]
+  end
+
+  defp build_schema_instructions(data, json_format, include_examples) do
+    schema_json = Jason.encode!(data.json_schema, pretty: true)
+
+    format_instructions =
+      case json_format do
+        :xml ->
+          """
+          <json>
+          {
+            "result": <your response matching the schema>
+          }
+          </json>
+          """
+
+        _ ->
+          """
+          ```json
+          {
+            "result": <your response matching the schema>
+          }
+          ```
+          """
+      end
+
+    example_section = generate_example_section(data, include_examples, json_format)
+
+    """
+
+    IMPORTANT INSTRUCTIONS:
+    You MUST respond with valid JSON that matches the following schema:
+
+    #{schema_json}
+
+    Your response MUST be formatted as:
+    #{format_instructions}
+
+    The JSON must be valid and parseable. Do not include any text before or after the JSON block.#{example_section}
+    """
   end
 
   defp run_with_retries(chain, data, max_retries, attempt) do

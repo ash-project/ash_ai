@@ -159,7 +159,6 @@ defmodule AshAi.Actions.Prompt do
   """
   use Ash.Resource.Actions.Implementation
 
-  alias AshAi.Actions.Prompt.Adapter.Helpers
 
   require Logger
 
@@ -171,12 +170,13 @@ defmodule AshAi.Actions.Prompt do
 
     tools = get_tools(opts, input, context)
 
-    # Extract system_prompt and user_message from prompt processing
-    {_messages, system_prompt, user_message} = get_messages_and_prompts(input, opts, context)
+    # Get messages and legacy prompts
+    {messages, system_prompt, user_message} = get_messages(input, opts, context)
 
     data = %AshAi.Actions.Prompt.Adapter.Data{
       llm: llm,
       input: input,
+      messages: messages,
       system_prompt: system_prompt,
       user_message: user_message,
       json_schema: json_schema,
@@ -283,234 +283,107 @@ defmodule AshAi.Actions.Prompt do
   end
 
   # sobelow_skip ["RCE.EEx"]
-  defp get_messages_and_prompts(input, opts, context) do
-    try do
-      opts
-      |> Keyword.get(:prompt, @prompt_template)
-      |> log_prompt_type()
-      |> process_prompt_option(input, context)
-      |> finalize_prompt_result()
-    rescue
-      error ->
-        Logger.warning("Error in get_messages_and_prompts: #{inspect(error)}")
-        raise error
+  defp get_messages(input, opts, context) do
+    template_vars = %{input: input, context: context}
+    
+    case Keyword.get(opts, :prompt, @prompt_template) do
+      # Format 1: String (EEx template)
+      prompt when is_binary(prompt) ->
+        system_prompt = EEx.eval_string(prompt, assigns: [input: input, context: context])
+        messages = [
+          LangChain.Message.new_system!(system_prompt),
+          LangChain.Message.new_user!("Perform the action")
+        ]
+        {messages, system_prompt, "Perform the action"}
+      
+      # Format 2: Tuple {system, user} (EEx templates)
+      {system, user} when is_binary(system) and is_binary(user) ->
+        system_prompt = EEx.eval_string(system, assigns: [input: input, context: context])
+        user_message = EEx.eval_string(user, assigns: [input: input, context: context])
+        messages = [
+          LangChain.Message.new_system!(system_prompt),
+          LangChain.Message.new_user!(user_message)
+        ]
+        {messages, system_prompt, user_message}
+      
+      # Format 3: Messages list (LangChain Messages)
+      messages when is_list(messages) ->
+        processed_messages = process_message_templates(messages, template_vars)
+        {system_prompt, user_message} = extract_legacy_prompts(processed_messages)
+        {processed_messages, system_prompt, user_message}
+      
+      # Format 4: Function returning any of the above
+      func when is_function(func, 2) ->
+        result = func.(input, context)
+        get_messages_from_result(result, input, context)
     end
   end
 
-  defp log_prompt_type(prompt_option) do
-    Logger.debug("Processing prompt type: #{get_prompt_type(prompt_option)}")
-    prompt_option
+  defp get_messages_from_result(result, input, context) do
+    case result do
+      prompt when is_binary(prompt) -> 
+        get_messages(input, [prompt: prompt], context)
+      {system, user} when is_binary(system) and is_binary(user) -> 
+        get_messages(input, [prompt: {system, user}], context)
+      messages when is_list(messages) -> 
+        get_messages(input, [prompt: messages], context)
+      _ ->
+        raise ArgumentError, "Function must return string, {system, user} tuple, or list of Messages. Got: #{inspect(result)}"
+    end
   end
 
-  # Handle {system, user} tuple format
-  defp process_prompt_option({system, user}, input, context)
-       when is_binary(system) and is_binary(user) do
-    Logger.debug("Processing {system, user} tuple format")
-
-    {system, user}
-    |> process_eex_templates(input, context)
-    |> tuple_to_messages()
-  end
-
-  # Handle string format
-  defp process_prompt_option(prompt, input, context) when is_binary(prompt) do
-    prompt
-    |> process_string_prompt(input, context)
-    |> tuple_to_messages()
-  end
-
-  # Handle function format
-  defp process_prompt_option(func, input, context) when is_function(func, 2) do
-    with {:ok, result} <- safe_function_call(func, input, context),
-         {:ok, messages} <- validate_function_result(result, input, context) do
-      messages
+  defp process_message_templates(messages, template_vars) do
+    if AshAi.Actions.Prompt.Adapter.Helpers.has_prompt_templates?(messages) do
+      temp_chain = LangChain.Chains.LLMChain.new!(%{llm: create_dummy_llm()})
+      processed_chain = LangChain.Chains.LLMChain.apply_prompt_templates(temp_chain, messages, template_vars)
+      processed_chain.messages
     else
-      {:error, reason} ->
-        Logger.warning("Function processing failed: #{reason}")
-        raise ArgumentError, reason
+      messages
     end
   end
 
-  # Handle message list format
-  defp process_prompt_option(messages, input, context) when is_list(messages) do
-    Logger.debug("Processing list of #{length(messages)} messages")
-    process_messages_with_templates(messages, input, context)
-  end
-
-  # Helper functions for data transformation
-  defp process_eex_templates({system, user}, input, context) do
-    assigns = [input: input, context: context]
-
-    {
-      EEx.eval_string(system, assigns: assigns),
-      EEx.eval_string(user, assigns: assigns)
-    }
-  end
-
-  defp process_string_prompt(prompt, input, context) do
-    assigns = [input: input, context: context]
-    processed_prompt = EEx.eval_string(prompt, assigns: assigns)
-    {processed_prompt, "Perform the action"}
-  end
-
-  defp tuple_to_messages({system, user}) do
-    [
-      LangChain.Message.new_system!(system),
-      LangChain.Message.new_user!(user)
-    ]
-  end
-
-  defp safe_function_call(func, input, context) do
-    try do
-      result = func.(input, context)
-      Logger.debug("Function returned: #{get_prompt_type(result)}")
-      {:ok, result}
-    rescue
-      error ->
-        {:error, "Function execution failed: #{inspect(error)}"}
-    end
-  end
-
-  defp validate_function_result({system, user}, _input, _context)
-       when is_binary(system) and is_binary(user) do
-    Logger.debug("Function returned {system, user} tuple")
-    messages = tuple_to_messages({system, user})
-    {:ok, messages}
-  end
-
-  defp validate_function_result(messages, input, context) when is_list(messages) do
-    Logger.debug("Function returned list of #{length(messages)} messages")
-    processed_messages = process_messages_with_templates(messages, input, context)
-    {:ok, processed_messages}
-  end
-
-  defp validate_function_result(other, _input, _context) do
-    error =
-      "Function must return either {system, user} tuple or list of LangChain Messages. " <>
-        "Examples: {\"system_message\", \"user_message\"} or " <>
-        "[Message.new_system!(\"Hello\"), Message.new_user!(\"Hi\")]. " <>
-        "Got: #{inspect(other)}"
-
-    {:error, error}
-  end
-
-  defp finalize_prompt_result(messages) when is_list(messages) do
-    {system_prompt, user_message} = extract_legacy_prompts(messages)
-
-    Logger.debug(
-      "Extracted legacy prompts - system: #{String.length(system_prompt)} chars, user: #{String.length(user_message)} chars"
-    )
-
-    {messages, system_prompt, user_message}
+  defp create_dummy_llm do
+    LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-3.5-turbo"})
   end
 
   defp extract_legacy_prompts(messages) do
-    system_prompt =
+    system_prompt = 
       case Enum.find(messages, &(&1.role == :system)) do
         %LangChain.Message{content: content} when is_binary(content) -> content
+        %LangChain.Message{content: content} when is_list(content) -> extract_text_content(content)
         _ -> ""
       end
 
-    user_message =
+    user_message = 
       case Enum.find(messages, &(&1.role == :user)) do
-        %LangChain.Message{content: content} when is_binary(content) ->
-          content
-
-        %LangChain.Message{content: content} when is_list(content) ->
-          # Extract only text content parts, safely handling PromptTemplates and other types
-          content
-          |> Enum.filter(fn part ->
-            case part do
-              %LangChain.Message.ContentPart{type: :text} -> true
-              # Include PromptTemplates for legacy extraction
-              %LangChain.PromptTemplate{} -> true
-              _ -> false
-            end
-          end)
-          |> Enum.map(fn
-            %LangChain.Message.ContentPart{type: :text, content: text_content} ->
-              # Only process text content parts, ensuring content is actually text
-              if is_binary(text_content) and String.valid?(text_content),
-                do: text_content,
-                else: ""
-
-            %LangChain.PromptTemplate{text: text} ->
-              # For legacy extraction, just use the raw template text (don't process it)
-              if is_binary(text) and String.valid?(text), do: text, else: ""
-
-            _ ->
-              ""
-          end)
-          |> Enum.join(" ")
-
-        _ ->
-          ""
+        %LangChain.Message{content: content} when is_binary(content) -> content
+        %LangChain.Message{content: content} when is_list(content) -> 
+          text = extract_text_content(content)
+          if text == "", do: "Process the provided content", else: text
+        _ -> "Process the provided content"
       end
 
     {system_prompt, user_message}
   end
 
-  defp process_messages_with_templates(messages, input, context) do
-    case Helpers.has_prompt_templates?(messages) do
-      true ->
-        Logger.debug("Processing PromptTemplates using LangChain")
-        apply_prompt_templates(messages, input, context)
-
-      false ->
-        Logger.debug("No templates to process, returning messages as-is")
-        messages
-    end
-  end
-
-  defp apply_prompt_templates(messages, input, context) do
-    template_vars =
-      %{input: input, context: context}
-      |> Helpers.build_template_variables()
-
-    Logger.debug("Template variables: #{inspect(Map.keys(template_vars))}")
-    Logger.debug("Messages before template processing: #{length(messages)}")
-
-    try do
-      with {:ok, temp_chain} <- create_temp_chain() do
-        # apply_prompt_templates returns the chain directly, not {:ok, chain}
-        processed_chain =
-          LangChain.Chains.LLMChain.apply_prompt_templates(temp_chain, messages, template_vars)
-
-        Logger.debug(
-          "Template processing successful, extracted #{length(processed_chain.messages)} messages"
-        )
-
-        processed_chain.messages
-      else
-        {:error, error} ->
-          Logger.warning("Failed to create temp chain: #{inspect(error)}")
-          raise ArgumentError, "Template processing failed: #{inspect(error)}"
+  defp extract_text_content(content) when is_list(content) do
+    content
+    |> Enum.filter(fn part ->
+      case part do
+        %LangChain.Message.ContentPart{type: :text} -> true
+        _ -> false
       end
-    rescue
-      error ->
-        Logger.warning("Template processing failed: #{inspect(error)}")
-        raise ArgumentError, "Template processing failed: #{inspect(error)}"
-    end
+    end)
+    |> Enum.map(fn
+      %LangChain.Message.ContentPart{type: :text, content: text_content} ->
+        if is_binary(text_content) and String.valid?(text_content),
+          do: text_content,
+          else: ""
+      _ ->
+        ""
+    end)
+    |> Enum.join(" ")
+    |> String.trim()
   end
 
-  defp create_temp_chain do
-    try do
-      # Create a minimal dummy LLM for template processing only
-      dummy_llm = LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-3.5-turbo"})
-      chain = LangChain.Chains.LLMChain.new!(%{llm: dummy_llm})
-      {:ok, chain}
-    rescue
-      error -> {:error, error}
-    end
-  end
-
-  defp get_prompt_type(prompt) do
-    cond do
-      is_binary(prompt) -> :string
-      is_function(prompt, 2) -> :function
-      is_list(prompt) -> :message_list
-      match?({_, _}, prompt) -> :tuple
-      true -> :unknown
-    end
-  end
 end
