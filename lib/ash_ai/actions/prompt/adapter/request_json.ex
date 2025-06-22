@@ -23,13 +23,17 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   alias LangChain.Message
   alias LangChain.MessageProcessors.JsonProcessor
 
+  require Logger
+
   @default_max_retries 2
 
   def run(%Data{} = data, opts) do
+    Logger.debug("RequestJson adapter starting")
     max_retries = opts[:max_retries] || @default_max_retries
     json_format = opts[:json_format] || :markdown
     include_examples = Keyword.get(opts, :include_examples, true)
 
+    # Build enhanced system prompt with JSON schema instructions
     enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
 
     messages = [
@@ -37,31 +41,40 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
       Message.new_user!(data.user_message)
     ]
 
+    Logger.debug("Message processing completed: #{inspect(messages)}")
+
     regex =
       case json_format do
         :xml -> ~r/<json>\s*(.*?)\s*<\/json>/s
         _ -> ~r/```json\s*(.*?)\s*```/s
       end
 
+    Logger.debug("Regex processing completed: #{inspect(regex)}")
+
     json_processor = JsonProcessor.new!(regex)
 
-    chain =
-      %{
-        llm: data.llm,
-        verbose: data.verbose?,
-        custom_context: Map.new(Ash.Context.to_opts(data.context))
-      }
-      |> LLMChain.new!()
-      |> LLMChain.add_messages(messages)
-      |> LLMChain.add_tools(data.tools)
-      |> LLMChain.message_processors([json_processor])
+    Logger.debug("About to create LLMChain")
 
-    run_with_retries(chain, data, max_retries, 0)
+    %{
+      llm: data.llm,
+      verbose: data.verbose?,
+      custom_context: Map.new(Ash.Context.to_opts(data.context))
+    }
+    |> LLMChain.new!()
+    |> LLMChain.add_messages(messages)
+    |> LLMChain.add_tools(data.tools)
+    |> LLMChain.message_processors([json_processor])
+    |> run_with_retries(data, max_retries, 0)
   end
 
   defp run_with_retries(chain, data, max_retries, attempt) do
+    Logger.debug("RequestJson run_with_retries attempt #{attempt}/#{max_retries}")
+    Logger.debug("About to call LLMChain.run")
+
     case LLMChain.run(chain, mode: :while_needs_response) do
       {:ok, %LLMChain{last_message: %Message{role: :assistant} = message} = updated_chain} ->
+        Logger.debug("LLMChain.run succeeded, processing response")
+
         case process_response(message, data, attempt) do
           {:ok, result} ->
             {:ok, result}
@@ -78,17 +91,24 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
         end
 
       {:error, _, error} ->
+        Logger.debug("LLMChain.run failed with error: #{inspect(error)}")
         {:error, error}
+
+      other ->
+        Logger.debug("LLMChain.run returned unexpected result: #{inspect(other)}")
+        {:error, "Unexpected LLMChain result: #{inspect(other)}"}
     end
   end
 
   defp process_response(%Message{processed_content: content}, data, _attempt)
        when is_map(content) do
+    Logger.debug("Processing response with processed_content: #{inspect(content)}")
     # JsonProcessor successfully extracted JSON
     validate_and_cast_result(content, data)
   end
 
   defp process_response(%Message{content: content}, data, _attempt) when is_binary(content) do
+    Logger.debug("Processing response with binary content")
     # Fallback: try to parse raw content as JSON
     case Jason.decode(content) do
       {:ok, decoded} ->
@@ -100,11 +120,13 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     end
   end
 
-  defp process_response(_, _, _) do
+  defp process_response(message, _, _) do
+    Logger.debug("process_response got unexpected message: #{inspect(message)}")
     {:error, "Invalid response format"}
   end
 
   defp validate_and_cast_result(content, data) do
+    Logger.debug("Validating and casting result: #{inspect(content)}")
     result = Map.get(content, "result", content)
 
     with {:ok, value} <-

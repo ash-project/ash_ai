@@ -12,6 +12,7 @@ defmodule AshAi.Actions.Prompt.Adapter.CompletionTool do
   @dialyzer {:nowarn_function, [run: 2]}
 
   alias AshAi.Actions.Prompt.Adapter.Data
+  alias AshAi.Actions.Prompt.Adapter.Helpers
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
   alias LangChain.Message.ContentPart
