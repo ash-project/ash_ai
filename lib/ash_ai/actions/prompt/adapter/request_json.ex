@@ -23,29 +23,26 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   alias LangChain.Message
   alias LangChain.MessageProcessors.JsonProcessor
 
-  require Logger
-
   @default_max_retries 2
 
   def run(%Data{} = data, opts) do
-    Logger.debug("RequestJson adapter starting")
     max_retries = opts[:max_retries] || @default_max_retries
     json_format = opts[:json_format] || :markdown
     include_examples = Keyword.get(opts, :include_examples, true)
 
-    # Use messages directly if available, fallback to legacy prompts
-    messages = if data.messages do
-      enhance_messages_with_schema(data.messages, data, json_format, include_examples)
-    else
-      # Legacy fallback
-      enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
-      [
-        Message.new_system!(enhanced_system_prompt),
-        Message.new_user!(data.user_message)
-      ]
-    end
+    # Use messages directly if available, fallback to other prompts
+    messages =
+      if data.messages do
+        enhance_messages_with_schema(data.messages, data, json_format, include_examples)
+      else
+        # other prompt style fallback
+        enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
 
-    Logger.debug("Message processing completed: #{inspect(messages)}")
+        [
+          Message.new_system!(enhanced_system_prompt),
+          Message.new_user!(data.user_message)
+        ]
+      end
 
     regex =
       case json_format do
@@ -53,11 +50,7 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
         _ -> ~r/```json\s*(.*?)\s*```/s
       end
 
-    Logger.debug("Regex processing completed: #{inspect(regex)}")
-
     json_processor = JsonProcessor.new!(regex)
-
-    Logger.debug("About to create LLMChain")
 
     %{
       llm: data.llm,
@@ -73,29 +66,35 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
 
   defp enhance_messages_with_schema(messages, data, json_format, include_examples) do
     # Find system message and enhance it with schema instructions
-    enhanced_messages = Enum.map(messages, fn message ->
-      case message.role do
-        :system ->
-          enhanced_content = enhance_system_content(message.content, data, json_format, include_examples)
-          %{message | content: enhanced_content}
-        _ ->
-          message
-      end
-    end)
+    enhanced_messages =
+      Enum.map(messages, fn message ->
+        case message.role do
+          :system ->
+            enhanced_content =
+              enhance_system_content(message.content, data, json_format, include_examples)
+
+            %{message | content: enhanced_content}
+
+          _ ->
+            message
+        end
+      end)
 
     # If no system message found, add one at the beginning
     case Enum.find(enhanced_messages, &(&1.role == :system)) do
       nil ->
         schema_instructions = build_schema_instructions(data, json_format, include_examples)
         [Message.new_system!(schema_instructions) | enhanced_messages]
+
       _ ->
         enhanced_messages
     end
   end
 
-  defp enhance_system_content(content, data, json_format, include_examples) when is_binary(content) do
+  defp enhance_system_content(content, data, json_format, include_examples)
+       when is_binary(content) do
     schema_instructions = build_schema_instructions(data, json_format, include_examples)
-    
+
     """
     #{content}
 
@@ -103,7 +102,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     """
   end
 
-  defp enhance_system_content(content, data, json_format, include_examples) when is_list(content) do
+  defp enhance_system_content(content, data, json_format, include_examples)
+       when is_list(content) do
     # For ContentPart lists, add schema instructions as a text part
     schema_instructions = build_schema_instructions(data, json_format, include_examples)
     content ++ [LangChain.Message.ContentPart.text!(schema_instructions)]
@@ -150,13 +150,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   end
 
   defp run_with_retries(chain, data, max_retries, attempt) do
-    Logger.debug("RequestJson run_with_retries attempt #{attempt}/#{max_retries}")
-    Logger.debug("About to call LLMChain.run")
-
     case LLMChain.run(chain, mode: :while_needs_response) do
       {:ok, %LLMChain{last_message: %Message{role: :assistant} = message} = updated_chain} ->
-        Logger.debug("LLMChain.run succeeded, processing response")
-
         case process_response(message, data, attempt) do
           {:ok, result} ->
             {:ok, result}
@@ -173,24 +168,16 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
         end
 
       {:error, _, error} ->
-        Logger.debug("LLMChain.run failed with error: #{inspect(error)}")
         {:error, error}
-
-      other ->
-        Logger.debug("LLMChain.run returned unexpected result: #{inspect(other)}")
-        {:error, "Unexpected LLMChain result: #{inspect(other)}"}
     end
   end
 
   defp process_response(%Message{processed_content: content}, data, _attempt)
        when is_map(content) do
-    Logger.debug("Processing response with processed_content: #{inspect(content)}")
-    # JsonProcessor successfully extracted JSON
     validate_and_cast_result(content, data)
   end
 
   defp process_response(%Message{content: content}, data, _attempt) when is_binary(content) do
-    Logger.debug("Processing response with binary content")
     # Fallback: try to parse raw content as JSON
     case Jason.decode(content) do
       {:ok, decoded} ->
@@ -203,12 +190,10 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   end
 
   defp process_response(message, _, _) do
-    Logger.debug("process_response got unexpected message: #{inspect(message)}")
     {:error, "Invalid response format"}
   end
 
   defp validate_and_cast_result(content, data) do
-    Logger.debug("Validating and casting result: #{inspect(content)}")
     result = Map.get(content, "result", content)
 
     with {:ok, value} <-

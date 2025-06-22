@@ -1,6 +1,25 @@
 defmodule AshAi.Actions.Prompt.Adapter.Helpers do
   @moduledoc """
-  Shared helper functions for prompt adapters.
+  Helpers for processing `LangChain.PromptTemplate`s in messages.
+
+  This module resolves templates with runtime data from the action's input
+  and context before the prompt is sent to an LLM.
+
+  ### Example
+
+  Given a prompt with a template:
+
+  ```elixir
+  messages = [
+    Message.new_user!([
+      PromptTemplate.from_template!("Context: <%= @input.arguments.extra_info %>"),
+      ContentPart.text!("Analyze the following text.")
+    ])
+  ]
+  ```
+
+  Adapters use `add_messages_with_templates/3` to resolve such templates,
+  injecting variables from the action input and context.
   """
 
   alias LangChain.Chains.LLMChain

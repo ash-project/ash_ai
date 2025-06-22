@@ -174,8 +174,6 @@ defmodule AshAi.Actions.Prompt do
   use Ash.Resource.Actions.Implementation
 
 
-  require Logger
-
   def run(input, opts, context) do
     llm = get_llm(opts, input, context)
 
