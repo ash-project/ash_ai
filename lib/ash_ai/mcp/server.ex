@@ -326,7 +326,9 @@ defmodule AshAi.Mcp.Server do
 
       other ->
         # Invalid message
-        {:json_response, json_rpc_error_response(nil, -32_600, "Invalid Request Got: #{inspect(other)}"), session_id}
+        {:json_response,
+         json_rpc_error_response(nil, -32_600, "Invalid Request Got: #{inspect(other)}"),
+         session_id}
     end
   end
 

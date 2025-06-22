@@ -31,15 +31,16 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
       })
 
     # Use messages directly if available, fallback to legacy prompts
-    messages = if data.messages do
-      data.messages
-    else
-      # Legacy fallback
-      [
-        Message.new_system!(data.system_prompt),
-        Message.new_user!(data.user_message)
-      ]
-    end
+    messages =
+      if data.messages do
+        data.messages
+      else
+        # Legacy fallback
+        [
+          Message.new_system!(data.system_prompt),
+          Message.new_user!(data.user_message)
+        ]
+      end
 
     %{
       llm: llm,

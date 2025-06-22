@@ -190,7 +190,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   end
 
   defp process_response(message, data, attempt) do
-    {:error, "Invalid response format: Got: #{inspect(message)}, data: #{inspect(data)}, attempt: #{attempt}"}
+    {:error,
+     "Invalid response format: Got: #{inspect(message)}, data: #{inspect(data)}, attempt: #{attempt}"}
   end
 
   defp validate_and_cast_result(content, data) do
