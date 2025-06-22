@@ -324,9 +324,9 @@ defmodule AshAi.Mcp.Server do
         # Handle other notifications (no id)
         {:no_response, nil, session_id}
 
-      _other ->
+      other ->
         # Invalid message
-        {:json_response, json_rpc_error_response(nil, -32_600, "Invalid Request"), session_id}
+        {:json_response, json_rpc_error_response(nil, -32_600, "Invalid Request Got: #{inspect(other)}"), session_id}
     end
   end
 
