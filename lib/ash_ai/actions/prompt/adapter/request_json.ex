@@ -30,19 +30,7 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     json_format = opts[:json_format] || :markdown
     include_examples = Keyword.get(opts, :include_examples, true)
 
-    # Use messages directly if available, fallback to other prompts
-    messages =
-      if data.messages do
-        enhance_messages_with_schema(data.messages, data, json_format, include_examples)
-      else
-        # other prompt style fallback
-        enhanced_system_prompt = build_enhanced_prompt(data, json_format, include_examples)
-
-        [
-          Message.new_system!(enhanced_system_prompt),
-          Message.new_user!(data.user_message)
-        ]
-      end
+    messages = enhance_messages_with_schema(data.messages, data, json_format, include_examples)
 
     regex =
       case json_format do
@@ -216,46 +204,6 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     end
   end
 
-  defp build_enhanced_prompt(data, format, include_examples) do
-    schema_json = Jason.encode!(data.json_schema, pretty: true)
-
-    format_instructions =
-      case format do
-        :xml ->
-          """
-          <json>
-          {
-            "result": <your response matching the schema>
-          }
-          </json>
-          """
-
-        _ ->
-          """
-          ```json
-          {
-            "result": <your response matching the schema>
-          }
-          ```
-          """
-      end
-
-    example_section = generate_example_section(data, include_examples, format)
-
-    """
-    #{data.system_prompt}
-
-    IMPORTANT INSTRUCTIONS:
-    You MUST respond with valid JSON that matches the following schema:
-
-    #{schema_json}
-
-    Your response MUST be formatted as:
-    #{format_instructions}
-
-    The JSON must be valid and parseable. Do not include any text before or after the JSON block.#{example_section}
-    """
-  end
 
   defp create_retry_message(error) do
     Message.new_user!("""

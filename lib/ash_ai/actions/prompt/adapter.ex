@@ -36,9 +36,7 @@ defmodule AshAi.Actions.Prompt.Adapter do
       :llm,
       :input,
       :messages,
-      :system_prompt,
       :verbose?,
-      :user_message,
       :json_schema,
       :tools,
       :context
@@ -48,8 +46,6 @@ defmodule AshAi.Actions.Prompt.Adapter do
             llm: term(),
             input: Ash.ActionInput.t(),
             messages: list(),
-            system_prompt: String.t(),
-            user_message: String.t(),
             json_schema: map(),
             tools: list(),
             verbose?: boolean(),

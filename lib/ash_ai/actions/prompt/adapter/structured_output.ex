@@ -8,7 +8,6 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
 
   alias AshAi.Actions.Prompt.Adapter.Data
   alias LangChain.Chains.LLMChain
-  alias LangChain.Message
 
   def run(%Data{} = data, _opts) do
     if !Map.has_key?(data.llm, :json_schema) do
@@ -30,17 +29,7 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
         json_response: true
       })
 
-    # Use messages directly if available, fallback to legacy prompts
-    messages =
-      if data.messages do
-        data.messages
-      else
-        # Legacy fallback
-        [
-          Message.new_system!(data.system_prompt),
-          Message.new_user!(data.user_message)
-        ]
-      end
+    messages = data.messages
 
     %{
       llm: llm,

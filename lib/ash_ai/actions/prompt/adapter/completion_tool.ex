@@ -13,21 +13,9 @@ defmodule AshAi.Actions.Prompt.Adapter.CompletionTool do
 
   alias AshAi.Actions.Prompt.Adapter.Data
   alias LangChain.Chains.LLMChain
-  alias LangChain.Message
-  alias LangChain.Message.ContentPart
 
   def run(%Data{} = data, opts) do
-    # Use messages directly if available, fallback to legacy prompts
-    messages =
-      if data.messages do
-        data.messages
-      else
-        # Legacy fallback
-        [
-          [ContentPart.text!(data.system_prompt, cache_control: true)] |> Message.new_system!(),
-          Message.new_user!(data.user_message)
-        ]
-      end
+    messages = data.messages
 
     max_runs = opts[:max_runs] || 25
 
