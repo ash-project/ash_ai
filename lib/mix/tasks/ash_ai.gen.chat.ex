@@ -1223,7 +1223,7 @@ if Code.ensure_loaded?(Igniter) do
         end
 
         defp to_markdown(text) do
-          # Note that you must pass the "unsafe_: true" option to first generate the raw HTML
+          # Note that you must pass the "unsafe: true" option to first generate the raw HTML
           # in order to sanitize it. https://hexdocs.pm/mdex/MDEx.html#module-sanitize
           MDEx.to_html(text,
             extension: [
@@ -1242,7 +1242,7 @@ if Code.ensure_loaded?(Igniter) do
             ],
             render: [
               github_pre_lang: true,
-              unsafe_: true
+              unsafe: true
             ],
             sanitize: MDEx.default_sanitize_options()
           )
