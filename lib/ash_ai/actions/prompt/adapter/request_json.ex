@@ -53,29 +53,27 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   end
 
   defp enhance_messages_with_schema(messages, data, json_format, include_examples) do
-    # Find system message and enhance it with schema instructions
-    enhanced_messages =
-      Enum.map(messages, fn message ->
-        case message.role do
-          :system ->
+    # Find the first system message and enhance only that one with schema instructions
+    {enhanced_messages, schema_added?} =
+      Enum.map_reduce(messages, false, fn message, schema_added? ->
+        case {message.role, schema_added?} do
+          {:system, false} ->
             enhanced_content =
               enhance_system_content(message.content, data, json_format, include_examples)
 
-            %{message | content: enhanced_content}
+            {%{message | content: enhanced_content}, true}
 
           _ ->
-            message
+            {message, schema_added?}
         end
       end)
 
     # If no system message found, add one at the beginning
-    case Enum.find(enhanced_messages, &(&1.role == :system)) do
-      nil ->
-        schema_instructions = build_schema_instructions(data, json_format, include_examples)
-        [Message.new_system!(schema_instructions) | enhanced_messages]
-
-      _ ->
-        enhanced_messages
+    if schema_added? do
+      enhanced_messages
+    else
+      schema_instructions = build_schema_instructions(data, json_format, include_examples)
+      [Message.new_system!(schema_instructions) | enhanced_messages]
     end
   end
 
