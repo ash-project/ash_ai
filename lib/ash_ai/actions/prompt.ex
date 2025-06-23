@@ -181,15 +181,12 @@ defmodule AshAi.Actions.Prompt do
 
     tools = get_tools(opts, input, context)
 
-    # Get messages and legacy prompts
-    {messages, system_prompt, user_message} = get_messages(input, opts, context)
+    messages = get_messages(input, opts, context)
 
     data = %AshAi.Actions.Prompt.Adapter.Data{
       llm: llm,
       input: input,
       messages: messages,
-      system_prompt: system_prompt,
-      user_message: user_message,
       json_schema: json_schema,
       tools: tools,
       verbose?: opts[:verbose?] || false,
@@ -302,30 +299,24 @@ defmodule AshAi.Actions.Prompt do
       prompt when is_binary(prompt) ->
         system_prompt = EEx.eval_string(prompt, assigns: [input: input, context: context])
 
-        messages = [
+        [
           LangChain.Message.new_system!(system_prompt),
           LangChain.Message.new_user!("Perform the action")
         ]
-
-        {messages, system_prompt, "Perform the action"}
 
       # Format 2: Tuple {system, user} (EEx templates)
       {system, user} when is_binary(system) and is_binary(user) ->
         system_prompt = EEx.eval_string(system, assigns: [input: input, context: context])
         user_message = EEx.eval_string(user, assigns: [input: input, context: context])
 
-        messages = [
+        [
           LangChain.Message.new_system!(system_prompt),
           LangChain.Message.new_user!(user_message)
         ]
 
-        {messages, system_prompt, user_message}
-
       # Format 3: Messages list (LangChain Messages)
       messages when is_list(messages) ->
-        processed_messages = process_message_templates(messages, template_vars)
-        {system_prompt, user_message} = extract_legacy_prompts(processed_messages)
-        {processed_messages, system_prompt, user_message}
+        process_message_templates(messages, template_vars)
 
       # Format 4: Function returning any of the above
       func when is_function(func, 2) ->
@@ -366,54 +357,5 @@ defmodule AshAi.Actions.Prompt do
 
   defp create_dummy_llm do
     LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-3.5-turbo"})
-  end
-
-  defp extract_legacy_prompts(messages) do
-    system_prompt =
-      case Enum.find(messages, &(&1.role == :system)) do
-        %LangChain.Message{content: content} when is_binary(content) ->
-          content
-
-        %LangChain.Message{content: content} when is_list(content) ->
-          extract_text_content(content)
-
-        _ ->
-          ""
-      end
-
-    user_message =
-      case Enum.find(messages, &(&1.role == :user)) do
-        %LangChain.Message{content: content} when is_binary(content) ->
-          content
-
-        %LangChain.Message{content: content} when is_list(content) ->
-          text = extract_text_content(content)
-          if text == "", do: "Process the provided content", else: text
-
-        _ ->
-          "Process the provided content"
-      end
-
-    {system_prompt, user_message}
-  end
-
-  defp extract_text_content(content) when is_list(content) do
-    content
-    |> Enum.filter(fn part ->
-      case part do
-        %LangChain.Message.ContentPart{type: :text} -> true
-        _ -> false
-      end
-    end)
-    |> Enum.map_join(" ", fn
-      %LangChain.Message.ContentPart{type: :text, content: text_content} ->
-        if is_binary(text_content) and String.valid?(text_content),
-          do: text_content,
-          else: ""
-
-      _ ->
-        ""
-    end)
-    |> String.trim()
   end
 end

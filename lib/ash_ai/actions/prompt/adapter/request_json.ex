@@ -204,7 +204,6 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     end
   end
 
-
   defp create_retry_message(error) do
     Message.new_user!("""
     Your previous response contained invalid JSON or did not match the required schema.
