@@ -206,7 +206,7 @@ if Code.ensure_loaded?(Igniter) do
             |> Ash.Query.filter(conversation_id == ^conversation.id)
             |> Ash.Query.limit(10)
             |> Ash.Query.select([:text, :source])
-            |> Ash.Query.sort(inserted_at: :desc)
+            |> Ash.Query.sort(inserted_at: :asc)
             |> Ash.read!()
 
           system_prompt =
@@ -466,7 +466,7 @@ if Code.ensure_loaded?(Igniter) do
             |> Ash.Query.filter(conversation_id == ^message.conversation_id)
             |> Ash.Query.filter(id != ^message.id)
             |> Ash.Query.select([:text, :source, :tool_calls, :tool_results])
-            |> Ash.Query.sort(inserted_at: :desc)
+            |> Ash.Query.sort(inserted_at: :asc)
             |> Ash.read!()
             |> Enum.concat([%{source: :user, text: message.text}])
 
