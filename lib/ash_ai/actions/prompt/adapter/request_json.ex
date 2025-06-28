@@ -1,7 +1,5 @@
 defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   @moduledoc """
-  An adapter for prompt-backed actions that requests JSON output directly in the prompt.
-
   This adapter is designed for LLMs that don't support native tool calling or structured outputs.
   It embeds the JSON schema in the system prompt and uses LangChain's JsonProcessor to extract
   the JSON response from markdown code blocks.
@@ -10,9 +8,7 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
 
   - `:max_retries` - Maximum number of retry attempts for invalid JSON (default: 3)
   - `:json_format` - Format to request JSON in (:markdown, :xml) (default: :markdown)
-  - `:json_processor` - Custom JSON processor function compatible with `JsonProcessor.new` type.
-    Must be a function that matches `message_processor()` type: `(LLMChain.t(), Message.t() -> processor_return())`
-    where `processor_return()` is `{:continue, Message.t()} | {:halt, LLMChain.t(), Message.t()}`
+  - `:json_processor` - Custom JSON processor function. See `t:LangChain.Chains.LLMChain.message_processor/0`
   - `:include_examples` - Examples to include in prompt. Options:
     - `true` - Generate examples using Ash.Type.generator (default)
     - `false` - No examples
@@ -26,8 +22,18 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   alias LangChain.Message
   alias LangChain.MessageProcessors.JsonProcessor
 
+  @type json_format :: :markdown | :xml
+  @type include_examples :: boolean() | map() | [map()]
+  @type adapter_opts :: [
+          max_retries: non_neg_integer(),
+          json_format: json_format(),
+          json_processor: LangChain.Chains.LLMChain.message_processor(),
+          include_examples: include_examples()
+        ]
+
   @default_max_retries 2
 
+  @spec run(Data.t(), adapter_opts()) :: {:ok, any()} | {:error, String.t()}
   def run(%Data{} = data, opts) do
     max_retries = opts[:max_retries] || @default_max_retries
     json_format = opts[:json_format] || :markdown
@@ -50,6 +56,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     |> run_with_retries(data, max_retries, 0)
   end
 
+  @spec setup_json_processor(json_format(), LangChain.Chains.LLMChain.message_processor() | nil) ::
+          LangChain.Chains.LLMChain.message_processor()
   defp setup_json_processor(json_format, nil = _custom_json_processor) do
     regex =
       case json_format do
@@ -60,10 +68,12 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     JsonProcessor.new!(regex)
   end
 
-  defp setup_json_processor(json_format, custom_json_processor) do
+  defp setup_json_processor(_json_format, custom_json_processor) do
     custom_json_processor
   end
 
+  @spec enhance_messages_with_schema([Message.t()], Data.t(), json_format(), include_examples()) ::
+          [Message.t()]
   defp enhance_messages_with_schema(messages, data, json_format, include_examples) do
     # Find the first system message and enhance only that one with schema instructions
     {enhanced_messages, schema_added?} =
@@ -147,6 +157,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     """
   end
 
+  @spec run_with_retries(LLMChain.t(), Data.t(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, any()} | {:error, String.t()}
   defp run_with_retries(chain, data, max_retries, attempt) do
     case LLMChain.run(chain, mode: :while_needs_response) do
       {:ok, %LLMChain{last_message: %Message{role: :assistant} = message} = updated_chain} ->
@@ -170,6 +182,8 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     end
   end
 
+  @spec process_response(Message.t(), Data.t(), non_neg_integer()) ::
+          {:ok, any()} | {:error, String.t()}
   defp process_response(%Message{processed_content: content}, data, _attempt)
        when is_map(content) do
     validate_and_cast_result(content, data)
