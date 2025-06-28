@@ -10,6 +10,9 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
 
   - `:max_retries` - Maximum number of retry attempts for invalid JSON (default: 3)
   - `:json_format` - Format to request JSON in (:markdown, :xml) (default: :markdown)
+  - `:json_processor` - Custom JSON processor function compatible with `JsonProcessor.new` type.
+    Must be a function that matches `message_processor()` type: `(LLMChain.t(), Message.t() -> processor_return())`
+    where `processor_return()` is `{:continue, Message.t()} | {:halt, LLMChain.t(), Message.t()}`
   - `:include_examples` - Examples to include in prompt. Options:
     - `true` - Generate examples using Ash.Type.generator (default)
     - `false` - No examples
@@ -29,16 +32,11 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     max_retries = opts[:max_retries] || @default_max_retries
     json_format = opts[:json_format] || :markdown
     include_examples = Keyword.get(opts, :include_examples, true)
+    custom_json_processor = Keyword.get(opts, :json_processor)
 
     messages = enhance_messages_with_schema(data.messages, data, json_format, include_examples)
 
-    regex =
-      case json_format do
-        :xml -> ~r/<json>\s*(.*?)\s*<\/json>/s
-        _ -> ~r/```json\s*(.*?)\s*```/s
-      end
-
-    json_processor = JsonProcessor.new!(regex)
+    json_processor = setup_json_processor(json_format, custom_json_processor)
 
     %{
       llm: data.llm,
@@ -50,6 +48,20 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     |> LLMChain.add_tools(data.tools)
     |> LLMChain.message_processors([json_processor])
     |> run_with_retries(data, max_retries, 0)
+  end
+
+  defp setup_json_processor(json_format, nil = _custom_json_processor) do
+    regex =
+      case json_format do
+        :xml -> ~r/<json>\s*(.*?)\s*<\/json>/s
+        _ -> ~r/```json\s*(.*?)\s*```/s
+      end
+
+    JsonProcessor.new!(regex)
+  end
+
+  defp setup_json_processor(json_format, custom_json_processor) do
+    custom_json_processor
   end
 
   defp enhance_messages_with_schema(messages, data, json_format, include_examples) do
