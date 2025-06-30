@@ -120,7 +120,7 @@ read :semantic_search do
       {:ok, [search_vector]} ->
         Ash.Query.filter(
           query,
-          vector_cosine_distance(full_text_vector, ^search_vector) < 0.5
+          expr(vector_cosine_distance(full_text_vector, ^search_vector) < 0.5)
         )
         |> Ash.Query.sort(asc: vector_cosine_distance(full_text_vector, ^search_vector))
 
