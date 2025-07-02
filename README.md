@@ -71,7 +71,7 @@ However, as of the writing of this guide, it requires setting a previous protoco
 
 ##### Authentication
 
-We don't currently support the OAuth2 flow out of the box with AshAi, but the goal is to eventually support this with AshAuthentication. You can always implement that yourself, but the quikest way to value is to use the new `api_key` strategy.
+We don't currently support the OAuth2 flow out of the box with AshAi, but the goal is to eventually support this with AshAuthentication. You can always implement that yourself, but the quickest way to value is to use the new `api_key` strategy.
 
 If you haven't installed `AshAuthentication` yet, install it like so: `mix igniter.install ash_authentication --auth-strategy api_key`.
 If its already been installed, and you haven't set up API keys, use `mix ash_authentication.add_strategy api_key`.
