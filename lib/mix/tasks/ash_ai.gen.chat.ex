@@ -226,7 +226,8 @@ if Code.ensure_loaded?(Igniter) do
             end)
 
           %{
-            llm: ChatOpenAI.new!(%{model: "gpt-4o", custom_context: Map.new(Ash.Context.to_opts(context))}),
+            llm: ChatOpenAI.new!(%{model: "gpt-4o"}),
+            custom_context: Map.new(Ash.Context.to_opts(context)),
             verbose?: true
           }
           |> LLMChain.new!()
@@ -481,7 +482,8 @@ if Code.ensure_loaded?(Igniter) do
           new_message_id = Ash.UUID.generate()
 
           %{
-            llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true, custom_context: Map.new(Ash.Context.to_opts(context))})
+            llm: ChatOpenAI.new!(%{model: "gpt-4o", stream: true}),
+            custom_context: Map.new(Ash.Context.to_opts(context))
           }
           |> LLMChain.new!()
           |> LLMChain.add_message(system_prompt)
@@ -843,7 +845,7 @@ if Code.ensure_loaded?(Igniter) do
             :error ->
               {:warning,
                """
-               AshAi: Couldn't add the chat routes to `#{inspect(router)}`. 
+               AshAi: Couldn't add the chat routes to `#{inspect(router)}`.
                Please add them manually.
 
                #{live}
@@ -898,10 +900,10 @@ if Code.ensure_loaded?(Igniter) do
         else
           igniter =
             Igniter.add_warning(igniter, """
-            `ash_ai.gen.chat` works better if a user module is known. 
+            `ash_ai.gen.chat` works better if a user module is known.
             We could not find one automatically, and one was not provided.
 
-            Please abort this command and provide one using the `--user` flag, 
+            Please abort this command and provide one using the `--user` flag,
             or install `AshAuthentication` before-hand, being sure its installed
             before this command is run.
             """)
