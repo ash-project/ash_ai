@@ -68,7 +68,6 @@ defmodule AshAi.OpenApi do
           end),
         required:
           constraints[:fields]
-          |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
           |> Enum.map(&elem(&1, 0))
       }
       |> add_null_for_non_required()
@@ -818,7 +817,7 @@ defmodule AshAi.OpenApi do
   end
 
   def raw_filter_type(attribute_or_aggregate, resource) do
-    {type, _constraints} = field_type(attribute_or_aggregate, resource)
+    {type, constraints} = field_type(attribute_or_aggregate, resource)
     array_type? = match?({:array, _}, type)
 
     fields =
@@ -837,8 +836,8 @@ defmodule AshAi.OpenApi do
       %{
         type: :object,
         properties: Map.new(fields),
-        additionalProperties: false
-        # required: required Missing?
+        additionalProperties: false,
+        required: Keyword.keys(constraints[:fields])
       }
       |> with_attribute_description(attribute_or_aggregate)
     end
