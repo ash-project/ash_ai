@@ -163,6 +163,26 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule RandomString do
+    use Ash.TypedStruct
+    
+    typed_struct do
+      field :random_string, :string, 
+        description: "Produce a random string between 1 and 100.", 
+        allow_nil?: true, 
+        default: nil, 
+        constraints: [min_length: 1]
+      
+      field :count, :integer,
+        allow_nil?: false,
+        constraints: [min: 0, max: 100]
+        
+      field :score, :float,
+        allow_nil?: true,
+        constraints: [greater_than: 0.0, less_than: 1.0]
+    end
+  end
+
   defmodule TestDomain do
     use Ash.Domain,
       extensions: [AshAi],
@@ -230,6 +250,144 @@ defmodule AshAi.OpenApiTest do
           assert vendored_schema == old_schema
         end
       end
+    end
+  end
+
+  describe "Constraint and nullable field handling" do
+    test "TypedStruct with constraints and nullable fields" do
+      # Test that our TypedStruct generates the expected schema
+      attr = %{
+        type: RandomString,
+        constraints: [],
+        allow_nil?: false,
+        description: nil
+      }
+      
+      schema = AshAi.OpenApi.resource_write_attribute_type(attr, TestResource, :create)
+      
+      # Should be an object with the correct structure  
+      assert schema[:type] == :object
+      assert schema[:additionalProperties] == false
+      
+      # All fields should be required (including nullable ones)
+      assert Enum.sort(schema[:required]) == [:count, :random_string, :score]
+      
+      # random_string should use anyOf pattern with constraints
+      random_string_schema = schema[:properties][:random_string]
+      assert %{anyOf: any_of_options} = random_string_schema
+      assert %{type: nil} in any_of_options
+      
+      string_option = Enum.find(any_of_options, &(&1[:type] == :string))
+      assert string_option[:minLength] == 1
+      assert random_string_schema[:description] == "Produce a random string between 1 and 100."
+      
+      # count should have min/max constraints and no anyOf (not nullable)
+      count_schema = schema[:properties][:count]
+      assert count_schema[:type] == :integer
+      assert count_schema[:minimum] == 0
+      assert count_schema[:maximum] == 100
+      refute Map.has_key?(count_schema, :anyOf)
+      
+      # score should use anyOf pattern with float constraints
+      score_schema = schema[:properties][:score]
+      assert %{anyOf: score_any_of} = score_schema
+      assert %{type: nil} in score_any_of
+      
+      float_option = Enum.find(score_any_of, &(&1[:type] == :number))
+      assert float_option[:format] == :float
+      assert float_option[:exclusiveMinimum] == 0.0
+      assert float_option[:exclusiveMaximum] == 1.0
+    end
+
+    test "String field with constraints via write attribute type" do
+      # Create an attribute with constraints
+      attr = %Ash.Resource.Attribute{
+        name: :test_string,
+        type: Ash.Type.String,
+        constraints: [min_length: 5, max_length: 50, match: ~r/^[a-z]+$/],
+        allow_nil?: false,
+        description: nil,
+        public?: true,
+        writable?: true,
+        generated?: false,
+        primary_key?: false,
+        always_select?: false,
+        select_by_default?: true,
+        default: nil,
+        update_default: nil,
+        source: :test_string,
+        match_other_defaults?: false,
+        sensitive?: false,
+        filterable?: true,
+        sortable?: true
+      }
+      
+      schema = AshAi.OpenApi.resource_write_attribute_type(attr, TestResource, :create)
+      
+      assert schema[:type] == :string
+      assert schema[:minLength] == 5
+      assert schema[:maxLength] == 50
+      assert schema[:pattern] == "^[a-z]+$"
+    end
+
+    test "Integer field with constraints via write attribute type" do
+      attr = %Ash.Resource.Attribute{
+        name: :test_integer,
+        type: Ash.Type.Integer,
+        constraints: [min: 10, max: 100],
+        allow_nil?: false,
+        description: nil,
+        public?: true,
+        writable?: true,
+        generated?: false,
+        primary_key?: false,
+        always_select?: false,
+        select_by_default?: true,
+        default: nil,
+        update_default: nil,
+        source: :test_integer,
+        match_other_defaults?: false,
+        sensitive?: false,
+        filterable?: true,
+        sortable?: true
+      }
+      
+      schema = AshAi.OpenApi.resource_write_attribute_type(attr, TestResource, :create)
+      
+      assert schema[:type] == :integer
+      assert schema[:minimum] == 10
+      assert schema[:maximum] == 100
+    end
+
+    test "Array field with constraints via write attribute type" do
+      attr = %Ash.Resource.Attribute{
+        name: :test_array,
+        type: {:array, Ash.Type.String},
+        constraints: [min_length: 2, max_length: 5, items: [min_length: 3]],
+        allow_nil?: false,
+        description: nil,
+        public?: true,
+        writable?: true,
+        generated?: false,
+        primary_key?: false,
+        always_select?: false,
+        select_by_default?: true,
+        default: nil,
+        update_default: nil,
+        source: :test_array,
+        match_other_defaults?: false,
+        sensitive?: false,
+        filterable?: true,
+        sortable?: true
+      }
+      
+      schema = AshAi.OpenApi.resource_write_attribute_type(attr, TestResource, :create)
+      
+      assert schema[:type] == :array
+      assert schema[:minItems] == 2
+      assert schema[:maxItems] == 5
+      assert schema[:items][:type] == :string
+      assert schema[:items][:minLength] == 3
     end
   end
 
