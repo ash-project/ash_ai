@@ -622,7 +622,6 @@ defmodule AshAi.ToolCallbacksTest do
       assert tool_result.name == "read_test_resources"
       assert tool_result.content =~ "End callback error"
     end
-
   end
 
   defp chain(opts \\ []) do
