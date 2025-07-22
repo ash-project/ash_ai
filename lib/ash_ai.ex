@@ -74,6 +74,38 @@ defmodule AshAi do
     defstruct [:name, :resource, :action, :load, :async, :domain, :identity, :description]
   end
 
+  defmodule ToolStartEvent do
+    @moduledoc """
+    Event data passed to the `on_tool_start` callback passed to `AshAi.setup_ash_ai/2`.
+
+    Contains information about the tool execution that is about to begin.
+    """
+    @type t :: %__MODULE__{
+            tool_name: String.t(),
+            action: atom(),
+            resource: module(),
+            arguments: map(),
+            actor: any() | nil,
+            tenant: any() | nil
+          }
+
+    defstruct [:tool_name, :action, :resource, :arguments, :actor, :tenant]
+  end
+
+  defmodule ToolEndEvent do
+    @moduledoc """
+    Event data passed to the `on_tool_end` callback passed to `AshAi.setup_ash_ai/2`.
+
+    Contains the tool name and execution result.
+    """
+    @type t :: %__MODULE__{
+            tool_name: String.t(),
+            result: {:ok, String.t(), any()} | {:error, String.t()}
+          }
+
+    defstruct [:tool_name, :result]
+  end
+
   @tool %Spark.Dsl.Entity{
     name: :tool,
     target: Tool,
@@ -179,6 +211,46 @@ defmodule AshAi do
           You will want to include something like the actor's id if you are chatting as an
           actor.
           """
+        ],
+        on_tool_start: [
+          type: {:fun, 1},
+          required: false,
+          doc: """
+          A callback function that is called when a tool execution starts.
+
+          Receives an `AshAi.ToolStartEvent` struct with the following fields:
+          - `:tool_name` - The name of the tool being called
+          - `:action` - The action being performed
+          - `:resource` - The resource the action is on
+          - `:arguments` - The arguments passed to the tool
+          - `:actor` - The actor performing the action
+          - `:tenant` - The tenant context
+
+          Example:
+          ```
+          on_tool_start: fn %AshAi.ToolStartEvent{} = event ->
+            IO.puts("Starting tool: \#{event.tool_name}")
+          end
+          ```
+          """
+        ],
+        on_tool_end: [
+          type: {:fun, 1},
+          required: false,
+          doc: """
+          A callback function that is called when a tool execution completes.
+
+          Receives an `AshAi.ToolEndEvent` struct with the following fields:
+          - `:tool_name` - The name of the tool
+          - `:result` - The result of the tool execution (either {:ok, ...} or {:error, ...})
+
+          Example:
+          ```
+          on_tool_end: fn %AshAi.ToolEndEvent{} = event ->
+            IO.puts("Completed tool: \#{event.tool_name}")
+          end
+          ```
+          """
         ]
       ]
   end
@@ -243,10 +315,14 @@ defmodule AshAi do
     lang_chain
     |> LLMChain.add_tools(tools)
     |> then(fn llm_chain ->
-      if opts.actor do
+      if opts.actor || opts.on_tool_start || opts.on_tool_end do
         LLMChain.update_custom_context(llm_chain, %{
           actor: opts.actor,
-          tenant: opts.tenant
+          tenant: opts.tenant,
+          tool_callbacks: %{
+            on_tool_start: opts.on_tool_start,
+            on_tool_end: opts.on_tool_end
+          }
         })
       else
         llm_chain
@@ -370,241 +446,264 @@ defmodule AshAi do
         input = arguments["input"] || %{}
         opts = [domain: domain, actor: actor, tenant: tenant, context: context[:context] || %{}]
 
-        try do
-          case action.type do
-            :read ->
-              sort =
-                case arguments["sort"] do
-                  sort when is_list(sort) ->
-                    Enum.map(sort, fn map ->
-                      case map["direction"] || "asc" do
-                        "asc" -> map["field"]
-                        "desc" -> "-#{map["field"]}"
-                      end
-                    end)
+        callbacks = context[:tool_callbacks] || %{}
 
-                  nil ->
-                    []
-                end
-                |> Enum.join(",")
-
-              resource
-              |> Ash.Query.limit(arguments["limit"] || 25)
-              |> Ash.Query.offset(arguments["offset"])
-              |> then(fn query ->
-                if sort != "" do
-                  Ash.Query.sort_input(query, sort)
-                else
-                  query
-                end
-              end)
-              |> then(fn query ->
-                if Map.has_key?(arguments, "filter") do
-                  Ash.Query.filter_input(query, arguments["filter"])
-                else
-                  query
-                end
-              end)
-              |> Ash.Query.for_read(action.name, input, opts)
-              |> then(fn query ->
-                result_type = arguments["result_type"] || "run_query"
-
-                case result_type do
-                  "run_query" ->
-                    query
-                    |> Ash.Actions.Read.unpaginated_read(action, load: load)
-                    |> case do
-                      {:ok, value} ->
-                        value
-
-                      {:error, error} ->
-                        raise Ash.Error.to_error_class(error)
-                    end
-                    |> then(fn result ->
-                      result
-                      |> AshAi.Serializer.serialize_value({:array, resource}, [], domain,
-                        load: load
-                      )
-                      |> Jason.encode!()
-                      |> then(&{:ok, &1, result})
-                    end)
-
-                  "count" ->
-                    query
-                    |> Ash.count()
-                    |> case do
-                      {:ok, value} ->
-                        value
-
-                      {:error, error} ->
-                        raise Ash.Error.to_error_class(error)
-                    end
-                    |> then(fn result ->
-                      result
-                      |> AshAi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
-                      |> Jason.encode!()
-                      |> then(&{:ok, &1, result})
-                    end)
-
-                  "exists" ->
-                    query
-                    |> Ash.exists()
-                    |> case do
-                      {:ok, value} ->
-                        value
-
-                      {:error, error} ->
-                        raise Ash.Error.to_error_class(error)
-                    end
-                    |> then(fn result ->
-                      result
-                      |> AshAi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
-                      |> Jason.encode!()
-                      |> then(&{:ok, &1, result})
-                    end)
-
-                  %{"aggregate" => aggregate_kind} = aggregate ->
-                    if aggregate_kind not in ["min", "max", "sum", "avg", "count"] do
-                      raise "invalid aggregate function"
-                    end
-
-                    if !aggregate["field"] do
-                      raise "missing field argument"
-                    end
-
-                    field = Ash.Resource.Info.field(resource, aggregate["field"])
-
-                    if !field || !field.public? do
-                      raise "no such field"
-                    end
-
-                    aggregate_kind = String.to_existing_atom(aggregate_kind)
-
-                    aggregate =
-                      Ash.Query.Aggregate.new!(resource, :aggregate_result, aggregate_kind,
-                        field: field.name
-                      )
-
-                    query
-                    |> Ash.aggregate(aggregate)
-                    |> case do
-                      {:ok, value} ->
-                        value
-
-                      {:error, error} ->
-                        raise Ash.Error.to_error_class(error)
-                    end
-                    |> then(fn result ->
-                      result
-                      |> AshAi.Serializer.serialize_value(
-                        aggregate.type,
-                        aggregate.constraints,
-                        domain
-                      )
-                      |> Jason.encode!()
-                      |> then(&{:ok, &1, result})
-                    end)
-                end
-              end)
-
-            :update ->
-              filter = identity_filter(identity, resource, arguments)
-
-              resource
-              |> Ash.Query.do_filter(filter)
-              |> Ash.Query.limit(1)
-              |> Ash.bulk_update!(
-                action.name,
-                input,
-                Keyword.merge(opts,
-                  return_errors?: true,
-                  notify?: true,
-                  strategy: [:atomic, :stream, :atomic_batches],
-                  load: load,
-                  allow_stream_with: :full_read,
-                  return_records?: true
-                )
-              )
-              |> case do
-                %Ash.BulkResult{status: :success, records: [result]} ->
-                  result
-                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
-                  |> Jason.encode!()
-                  |> then(&{:ok, &1, result})
-
-                %Ash.BulkResult{status: :success, records: []} ->
-                  raise Ash.Error.to_error_class(
-                          Ash.Error.Query.NotFound.exception(primary_key: filter)
-                        )
-              end
-
-            :destroy ->
-              filter = identity_filter(identity, resource, arguments)
-
-              resource
-              |> Ash.Query.do_filter(filter)
-              |> Ash.Query.limit(1)
-              |> Ash.bulk_destroy!(
-                action.name,
-                input,
-                Keyword.merge(opts,
-                  return_errors?: true,
-                  notify?: true,
-                  load: load,
-                  strategy: [:atomic, :stream, :atomic_batches],
-                  allow_stream_with: :full_read,
-                  return_records?: true
-                )
-              )
-              |> case do
-                %Ash.BulkResult{status: :success, records: [result]} ->
-                  result
-                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
-                  |> Jason.encode!()
-                  |> then(&{:ok, &1, result})
-
-                %Ash.BulkResult{status: :success, records: []} ->
-                  raise Ash.Error.to_error_class(
-                          Ash.Error.Query.NotFound.exception(primary_key: filter)
-                        )
-              end
-
-            :create ->
-              resource
-              |> Ash.Changeset.for_create(action.name, input, opts)
-              |> Ash.create!(load: load)
-              |> then(fn result ->
-                result
-                |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
-                |> Jason.encode!()
-                |> then(&{:ok, &1, result})
-              end)
-
-            :action ->
-              resource
-              |> Ash.ActionInput.for_action(action.name, input, opts)
-              |> Ash.run_action!()
-              |> then(fn result ->
-                if action.returns do
-                  result
-                  |> AshAi.Serializer.serialize_value(action.returns, [], domain, load: load)
-                  |> Jason.encode!()
-                else
-                  "success"
-                end
-                |> then(&{:ok, &1, result})
-              end)
-          end
-        rescue
-          error ->
-            error = Ash.Error.to_error_class(error)
-
-            {:error,
-             domain
-             |> AshJsonApi.Error.to_json_api_errors(resource, error, action.type)
-             |> serialize_errors()
-             |> Jason.encode!()}
+        if on_start = callbacks[:on_tool_start] do
+          on_start.(%ToolStartEvent{
+            tool_name: name,
+            action: action.name,
+            resource: resource,
+            arguments: arguments,
+            actor: actor,
+            tenant: tenant
+          })
         end
+
+        result =
+          try do
+            case action.type do
+              :read ->
+                sort =
+                  case arguments["sort"] do
+                    sort when is_list(sort) ->
+                      Enum.map(sort, fn map ->
+                        case map["direction"] || "asc" do
+                          "asc" -> map["field"]
+                          "desc" -> "-#{map["field"]}"
+                        end
+                      end)
+
+                    nil ->
+                      []
+                  end
+                  |> Enum.join(",")
+
+                resource
+                |> Ash.Query.limit(arguments["limit"] || 25)
+                |> Ash.Query.offset(arguments["offset"])
+                |> then(fn query ->
+                  if sort != "" do
+                    Ash.Query.sort_input(query, sort)
+                  else
+                    query
+                  end
+                end)
+                |> then(fn query ->
+                  if Map.has_key?(arguments, "filter") do
+                    Ash.Query.filter_input(query, arguments["filter"])
+                  else
+                    query
+                  end
+                end)
+                |> Ash.Query.for_read(action.name, input, opts)
+                |> then(fn query ->
+                  result_type = arguments["result_type"] || "run_query"
+
+                  case result_type do
+                    "run_query" ->
+                      query
+                      |> Ash.Actions.Read.unpaginated_read(action, load: load)
+                      |> case do
+                        {:ok, value} ->
+                          value
+
+                        {:error, error} ->
+                          raise Ash.Error.to_error_class(error)
+                      end
+                      |> then(fn result ->
+                        result
+                        |> AshAi.Serializer.serialize_value({:array, resource}, [], domain,
+                          load: load
+                        )
+                        |> Jason.encode!()
+                        |> then(&{:ok, &1, result})
+                      end)
+
+                    "count" ->
+                      query
+                      |> Ash.count()
+                      |> case do
+                        {:ok, value} ->
+                          value
+
+                        {:error, error} ->
+                          raise Ash.Error.to_error_class(error)
+                      end
+                      |> then(fn result ->
+                        result
+                        |> AshAi.Serializer.serialize_value(Ash.Type.Integer, [], domain)
+                        |> Jason.encode!()
+                        |> then(&{:ok, &1, result})
+                      end)
+
+                    "exists" ->
+                      query
+                      |> Ash.exists()
+                      |> case do
+                        {:ok, value} ->
+                          value
+
+                        {:error, error} ->
+                          raise Ash.Error.to_error_class(error)
+                      end
+                      |> then(fn result ->
+                        result
+                        |> AshAi.Serializer.serialize_value(Ash.Type.Boolean, [], domain)
+                        |> Jason.encode!()
+                        |> then(&{:ok, &1, result})
+                      end)
+
+                    %{"aggregate" => aggregate_kind} = aggregate ->
+                      if aggregate_kind not in ["min", "max", "sum", "avg", "count"] do
+                        raise "invalid aggregate function"
+                      end
+
+                      if !aggregate["field"] do
+                        raise "missing field argument"
+                      end
+
+                      field = Ash.Resource.Info.field(resource, aggregate["field"])
+
+                      if !field || !field.public? do
+                        raise "no such field"
+                      end
+
+                      aggregate_kind = String.to_existing_atom(aggregate_kind)
+
+                      aggregate =
+                        Ash.Query.Aggregate.new!(resource, :aggregate_result, aggregate_kind,
+                          field: field.name
+                        )
+
+                      query
+                      |> Ash.aggregate(aggregate)
+                      |> case do
+                        {:ok, value} ->
+                          value
+
+                        {:error, error} ->
+                          raise Ash.Error.to_error_class(error)
+                      end
+                      |> then(fn result ->
+                        result
+                        |> AshAi.Serializer.serialize_value(
+                          aggregate.type,
+                          aggregate.constraints,
+                          domain
+                        )
+                        |> Jason.encode!()
+                        |> then(&{:ok, &1, result})
+                      end)
+                  end
+                end)
+
+              :update ->
+                filter = identity_filter(identity, resource, arguments)
+
+                resource
+                |> Ash.Query.do_filter(filter)
+                |> Ash.Query.limit(1)
+                |> Ash.bulk_update!(
+                  action.name,
+                  input,
+                  Keyword.merge(opts,
+                    return_errors?: true,
+                    notify?: true,
+                    strategy: [:atomic, :stream, :atomic_batches],
+                    load: load,
+                    allow_stream_with: :full_read,
+                    return_records?: true
+                  )
+                )
+                |> case do
+                  %Ash.BulkResult{status: :success, records: [result]} ->
+                    result
+                    |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+                    |> Jason.encode!()
+                    |> then(&{:ok, &1, result})
+
+                  %Ash.BulkResult{status: :success, records: []} ->
+                    raise Ash.Error.to_error_class(
+                            Ash.Error.Query.NotFound.exception(primary_key: filter)
+                          )
+                end
+
+              :destroy ->
+                filter = identity_filter(identity, resource, arguments)
+
+                resource
+                |> Ash.Query.do_filter(filter)
+                |> Ash.Query.limit(1)
+                |> Ash.bulk_destroy!(
+                  action.name,
+                  input,
+                  Keyword.merge(opts,
+                    return_errors?: true,
+                    notify?: true,
+                    load: load,
+                    strategy: [:atomic, :stream, :atomic_batches],
+                    allow_stream_with: :full_read,
+                    return_records?: true
+                  )
+                )
+                |> case do
+                  %Ash.BulkResult{status: :success, records: [result]} ->
+                    result
+                    |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+                    |> Jason.encode!()
+                    |> then(&{:ok, &1, result})
+
+                  %Ash.BulkResult{status: :success, records: []} ->
+                    raise Ash.Error.to_error_class(
+                            Ash.Error.Query.NotFound.exception(primary_key: filter)
+                          )
+                end
+
+              :create ->
+                resource
+                |> Ash.Changeset.for_create(action.name, input, opts)
+                |> Ash.create!(load: load)
+                |> then(fn result ->
+                  result
+                  |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+                  |> Jason.encode!()
+                  |> then(&{:ok, &1, result})
+                end)
+
+              :action ->
+                resource
+                |> Ash.ActionInput.for_action(action.name, input, opts)
+                |> Ash.run_action!()
+                |> then(fn result ->
+                  if action.returns do
+                    result
+                    |> AshAi.Serializer.serialize_value(action.returns, [], domain, load: load)
+                    |> Jason.encode!()
+                  else
+                    "success"
+                  end
+                  |> then(&{:ok, &1, result})
+                end)
+            end
+          rescue
+            error ->
+              error = Ash.Error.to_error_class(error)
+
+              {:error,
+               domain
+               |> AshJsonApi.Error.to_json_api_errors(resource, error, action.type)
+               |> serialize_errors()
+               |> Jason.encode!()}
+          end
+
+        if on_end = callbacks[:on_tool_end] do
+          on_end.(%ToolEndEvent{
+            tool_name: name,
+            result: result
+          })
+        end
+
+        result
       end
     })
   end

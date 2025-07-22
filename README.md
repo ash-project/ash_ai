@@ -187,6 +187,27 @@ Key distinction:
 - Private attributes CAN be included in responses when using the `load` option
 - The `load` option is primarily for loading relationships and calculations, but also makes any loaded attributes (including private ones) visible
 
+### Tool Execution Callbacks
+
+Monitor tool execution in real-time by providing callbacks to `AshAi.setup_ash_ai/2`:
+
+```elixir
+chain
+|> AshAi.setup_ash_ai(
+  actor: current_user,
+  on_tool_start: fn %AshAi.ToolStartEvent{} = event ->
+    # event includes: tool_name, action, resource, arguments, actor, tenant
+    IO.puts("Starting #{event.tool_name}...")
+  end,
+  on_tool_end: fn %AshAi.ToolEndEvent{} = event ->
+    # event includes: tool_name, result ({:ok, ...} or {:error, ...})
+    IO.puts("Completed #{event.tool_name}")
+  end
+)
+```
+
+This is useful for showing progress indicators, logging, metrics collection, or debugging tool execution.
+
 ## Prompt-backed actions
 
 This allows defining an action, including input and output types, and delegating the
