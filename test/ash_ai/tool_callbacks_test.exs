@@ -137,7 +137,6 @@ defmodule AshAi.ToolCallbacksTest do
     test "called with success result for read action" do
       test_pid = self()
 
-      # Create a resource for the test
       {:ok, _resource} =
         TestResource
         |> Ash.Changeset.for_create(:create, %{name: "Test Item", status: "active"})
@@ -178,7 +177,6 @@ defmodule AshAi.ToolCallbacksTest do
         type: :function,
         call_id: "call_id",
         name: "create_test_resource",
-        # Missing required name
         arguments: %{"input" => %{}},
         index: 0
       }
@@ -203,7 +201,6 @@ defmodule AshAi.ToolCallbacksTest do
     test "called for destroy action" do
       test_pid = self()
 
-      # First create a resource to destroy
       {:ok, resource} =
         TestResource
         |> Ash.Changeset.for_create(:create, %{name: "To Delete"})
@@ -231,7 +228,6 @@ defmodule AshAi.ToolCallbacksTest do
       assert event.tool_name == "destroy_test_resource"
       assert {:ok, json_result, _raw_result} = event.result
       assert is_binary(json_result)
-      # Verify the resource was actually deleted
       resources = Ash.read!(TestResource, domain: TestDomain)
       refute Enum.find(resources, &(&1.id == resource.id))
     end
@@ -338,7 +334,6 @@ defmodule AshAi.ToolCallbacksTest do
     test "handle tool execution with invalid filter" do
       test_pid = self()
 
-      # Use an invalid filter to cause an error
       tool_call = %LangChain.Message.ToolCall{
         status: :complete,
         type: :function,
@@ -406,7 +401,6 @@ defmodule AshAi.ToolCallbacksTest do
 
       chain = chain(actor: actor)
 
-      # Should work normally without callbacks but with actor
       assert {:ok, chain} = run_chain(chain, tool_call)
 
       tool_result =
@@ -429,14 +423,13 @@ defmodule AshAi.ToolCallbacksTest do
         index: 0
       }
 
-      # Manually create chain with nil tool_callbacks to test the || %{} fallback
+      # Tests the || %{} fallback
       chain =
         %{llm: ChatFaker.new!(%{})}
         |> LLMChain.new!()
         |> AshAi.setup_ash_ai(actions: [{TestResource, [:read]}])
         |> LLMChain.update_custom_context(%{tool_callbacks: nil})
 
-      # Should handle nil callbacks gracefully
       assert {:ok, chain} = run_chain(chain, tool_call)
 
       tool_result =
@@ -582,10 +575,8 @@ defmodule AshAi.ToolCallbacksTest do
           end
         )
 
-      # Tool execution should fail due to callback error
       {:ok, chain} = run_chain(chain, tool_call)
 
-      # Verify tool failed
       tool_result =
         chain.messages
         |> Enum.find(&(is_nil(&1.tool_results) == false))
@@ -618,13 +609,10 @@ defmodule AshAi.ToolCallbacksTest do
           end
         )
 
-      # Tool execution should fail due to callback error
       {:ok, chain} = run_chain(chain, tool_call)
 
-      # Verify on_tool_start was called
       assert_receive {:tool_start_called, _}
 
-      # Verify tool failed
       tool_result =
         chain.messages
         |> Enum.find(&(is_nil(&1.tool_results) == false))
