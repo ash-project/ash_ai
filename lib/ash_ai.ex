@@ -314,20 +314,14 @@ defmodule AshAi do
 
     lang_chain
     |> LLMChain.add_tools(tools)
-    |> then(fn llm_chain ->
-      if opts.actor || opts.on_tool_start || opts.on_tool_end do
-        LLMChain.update_custom_context(llm_chain, %{
-          actor: opts.actor,
-          tenant: opts.tenant,
-          tool_callbacks: %{
-            on_tool_start: opts.on_tool_start,
-            on_tool_end: opts.on_tool_end
-          }
-        })
-      else
-        llm_chain
-      end
-    end)
+    |> LLMChain.update_custom_context(%{
+      actor: opts.actor,
+      tenant: opts.tenant,
+      tool_callbacks: %{
+        on_tool_start: opts.on_tool_start,
+        on_tool_end: opts.on_tool_end
+      }
+    })
   end
 
   defp run_loop(chain, first? \\ false) do
