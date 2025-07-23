@@ -61,7 +61,7 @@ defmodule YourApp.GoogleAiEmbeddingModel do
 
   @impl true
   def generate(texts, _opts) do
-    parts = Enum.map(texts, fn t -> %{text: t} end) |> IO.inspect()
+    parts = Enum.map(texts, fn t -> %{text: t} end)
     api_key = System.fetch_env!("GEMINI_API_KEY")
 
     headers = [
