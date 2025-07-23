@@ -279,6 +279,9 @@ See `AshAi.Actions.Prompt.Adapter` for more information.
 
 For any langchain models you use, you will need to configure them. See https://hexdocs.pm/langchain/ for more information.
 
+For AshAI Specific changes to use different models:
+- [Google Gemini 2.5](/documentation/models/gemini.md)
+
 ## Vectorization
 
 See `AshPostgres` vector setup for required steps: https://hexdocs.pm/ash_postgres/AshPostgres.Extensions.Vector.html
