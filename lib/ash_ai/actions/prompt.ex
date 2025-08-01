@@ -275,6 +275,9 @@ defmodule AshAi.Actions.Prompt do
           %LangChain.ChatModels.ChatAnthropic{} ->
             AshAi.Actions.Prompt.Adapter.CompletionTool
 
+          %LangChain.ChatModels.ChatGoogleAI{} ->
+            AshAi.Actions.Prompt.Adapter.RequestJson
+
           _ ->
             raise """
             No default adapter found for the given LLM.
