@@ -35,7 +35,8 @@ defmodule AshAi.MixProject do
         "test.generate_migrations": :test,
         "test.reset": :test,
         "test.full_reset": :test
-      ]
+      ],
+      compilers: [:phoenix_live_view] ++ Mix.compilers()
     ]
   end
 
@@ -144,6 +145,7 @@ defmodule AshAi.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
+      {:lazy_html, ">= 0.0.0", only: :test},
       {:ash, ash_version("~> 3.5 and >= 3.5.5")},
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
