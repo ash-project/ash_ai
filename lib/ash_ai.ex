@@ -1106,15 +1106,7 @@ defmodule AshAi do
       end
 
       for domain <- Application.get_env(opts.otp_app, :ash_domains) || [],
-          tool <- AshAi.Info.tools(domain),
-          action = Ash.Resource.Info.action(tool.resource, tool.action),
-          can?(
-            opts.actor,
-            domain,
-            tool.resource,
-            action,
-            opts.tenant
-          ) do
+          tool <- AshAi.Info.tools(domain) do
         %{tool | domain: domain, action: Ash.Resource.Info.action(tool.resource, tool.action)}
       end
     end
@@ -1137,6 +1129,15 @@ defmodule AshAi do
         tools
       end
     end)
+    |> Enum.filter(
+      &can?(
+        opts.actor,
+        &1.domain,
+        &1.resource,
+        &1.action,
+        opts.tenant
+      )
+    )
   end
 
   def has_vectorize_change?(%Ash.Changeset{} = changeset) do
