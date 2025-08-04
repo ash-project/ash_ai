@@ -1171,7 +1171,7 @@ defmodule AshAi do
     e ->
       Logger.error(
         """
-        Error raised while checking permissions for #{inspect(resource)}.#{action}
+        Error raised while checking permissions for #{inspect(resource)}.#{inspect(action)}
 
         When checking permissions, we check the action using an empty input.
         Your action should be prepared for this.
