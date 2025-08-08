@@ -1097,9 +1097,9 @@ if Code.ensure_loaded?(Igniter) do
 
             <div class="drawer-side border-r bg-base-300 min-w-72">
               <div class="py-4 px-6">
-                <.header class="text-lg mb-4">
+                <div class="text-lg mb-4">
                   Conversations
-                </.header>
+                </div>
                 <div class="mb-4">
                   <.link navigate={~p"/chat"} class="btn btn-primary btn-lg mb-2">
                     <div class="rounded-full bg-primary-content text-primary w-6 h-6 flex items-center justify-center">
