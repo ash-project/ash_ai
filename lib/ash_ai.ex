@@ -472,8 +472,28 @@ defmodule AshAi do
                   end
                   |> Enum.join(",")
 
+                limit =
+                  case {arguments["limit"], action.pagination} do
+                    {limit, false} when is_integer(limit) ->
+                      limit
+
+                    {limit,
+                     %Ash.Resource.Actions.Read.Pagination{
+                       default_limit: default,
+                       max_page_size: max
+                     }} ->
+                      cond do
+                        is_integer(limit) and is_integer(max) -> min(limit, max)
+                        is_nil(limit) and is_integer(default) -> default
+                        true -> 25
+                      end
+
+                    _ ->
+                      25
+                  end
+
                 resource
-                |> Ash.Query.limit(arguments["limit"] || 25)
+                |> Ash.Query.limit(limit)
                 |> Ash.Query.offset(arguments["offset"])
                 |> then(fn query ->
                   if sort != "" do
@@ -958,10 +978,14 @@ defmodule AshAi do
       limit: %{
         type: :integer,
         description: "The maximum number of records to return",
-        default: case pagination do
-          %Ash.Resource.Actions.Read.Pagination{default_limit: limit} when is_integer(limit) -> limit
-          _ -> 25
-        end
+        default:
+          case pagination do
+            %Ash.Resource.Actions.Read.Pagination{default_limit: limit} when is_integer(limit) ->
+              limit
+
+            _ ->
+              25
+          end
       },
       offset: %{
         type: :integer,
