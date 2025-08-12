@@ -515,6 +515,7 @@ defmodule AshAi do
 
                     "count" ->
                       query
+                      |> Ash.Query.unset([:limit, :offset])
                       |> Ash.count()
                       |> case do
                         {:ok, value} ->
