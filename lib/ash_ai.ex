@@ -900,7 +900,7 @@ defmodule AshAi do
 
   defp parse_error(error), do: error
 
-  defp add_action_specific_properties(properties, resource, %{type: :read}) do
+  defp add_action_specific_properties(properties, resource, %{type: :read, pagination: pagination}) do
     Map.merge(properties, %{
       filter: %{
         type: :object,
@@ -957,7 +957,10 @@ defmodule AshAi do
       limit: %{
         type: :integer,
         description: "The maximum number of records to return",
-        default: 25
+        default: case pagination do
+          %Ash.Resource.Actions.Read.Pagination{default_limit: limit} when is_integer(limit) -> limit
+          _ -> 25
+        end
       },
       offset: %{
         type: :integer,
