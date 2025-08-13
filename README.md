@@ -369,16 +369,34 @@ defmodule MyApp.Artist do
     triggers do
       trigger :my_vectorize_trigger do
         action :ash_ai_update_embeddings
+        queue :artist_vectorizer
         worker_read_action :read
         worker_module_name __MODULE__.AshOban.Worker.UpdateEmbeddings
         scheduler_module_name __MODULE__.AshOban.Scheduler.UpdateEmbeddings
-        scheduler_cron nil
+        scheduler_cron false # change this to a cron expression if you want to rerun the embedding at specified intervals
         list_tenants MyApp.ListTenants
       end
     end
   end
 end
 ```
+
+You'll also need to create the queue in the Oban config by changing your `config.exs` file.
+```elixir
+config :my_app, Oban,
+  engine: Oban.Engines.Basic,
+  notifier: Oban.Notifiers.Postgres,
+  queues: [
+    default: 10,
+    chat_responses: [limit: 10],
+    conversations: [limit: 10],
+    artist_vectorizer: [limit: 20], #set the limit of concurrent workers
+  ],
+  repo: MyApp.Repo,
+  plugins: [{Oban.Plugins.Cron, []}]
+```
+
+The queue defaults to the resources short name plus the name of the trigger. (if you didn't set it through the queue option on the trigger).
 
 ### `:manual`
 
