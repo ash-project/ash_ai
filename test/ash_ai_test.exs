@@ -29,6 +29,14 @@ defmodule AshAiTest do
           {:ok, "Hello, #{input.arguments.name}!"}
         end)
       end
+
+      action :check_context, :map do
+        description("Check if context is available")
+
+        run(fn _input, context ->
+          {:ok, %{context: context.source_context}}
+        end)
+      end
     end
 
     relationships do
@@ -84,6 +92,7 @@ defmodule AshAiTest do
       tool(:update_artist, Artist, :update, load: @artist_load, async: false)
       tool(:delete_artist, Artist, :destroy, load: @artist_load, async: false)
       tool(:say_hello, Artist, :say_hello, load: @artist_load, async: false)
+      tool(:check_context, Artist, :check_context, async: false)
     end
   end
 
@@ -331,6 +340,47 @@ defmodule AshAiTest do
       assert {:ok, new_chain} = chain() |> run_chain(tool_call)
 
       assert "Hello, Chat Faker!" = new_chain.last_message.processed_content
+    end
+
+    test "passes context through setup_ash_ai" do
+      custom_context = %{shared: %{conversation_id: "test-123"}}
+
+      chain =
+        %{llm: ChatFaker.new!(%{expect_fun: expect_fun()})}
+        |> LLMChain.new!()
+        |> AshAi.setup_ash_ai(
+          actions: [],
+          context: custom_context
+        )
+
+      assert chain.custom_context.context == custom_context
+    end
+
+    test "context is accessible in tool execution" do
+      custom_context = %{shared: %{conversation_id: "test-123", user_id: 42}}
+
+      actions =
+        AshAi.Info.tools(Music)
+        |> Enum.group_by(& &1.resource, & &1.action)
+        |> Map.to_list()
+
+      chain =
+        %{llm: ChatFaker.new!(%{expect_fun: expect_fun()})}
+        |> LLMChain.new!()
+        |> AshAi.setup_ash_ai(
+          actions: actions,
+          context: custom_context
+        )
+
+      tool_call = tool_call("check_context", %{})
+
+      assert {:ok, new_chain} = chain |> run_chain(tool_call)
+
+      result = new_chain.last_message.processed_content
+
+      assert result.context.shared == custom_context.shared
+      assert result.context.conversation_id == "test-123"
+      assert result.context.user_id == 42
     end
   end
 
