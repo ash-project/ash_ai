@@ -333,6 +333,7 @@ defmodule AshAi do
     |> LLMChain.update_custom_context(%{
       actor: opts.actor,
       tenant: opts.tenant,
+      context: opts.context,
       tool_callbacks: %{
         on_tool_start: opts.on_tool_start,
         on_tool_end: opts.on_tool_end
@@ -423,7 +424,7 @@ defmodule AshAi do
       type: :object,
       properties:
         add_action_specific_properties(props_with_input, resource, action, action_parameters),
-      required: [:input],
+      required: Map.keys(props_with_input),
       additionalProperties: false
     }
     |> Jason.encode!()
