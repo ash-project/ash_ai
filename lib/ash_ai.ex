@@ -485,7 +485,7 @@ defmodule AshAi do
             case action.type do
               :read ->
                 sort =
-                  case arguments && arguments["sort"] do
+                  case arguments["sort"] do
                     sort when is_list(sort) ->
                       Enum.map(sort, fn map ->
                         case map["direction"] || "asc" do
@@ -500,7 +500,7 @@ defmodule AshAi do
                   |> Enum.join(",")
 
                 limit =
-                  case {arguments && arguments["limit"], action.pagination} do
+                  case {arguments["limit"], action.pagination} do
                     {limit, false} when is_integer(limit) ->
                       limit
 
@@ -521,7 +521,7 @@ defmodule AshAi do
 
                 resource
                 |> Ash.Query.limit(limit)
-                |> Ash.Query.offset(arguments && arguments["offset"])
+                |> Ash.Query.offset(arguments["offset"])
                 |> then(fn query ->
                   if sort != "" do
                     Ash.Query.sort_input(query, sort)
