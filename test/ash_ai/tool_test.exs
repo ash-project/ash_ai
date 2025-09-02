@@ -79,6 +79,31 @@ defmodule AshAi.ToolTest do
       assert tool_result.content ==
                "[{\"id\":\"0197b375-4daa-7112-a9d8-7f0104485646\",\"public_name\":\"John Doe\",\"public_email\":\"john@example.com\",\"internal_status\":\"classified\"}]"
     end
+
+    test "handles nil arguments from LangChain/MCP clients" do
+      # Simulate LangChain/MCP sending nil instead of empty map
+      tool_call = %LangChain.Message.ToolCall{
+        status: :complete,
+        type: :function,
+        call_id: "call_id",
+        name: "read_test_resources",
+        arguments: nil,  # This is what some LangChain/MCP clients send
+        index: 0
+      }
+
+      # Should not crash with BadMapError
+      {:ok, chain} = chain() |> run_chain(tool_call)
+
+      tool_result =
+        chain.messages
+        |> Enum.find(&(is_nil(&1.tool_results) == false))
+        |> Map.get(:tool_results)
+        |> Enum.at(0)
+
+      # Should return the resource data without crashing
+      assert tool_result.content ==
+               "[{\"id\":\"0197b375-4daa-7112-a9d8-7f0104485646\",\"public_name\":\"John Doe\",\"public_email\":\"john@example.com\",\"internal_status\":\"classified\"}]"
+    end
   end
 
   describe "tool parameter schema visibility" do

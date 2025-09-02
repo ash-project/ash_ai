@@ -459,6 +459,9 @@ defmodule AshAi do
       strict: true,
       async: async,
       function: fn arguments, context ->
+        # Handle nil arguments from LangChain/MCP clients
+        arguments = arguments || %{}
+        
         actor = context[:actor]
         tenant = context[:tenant]
         input = arguments["input"] || %{}
@@ -527,7 +530,7 @@ defmodule AshAi do
                   end
                 end)
                 |> then(fn query ->
-                  if Map.has_key?(arguments, "filter") do
+                  if arguments && Map.has_key?(arguments, "filter") do
                     Ash.Query.filter_input(query, arguments["filter"])
                   else
                     query
@@ -535,7 +538,7 @@ defmodule AshAi do
                 end)
                 |> Ash.Query.for_read(action.name, input, opts)
                 |> then(fn query ->
-                  result_type = arguments["result_type"] || "run_query"
+                  result_type = (arguments && arguments["result_type"]) || "run_query"
 
                   case result_type do
                     "run_query" ->
