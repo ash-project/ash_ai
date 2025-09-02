@@ -459,6 +459,9 @@ defmodule AshAi do
       strict: true,
       async: async,
       function: fn arguments, context ->
+        # Handle nil arguments from LangChain/MCP clients
+        arguments = arguments || %{}
+        
         actor = context[:actor]
         tenant = context[:tenant]
         input = arguments["input"] || %{}
@@ -482,7 +485,7 @@ defmodule AshAi do
             case action.type do
               :read ->
                 sort =
-                  case arguments["sort"] do
+                  case arguments && arguments["sort"] do
                     sort when is_list(sort) ->
                       Enum.map(sort, fn map ->
                         case map["direction"] || "asc" do
@@ -497,7 +500,7 @@ defmodule AshAi do
                   |> Enum.join(",")
 
                 limit =
-                  case {arguments["limit"], action.pagination} do
+                  case {arguments && arguments["limit"], action.pagination} do
                     {limit, false} when is_integer(limit) ->
                       limit
 
@@ -518,7 +521,7 @@ defmodule AshAi do
 
                 resource
                 |> Ash.Query.limit(limit)
-                |> Ash.Query.offset(arguments["offset"])
+                |> Ash.Query.offset(arguments && arguments["offset"])
                 |> then(fn query ->
                   if sort != "" do
                     Ash.Query.sort_input(query, sort)
@@ -527,7 +530,7 @@ defmodule AshAi do
                   end
                 end)
                 |> then(fn query ->
-                  if Map.has_key?(arguments, "filter") do
+                  if arguments && Map.has_key?(arguments, "filter") do
                     Ash.Query.filter_input(query, arguments["filter"])
                   else
                     query
@@ -535,7 +538,7 @@ defmodule AshAi do
                 end)
                 |> Ash.Query.for_read(action.name, input, opts)
                 |> then(fn query ->
-                  result_type = arguments["result_type"] || "run_query"
+                  result_type = (arguments && arguments["result_type"]) || "run_query"
 
                   case result_type do
                     "run_query" ->
