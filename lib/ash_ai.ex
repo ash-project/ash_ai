@@ -461,7 +461,7 @@ defmodule AshAi do
       function: fn arguments, context ->
         # Handle nil arguments from LangChain/MCP clients
         arguments = arguments || %{}
-        
+
         actor = context[:actor]
         tenant = context[:tenant]
         input = arguments["input"] || %{}

@@ -87,7 +87,8 @@ defmodule AshAi.ToolTest do
         type: :function,
         call_id: "call_id",
         name: "read_test_resources",
-        arguments: nil,  # This is what some LangChain/MCP clients send
+        # This is what some LangChain/MCP clients send
+        arguments: nil,
         index: 0
       }
 
