@@ -360,6 +360,9 @@ if Code.ensure_loaded?(Igniter) do
       |> Ash.Resource.Igniter.add_new_action(message, :create, """
       create :create do
         accept [:text]
+        validate match(:text, ~r/\\S/) do
+          message "Message cannot be empty"
+        end
         argument :conversation_id, :uuid do
           public? false
         end
