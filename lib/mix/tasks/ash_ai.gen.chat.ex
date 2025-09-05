@@ -1115,7 +1115,7 @@ if Code.ensure_loaded?(Igniter) do
                   <%= for {id, conversation} <- @streams.conversations do %>
                     <li id={id}>
                       <.link
-                        href={~p"/chat/\#{conversation.id}"}
+                        navigate={~p"/chat/\#{conversation.id}"}
                         phx-click="select_conversation"
                         phx-value-id={conversation.id}
                         class={"block py-2 px-3 transition border-l-4 pl-2 mb-2 \#{if @conversation && @conversation.id == conversation.id, do: "border-primary font-medium", else: "border-transparent"}"}
