@@ -20,6 +20,7 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   alias AshAi.Actions.Prompt.Adapter.Data
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
+  alias LangChain.Message.ContentPart
   alias LangChain.MessageProcessors.JsonProcessor
 
   @type json_format :: :markdown | :xml
@@ -190,6 +191,23 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
   end
 
   defp process_response(%Message{content: content}, data, _attempt) when is_binary(content) do
+    # Fallback: try to parse raw content as JSON
+    case Jason.decode(content) do
+      {:ok, decoded} ->
+        validate_and_cast_result(decoded, data)
+
+      {:error, _} ->
+        {:error,
+         "Response did not contain valid JSON. Please format your response as a JSON code block."}
+    end
+  end
+
+  defp process_response(
+         %Message{content: [%ContentPart{type: :text, content: content}]},
+         data,
+         _attempt
+       )
+       when is_binary(content) do
     # Fallback: try to parse raw content as JSON
     case Jason.decode(content) do
       {:ok, decoded} ->

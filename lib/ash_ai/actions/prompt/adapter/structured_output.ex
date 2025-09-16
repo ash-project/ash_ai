@@ -8,6 +8,7 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
 
   alias AshAi.Actions.Prompt.Adapter.Data
   alias LangChain.Chains.LLMChain
+  alias LangChain.Message.ContentPart
 
   def run(%Data{} = data, _opts) do
     if !Map.has_key?(data.llm, :json_schema) do
@@ -41,11 +42,13 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
     |> LLMChain.add_tools(data.tools)
     |> LLMChain.run(mode: :while_needs_response)
     |> case do
-      {:ok,
-       %LangChain.Chains.LLMChain{
-         last_message: %{content: content}
-       }}
+      {:ok, %LLMChain{last_message: %{content: content}}}
       when is_binary(content) ->
+        process_llm_response(content, data)
+
+      {:ok, %LLMChain{last_message: %{content: [%ContentPart{type: :text, content: content}]}}}
+      when is_binary(content) ->
+        # LangChain 0.4+ always returns list of content parts
         process_llm_response(content, data)
 
       {:error, _, error} ->
