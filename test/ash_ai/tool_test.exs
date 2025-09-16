@@ -1,5 +1,6 @@
 defmodule AshAi.ToolTest do
   use ExUnit.Case, async: true
+  import AshAi.Test.LangChainHelpers
   alias AshAi.ChatFaker
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
@@ -76,7 +77,9 @@ defmodule AshAi.ToolTest do
       # ID is included because it's a primary key
       # Public name and email are included because they're public attributes
       # Internal status is included because it's a loaded field
-      assert tool_result.content ==
+      assert {:ok, text} = extract_content_text(tool_result.content)
+
+      assert text ==
                "[{\"id\":\"0197b375-4daa-7112-a9d8-7f0104485646\",\"public_name\":\"John Doe\",\"public_email\":\"john@example.com\",\"internal_status\":\"classified\"}]"
     end
 
@@ -102,7 +105,9 @@ defmodule AshAi.ToolTest do
         |> Enum.at(0)
 
       # Should return the resource data without crashing
-      assert tool_result.content ==
+      assert {:ok, text} = extract_content_text(tool_result.content)
+
+      assert text ==
                "[{\"id\":\"0197b375-4daa-7112-a9d8-7f0104485646\",\"public_name\":\"John Doe\",\"public_email\":\"john@example.com\",\"internal_status\":\"classified\"}]"
     end
   end

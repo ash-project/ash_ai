@@ -1,5 +1,6 @@
 defmodule AshAi.ToolCallbacksTest do
   use ExUnit.Case, async: true
+  import AshAi.Test.LangChainHelpers
   alias AshAi.ChatFaker
   alias LangChain.Chains.LLMChain
   alias LangChain.Message
@@ -384,7 +385,10 @@ defmodule AshAi.ToolCallbacksTest do
 
       assert tool_result.name == "read_test_resources"
       assert tool_result.type == :function
-      assert is_binary(tool_result.content)
+
+      # Content should be extractable as text (backward compatible with both string and ContentPart formats)
+      assert {:ok, text} = extract_content_text(tool_result.content)
+      assert is_binary(text)
     end
 
     test "actor passed without callbacks still sets context" do
@@ -410,7 +414,8 @@ defmodule AshAi.ToolCallbacksTest do
         |> Enum.at(0)
 
       assert tool_result.name == "create_test_resource"
-      assert tool_result.content =~ "Test with Actor"
+      assert {:ok, text} = extract_content_text(tool_result.content)
+      assert text =~ "Test with Actor"
     end
 
     test "handles nil callbacks in custom context" do
@@ -439,7 +444,8 @@ defmodule AshAi.ToolCallbacksTest do
         |> Enum.at(0)
 
       assert tool_result.name == "read_test_resources"
-      assert is_binary(tool_result.content)
+      assert {:ok, text} = extract_content_text(tool_result.content)
+      assert is_binary(text)
     end
 
     test "only on_tool_start callback works" do
@@ -584,7 +590,8 @@ defmodule AshAi.ToolCallbacksTest do
         |> Enum.at(0)
 
       assert tool_result.name == "read_test_resources"
-      assert tool_result.content =~ "Callback error"
+      assert {:ok, text} = extract_content_text(tool_result.content)
+      assert text =~ "Callback error"
     end
 
     test "on_tool_end exceptions propagate" do
@@ -620,7 +627,8 @@ defmodule AshAi.ToolCallbacksTest do
         |> Enum.at(0)
 
       assert tool_result.name == "read_test_resources"
-      assert tool_result.content =~ "End callback error"
+      assert {:ok, text} = extract_content_text(tool_result.content)
+      assert text =~ "End callback error"
     end
   end
 
