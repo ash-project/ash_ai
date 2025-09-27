@@ -12,46 +12,43 @@ defmodule AshAi.Transformers.Vectorize do
       dsl
       |> AshAi.Info.vectorize_attributes!()
 
-    uses_full_text = match?({:ok, _}, AshAi.Info.vectorize_full_text_text(dsl))
+    full_text_entities =
+      AshAi.Info.vectorize(dsl)
+      |> Enum.reject(&is_nil(&1.text))
 
-    if Enum.empty?(attrs) && !uses_full_text do
+    if Enum.empty?(attrs) && Enum.empty?(full_text_entities) do
       {:ok, dsl}
     else
       if Ash.Resource.Info.data_layer(dsl) != AshPostgres.DataLayer do
         raise "AshAi vectorization only currently supports AshPostgres"
       end
 
-      if Ash.Resource.Info.field(dsl, :full_text) do
-        raise "AshAi vectorization currently does not work if there is a field called full_text"
+      full_text_entities =
+        full_text_entities
+        |> Enum.map(&{:full_text, &1.name, &1.used_attributes, &1.text})
+
+      names =
+        full_text_entities
+        |> Enum.reject(&is_nil(Ash.Resource.Info.field(dsl, elem(&1, 1))))
+
+      if !Enum.empty?(names) do
+        raise "AshAi vectorization won't work if the field names are already taken: `#{names |> Enum.join("`, `")}`"
       end
 
-      attrs
+      full_text_entities
+      |> Enum.map(&{:full_text, &1 |> elem(1)})
+      |> Enum.concat(attrs)
       |> Enum.reduce({:ok, dsl}, &vectorize_attribute(&2, &1))
-      |> full_text_vector()
-      |> update_vectors_action()
+      |> update_vectors_action(full_text_entities)
     end
   end
 
-  defbuilder update_vectors_action(dsl_state) do
-    name = AshAi.Info.vectorize_full_text_name!(dsl_state)
-
+  defbuilder update_vectors_action(dsl_state, full_text_entities) do
     attrs =
       AshAi.Info.vectorize_attributes!(dsl_state)
 
-    case AshAi.Info.vectorize_full_text_text(dsl_state) do
-      {:ok, fun} ->
-        used_attrs =
-          case AshAi.Info.vectorize_full_text_used_attributes(dsl_state) do
-            {:ok, attrs} -> attrs
-            _ -> nil
-          end
-
-        attrs ++
-          [{:full_text, name, used_attrs, fun}]
-
-      _ ->
-        attrs
-    end
+    full_text_entities
+    |> Enum.concat(attrs)
     |> case do
       [] ->
         {:ok, dsl_state}
@@ -127,7 +124,7 @@ defmodule AshAi.Transformers.Vectorize do
     end
   end
 
-  defbuilder vectorize_attribute(dsl_state, {_source, dest}) do
+  defbuilder vectorize_attribute(dsl_state, {_, dest}) do
     {embedding_model, opts} = AshAi.Info.vectorize_embedding_model!(dsl_state)
 
     dsl_state
@@ -135,40 +132,5 @@ defmodule AshAi.Transformers.Vectorize do
       constraints: [dimensions: embedding_model.dimensions(opts)],
       select_by_default?: false
     )
-  end
-
-  defbuilder full_text_vector(dsl_state) do
-    name = AshAi.Info.vectorize_full_text_name!(dsl_state)
-
-    {embedding_model, opts} = AshAi.Info.vectorize_embedding_model!(dsl_state)
-
-    case AshAi.Info.vectorize_full_text_text(dsl_state) do
-      {:ok, _fun} ->
-        case AshAi.Info.vectorize_strategy!(dsl_state) do
-          :after_action ->
-            dsl_state
-            |> add_new_attribute(name, :vector,
-              constraints: [dimensions: embedding_model.dimensions(opts)],
-              select_by_default?: false
-            )
-
-          :manual ->
-            dsl_state
-            |> add_new_attribute(name, :vector,
-              constraints: [dimensions: embedding_model.dimensions(opts)],
-              select_by_default?: false
-            )
-
-          :ash_oban ->
-            dsl_state
-            |> add_new_attribute(name, :vector,
-              constraints: [dimensions: embedding_model.dimensions(opts)],
-              select_by_default?: false
-            )
-        end
-
-      _ ->
-        {:ok, dsl_state}
-    end
   end
 end

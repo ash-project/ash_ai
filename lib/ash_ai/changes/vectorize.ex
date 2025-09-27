@@ -11,28 +11,21 @@ defmodule AshAi.Changes.Vectorize do
     {embedding_model, vector_opts} =
       AshAi.Info.vectorize_embedding_model!(changeset.resource)
 
-    name = AshAi.Info.vectorize_full_text_name!(changeset.resource)
-
     attrs =
       AshAi.Info.vectorize_attributes!(changeset.resource)
 
     changes =
-      case AshAi.Info.vectorize_full_text_text(changeset.resource) do
-        {:ok, fun} ->
-          attrs ++
-            [{:full_text, name, fun}]
-
-        _ ->
-          attrs
-      end
-      |> Enum.flat_map(fn
+      AshAi.Info.vectorize(changeset.resource)
+      |> Enum.map(&{:full_text, &1.name, &1.text})
+      |> Enum.concat(attrs)
+      |> Enum.map(fn
         {source, dest} ->
           text = Map.get(changeset.data, source)
-          [{dest, text}]
+          {dest, text}
 
         {:full_text, name, fun} ->
           text = fun.(changeset.data)
-          [{name, text}]
+          {name, text}
       end)
 
     strings = Enum.map(changes, &elem(&1, 1))

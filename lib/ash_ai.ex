@@ -10,9 +10,20 @@ defmodule AshAi do
   require Logger
   require Ash.Expr
 
-  @full_text %Spark.Dsl.Section{
+  defmodule FullText do
+    @moduledoc "A section that defines how complex vectorized columns are defined"
+    defstruct [
+      :used_attributes,
+      :text,
+      name: :full_text_vector,
+      __spark_metadata__: nil
+    ]
+  end
+
+  @full_text %Spark.Dsl.Entity{
     name: :full_text,
     imports: [Ash.Expr],
+    target: FullText,
     schema: [
       name: [
         type: :atom,
@@ -34,7 +45,7 @@ defmodule AshAi do
 
   @vectorize %Spark.Dsl.Section{
     name: :vectorize,
-    sections: [
+    entities: [
       @full_text
     ],
     schema: [
@@ -80,7 +91,8 @@ defmodule AshAi do
       :domain,
       :identity,
       :description,
-      :action_parameters
+      :action_parameters,
+      __spark_metadata__: nil
     ]
   end
 
@@ -1209,10 +1221,7 @@ defmodule AshAi do
 
   def has_vectorize_change?(%Ash.Changeset{} = changeset) do
     full_text_attrs =
-      case AshAi.Info.vectorize_full_text_used_attributes(changeset.resource) do
-        {:ok, used_attrs} -> used_attrs
-        :error -> []
-      end
+      AshAi.Info.vectorize(changeset.resource) |> Enum.flat_map(& &1.used_attributes)
 
     vectorized_attrs =
       AshAi.Info.vectorize_attributes!(changeset.resource)
