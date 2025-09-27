@@ -82,7 +82,10 @@ Target: `AshAi.Tool`
 | [`ash_oban_trigger_name`](#vectorize-ash_oban_trigger_name){: #vectorize-ash_oban_trigger_name } | `atom` | `:ash_ai_update_embeddings` | The name of the AshOban-trigger that will be run in order to update the record's embeddings. Defaults to `:ash_ai_update_embeddings`. |
 
 
+
 ### vectorize.full_text
+
+
 
 
 
@@ -101,6 +104,10 @@ Target: `AshAi.Tool`
 
 
 
+
+### Introspection
+
+Target: `AshAi.FullText`
 
 
 

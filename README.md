@@ -303,6 +303,9 @@ See `AshPostgres` vector setup for required steps: https://hexdocs.pm/ash_postgr
 This extension creates a vector search action, and provides a few different strategies for how to
 update the embeddings when needed.
 
+You can have multiple `full_text`s in the case where you want to vectorize multiple groups of columns together, in the
+case where you wish to do so, you should specify the `name` of the generated `full_text` column.
+
 ```elixir
 # in a resource
 
@@ -363,7 +366,7 @@ end
 
 Just like the `:after_action`-strategy, this strategy creates an `:ash_ai_update_embeddings` update-action, and adds a global change that will run an `ash_oban`-trigger (also in the `after_transaction`-phase) whenever embeddings need to be rebuilt.
 
-You will to define this trigger yourself, and then reference it in the `vectorize`-section like this:
+You will have to define this trigger yourself, and then reference it in the `vectorize`-section like this:
 
 ```elixir
 defmodule MyApp.Artist do
