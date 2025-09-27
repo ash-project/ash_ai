@@ -6,6 +6,8 @@ spark_locals_without_parens = [
   define_update_action_for_manual_strategy?: 1,
   description: 1,
   embedding_model: 1,
+  full_text: 0,
+  full_text: 1,
   identity: 1,
   load: 1,
   name: 1,

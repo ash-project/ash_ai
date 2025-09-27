@@ -15,6 +15,7 @@ defmodule AshAi do
     defstruct [
       :used_attributes,
       :text,
+      :__identifier__,
       name: :full_text_vector,
       __spark_metadata__: nil
     ]
@@ -24,6 +25,7 @@ defmodule AshAi do
     name: :full_text,
     imports: [Ash.Expr],
     target: FullText,
+    identifier: :name,
     schema: [
       name: [
         type: :atom,

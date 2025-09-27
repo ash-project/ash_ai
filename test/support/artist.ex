@@ -25,6 +25,18 @@ defmodule AshAi.Test.Music.ArtistAfterAction do
       used_attributes [:name, :bio]
     end
 
+    full_text do
+      name :name_full_text_vector
+
+      text fn record ->
+        """
+        Artist Name: #{record.name}
+        """
+      end
+
+      used_attributes [:name]
+    end
+
     embedding_model(AshAi.Test.EmbeddingModel)
   end
 
@@ -67,6 +79,18 @@ defmodule AshAi.Test.Music.ArtistManual do
       used_attributes [:name, :bio]
     end
 
+    full_text do
+      name :name_full_text_vector
+
+      text fn record ->
+        """
+        Artist Name: #{record.name}
+        """
+      end
+
+      used_attributes [:name]
+    end
+
     embedding_model(AshAi.Test.EmbeddingModel)
   end
 
@@ -107,6 +131,18 @@ defmodule AshAi.Test.Music.ArtistOban do
       end
 
       used_attributes [:name, :bio]
+    end
+
+    full_text do
+      name :name_full_text_vector
+
+      text fn record ->
+        """
+        Artist Name: #{record.name}
+        """
+      end
+
+      used_attributes [:name]
     end
 
     embedding_model(AshAi.Test.EmbeddingModel)
