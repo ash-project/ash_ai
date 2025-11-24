@@ -44,6 +44,7 @@ defmodule AshAi.Actions.Prompt.Adapter.StructuredOutput do
     |> LLMChain.new!()
     |> AshAi.Actions.Prompt.Adapter.Helpers.add_messages_with_templates(messages, data)
     |> LLMChain.add_tools(data.tools)
+    |> data.modify_chain.(data.context)
     |> LLMChain.run(mode: :while_needs_response)
     |> case do
       {:ok, %LLMChain{last_message: %{content: content}}}

@@ -185,6 +185,8 @@ defmodule AshAi.Actions.Prompt do
 
     tools = get_tools(opts, input, context)
 
+    modify_chain = get_modify_chain(opts)
+
     messages = get_messages(input, opts, context)
 
     data = %AshAi.Actions.Prompt.Adapter.Data{
@@ -193,11 +195,22 @@ defmodule AshAi.Actions.Prompt do
       messages: messages,
       json_schema: json_schema,
       tools: tools,
+      modify_chain: modify_chain,
       verbose?: opts[:verbose?] || false,
       context: context
     }
 
     adapter.run(data, adapter_opts)
+  end
+
+  defp get_modify_chain(opts) do
+    case opts[:modify_chain] do
+      f when is_function(f, 2) ->
+        f
+
+      _ ->
+        fn chain, _context -> chain end
+    end
   end
 
   defp get_tools(opts, input, context) do

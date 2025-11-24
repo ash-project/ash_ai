@@ -58,6 +58,7 @@ defmodule AshAi.Actions.Prompt.Adapter.RequestJson do
     |> AshAi.Actions.Prompt.Adapter.Helpers.add_messages_with_templates(messages, data)
     |> LLMChain.add_tools(data.tools)
     |> LLMChain.message_processors([json_processor])
+    |> data.modify_chain.(data.context)
     |> run_with_retries(data, max_retries, 0)
   end
 

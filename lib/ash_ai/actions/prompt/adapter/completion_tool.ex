@@ -86,6 +86,7 @@ defmodule AshAi.Actions.Prompt.Adapter.CompletionTool do
     |> LLMChain.new!()
     |> AshAi.Actions.Prompt.Adapter.Helpers.add_messages_with_templates(messages, data)
     |> LLMChain.add_tools([completion_tool | data.tools])
+    |> data.modify_chain.(data.context)
     |> LLMChain.run_until_tool_used("complete_request", max_runs: max_runs)
     |> case do
       {:ok, _chain, message} ->

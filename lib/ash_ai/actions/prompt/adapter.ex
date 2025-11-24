@@ -43,6 +43,7 @@ defmodule AshAi.Actions.Prompt.Adapter do
       :verbose?,
       :json_schema,
       :tools,
+      :modify_chain,
       :context
     ]
 
@@ -52,6 +53,9 @@ defmodule AshAi.Actions.Prompt.Adapter do
             messages: list(),
             json_schema: map(),
             tools: list(),
+            modify_chain: (LangChain.Chains.LLMChain.t(),
+                           Ash.Resource.Actions.Implementation.Context.t() ->
+                             LangChain.Chains.LLMChain.t()),
             verbose?: boolean(),
             context: Ash.Resource.Actions.Implementation.Context.t()
           }
