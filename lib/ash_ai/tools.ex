@@ -433,6 +433,7 @@ defmodule AshAi.Tools do
           input: %{
             type: :object,
             properties: properties,
+            additionalProperties: false,
             required: AshAi.OpenApi.required_write_attributes(resource, action.arguments, action)
           }
         }
