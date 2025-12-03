@@ -9,7 +9,11 @@ defmodule AshAi.Transformers.Vectorize do
   import Spark.Dsl.Builder
   import Ash.Resource.Builder
 
+  def after?(AshOban.Transformers.SetDefaults), do: false
   def after?(_), do: true
+
+  def before?(AshOban.Transformers.SetDefaults), do: true
+  def before?(_), do: false
 
   def transform(dsl) do
     attrs =
