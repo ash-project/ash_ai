@@ -442,10 +442,17 @@ defmodule AshAi.Tools do
     final_properties =
       add_action_specific_properties(props_with_input, resource, action, action_parameters)
 
+    required =
+      if Enum.empty?(properties) do
+        []
+      else
+        [:input]
+      end
+
     %{
       type: :object,
       properties: final_properties,
-      required: Map.keys(final_properties),
+      required: required,
       additionalProperties: false
     }
     |> Jason.encode!()
@@ -474,7 +481,6 @@ defmodule AshAi.Tools do
         # i.e first decide to query, and then provide it with a function to call
         # that has all the options Then the filter object can be big & expressive.
         properties: filter_properties,
-        required: Map.keys(filter_properties),
         additionalProperties: false
       },
       result_type: %{
@@ -545,7 +551,7 @@ defmodule AshAi.Tools do
             %{
               type: :object,
               properties: sort_properties,
-              required: Map.keys(sort_properties),
+              required: [:field],
               additionalProperties: false
             }
           end)
@@ -601,13 +607,18 @@ defmodule AshAi.Tools do
                 {argument.name, value}
               end)
 
+            required_args =
+              field.arguments
+              |> Enum.reject(& &1.allow_nil?)
+              |> Enum.map(& &1.name)
+
             input_props = Map.new(inputs)
 
             {field.name,
              %{
                type: :object,
                properties: input_props,
-               required: Map.keys(input_props),
+               required: required_args,
                additionalProperties: false
              }}
           end)
@@ -616,8 +627,7 @@ defmodule AshAi.Tools do
           %{
             type: :object,
             additionalProperties: false,
-            properties: input_properties,
-            required: Map.keys(input_properties)
+            properties: input_properties
           }
 
         Map.put(sort_obj, :input_for_fields, input_for_fields)
