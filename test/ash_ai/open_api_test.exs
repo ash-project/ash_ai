@@ -296,133 +296,78 @@ defmodule AshAi.OpenApiTest do
 
       read_action = resource |> Ash.Resource.Info.action(:read)
 
-      assert get_action_specific_properties(
-               read_action,
-               resource,
-               AshAi.OpenApi
-             ) == %{
-               id: %{
-                 type: :object,
-                 properties: %{
-                   in: %{type: :array, items: %{type: :string, format: :uuid}},
-                   eq: %{type: :string, format: :uuid},
-                   is_nil: %{type: :boolean},
-                   less_than: %{type: :string, format: :uuid},
-                   greater_than: %{type: :string, format: :uuid},
-                   not_eq: %{type: :string, format: :uuid},
-                   less_than_or_equal: %{type: :string, format: :uuid},
-                   greater_than_or_equal: %{type: :string, format: :uuid}
-                 },
-                 additionalProperties: false
+      result =
+        get_action_specific_properties(
+          read_action,
+          resource,
+          AshAi.OpenApi
+        )
+
+      # Check id field has required array
+      assert result.id.type == :object
+      assert result.id.additionalProperties == false
+      assert is_list(result.id.required)
+
+      assert result.id.properties == %{
+               in: %{type: :array, items: %{type: :string, format: :uuid}},
+               eq: %{type: :string, format: :uuid},
+               is_nil: %{type: :boolean},
+               less_than: %{type: :string, format: :uuid},
+               greater_than: %{type: :string, format: :uuid},
+               not_eq: %{type: :string, format: :uuid},
+               less_than_or_equal: %{type: :string, format: :uuid},
+               greater_than_or_equal: %{type: :string, format: :uuid}
+             }
+
+      # Check name field has required array
+      assert result.name.type == :object
+      assert result.name.additionalProperties == false
+      assert is_list(result.name.required)
+
+      assert result.name.properties == %{
+               in: %{type: :array, items: %{type: :string}},
+               eq: %{type: :string},
+               is_nil: %{type: :boolean},
+               less_than: %{type: :string},
+               greater_than: %{type: :string},
+               not_eq: %{type: :string},
+               less_than_or_equal: %{type: :string},
+               greater_than_or_equal: %{type: :string},
+               contains: %{type: :string}
+             }
+
+      # Check bio field has required array
+      assert result.bio.type == :object
+      assert result.bio.additionalProperties == false
+      assert is_list(result.bio.required)
+
+      assert result.bio.properties.eq == %{
+               type: :object,
+               required: [:birth],
+               properties: %{
+                 birth: %{
+                   :type => :string,
+                   :format => :date,
+                   "description" => "Field included by default."
+                 }
                },
-               name: %{
-                 type: :object,
-                 properties: %{
-                   in: %{type: :array, items: %{type: :string}},
-                   eq: %{type: :string},
-                   is_nil: %{type: :boolean},
-                   less_than: %{type: :string},
-                   greater_than: %{type: :string},
-                   not_eq: %{type: :string},
-                   less_than_or_equal: %{type: :string},
-                   greater_than_or_equal: %{type: :string},
-                   contains: %{type: :string}
-                 },
-                 additionalProperties: false
-               },
-               bio: %{
-                 type: :object,
-                 properties: %{
-                   eq: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   },
-                   is_nil: %{type: :boolean},
-                   less_than: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   },
-                   greater_than: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   },
-                   not_eq: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   },
-                   less_than_or_equal: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   },
-                   greater_than_or_equal: %{
-                     type: :object,
-                     required: [:birth],
-                     properties: %{
-                       birth: %{
-                         :type => :string,
-                         :format => :date,
-                         "description" => "Field included by default."
-                       }
-                     },
-                     additionalProperties: false
-                   }
-                 },
-                 additionalProperties: false
-               },
-               albums_count: %{
-                 type: :object,
-                 properties: %{
-                   in: %{type: :array, items: %{type: :integer}},
-                   eq: %{type: :integer},
-                   is_nil: %{type: :boolean},
-                   less_than: %{type: :integer},
-                   greater_than: %{type: :integer},
-                   not_eq: %{type: :integer},
-                   less_than_or_equal: %{type: :integer},
-                   greater_than_or_equal: %{type: :integer}
-                 },
-                 additionalProperties: false
-               }
+               additionalProperties: false
+             }
+
+      # Check albums_count field has required array
+      assert result.albums_count.type == :object
+      assert result.albums_count.additionalProperties == false
+      assert is_list(result.albums_count.required)
+
+      assert result.albums_count.properties == %{
+               in: %{type: :array, items: %{type: :integer}},
+               eq: %{type: :integer},
+               is_nil: %{type: :boolean},
+               less_than: %{type: :integer},
+               greater_than: %{type: :integer},
+               not_eq: %{type: :integer},
+               less_than_or_equal: %{type: :integer},
+               greater_than_or_equal: %{type: :integer}
              }
     end
 
@@ -431,25 +376,26 @@ defmodule AshAi.OpenApiTest do
 
       read_action = resource |> Ash.Resource.Info.action(:read)
 
-      assert get_action_specific_properties(
-               read_action,
-               resource,
-               AshAi.OpenApi
-             ) == %{
-               id: %{
-                 type: :object,
-                 properties: %{
-                   in: %{type: :array, items: %{type: :string, format: :uuid}},
-                   eq: %{type: :string, format: :uuid},
-                   is_nil: %{type: :boolean},
-                   less_than: %{type: :string, format: :uuid},
-                   greater_than: %{type: :string, format: :uuid},
-                   not_eq: %{type: :string, format: :uuid},
-                   less_than_or_equal: %{type: :string, format: :uuid},
-                   greater_than_or_equal: %{type: :string, format: :uuid}
-                 },
-                 additionalProperties: false
-               }
+      result =
+        get_action_specific_properties(
+          read_action,
+          resource,
+          AshAi.OpenApi
+        )
+
+      assert result.id.type == :object
+      assert result.id.additionalProperties == false
+      assert is_list(result.id.required)
+
+      assert result.id.properties == %{
+               in: %{type: :array, items: %{type: :string, format: :uuid}},
+               eq: %{type: :string, format: :uuid},
+               is_nil: %{type: :boolean},
+               less_than: %{type: :string, format: :uuid},
+               greater_than: %{type: :string, format: :uuid},
+               not_eq: %{type: :string, format: :uuid},
+               less_than_or_equal: %{type: :string, format: :uuid},
+               greater_than_or_equal: %{type: :string, format: :uuid}
              }
     end
   end

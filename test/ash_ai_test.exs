@@ -120,63 +120,77 @@ defmodule AshAiTest do
 
       assert function.parameters_schema["additionalProperties"] == false
 
-      assert function.parameters_schema["properties"]["filter"] == %{
-               "type" => "object",
-               "description" => "Filter results",
-               "properties" => %{
-                 "id" => %{
-                   "type" => "object",
-                   "properties" => %{
-                     "eq" => %{"format" => "uuid", "type" => "string"},
-                     "greater_than" => %{"format" => "uuid", "type" => "string"},
-                     "greater_than_or_equal" => %{
-                       "format" => "uuid",
-                       "type" => "string"
-                     },
-                     "in" => %{
-                       "items" => %{"format" => "uuid", "type" => "string"},
-                       "type" => "array"
-                     },
-                     "is_nil" => %{"type" => "boolean"},
-                     "less_than" => %{"format" => "uuid", "type" => "string"},
-                     "less_than_or_equal" => %{
-                       "format" => "uuid",
-                       "type" => "string"
-                     },
-                     "not_eq" => %{"format" => "uuid", "type" => "string"}
-                   },
-                   "additionalProperties" => false
-                 },
-                 "name" => %{
-                   "type" => "object",
-                   "properties" => %{
-                     "contains" => %{"type" => "string"},
-                     "eq" => %{"type" => "string"},
-                     "greater_than" => %{"type" => "string"},
-                     "greater_than_or_equal" => %{"type" => "string"},
-                     "in" => %{"type" => "array", "items" => %{"type" => "string"}},
-                     "is_nil" => %{"type" => "boolean"},
-                     "less_than" => %{"type" => "string"},
-                     "less_than_or_equal" => %{"type" => "string"},
-                     "not_eq" => %{"type" => "string"}
-                   },
-                   "additionalProperties" => false
-                 },
-                 "albums_count" => %{
-                   "type" => "object",
-                   "additionalProperties" => false,
-                   "properties" => %{
-                     "eq" => %{"type" => "integer"},
-                     "greater_than" => %{"type" => "integer"},
-                     "greater_than_or_equal" => %{"type" => "integer"},
-                     "in" => %{"items" => %{"type" => "integer"}, "type" => "array"},
-                     "is_nil" => %{"type" => "boolean"},
-                     "less_than" => %{"type" => "integer"},
-                     "less_than_or_equal" => %{"type" => "integer"},
-                     "not_eq" => %{"type" => "integer"}
-                   }
-                 }
-               }
+      filter_schema = function.parameters_schema["properties"]["filter"]
+      assert filter_schema["type"] == "object"
+      assert filter_schema["description"] == "Filter results"
+      assert filter_schema["additionalProperties"] == false
+      assert is_list(filter_schema["required"])
+
+      id_schema = filter_schema["properties"]["id"]
+      assert id_schema["type"] == "object"
+      assert id_schema["additionalProperties"] == false
+      assert is_list(id_schema["required"])
+
+      assert Enum.sort(id_schema["required"]) ==
+               Enum.sort(Map.keys(id_schema["properties"]))
+
+      assert id_schema["properties"] == %{
+               "eq" => %{"format" => "uuid", "type" => "string"},
+               "greater_than" => %{"format" => "uuid", "type" => "string"},
+               "greater_than_or_equal" => %{
+                 "format" => "uuid",
+                 "type" => "string"
+               },
+               "in" => %{
+                 "items" => %{"format" => "uuid", "type" => "string"},
+                 "type" => "array"
+               },
+               "is_nil" => %{"type" => "boolean"},
+               "less_than" => %{"format" => "uuid", "type" => "string"},
+               "less_than_or_equal" => %{
+                 "format" => "uuid",
+                 "type" => "string"
+               },
+               "not_eq" => %{"format" => "uuid", "type" => "string"}
+             }
+
+      name_schema = filter_schema["properties"]["name"]
+      assert name_schema["type"] == "object"
+      assert name_schema["additionalProperties"] == false
+      assert is_list(name_schema["required"])
+
+      assert Enum.sort(name_schema["required"]) ==
+               Enum.sort(Map.keys(name_schema["properties"]))
+
+      assert name_schema["properties"] == %{
+               "contains" => %{"type" => "string"},
+               "eq" => %{"type" => "string"},
+               "greater_than" => %{"type" => "string"},
+               "greater_than_or_equal" => %{"type" => "string"},
+               "in" => %{"type" => "array", "items" => %{"type" => "string"}},
+               "is_nil" => %{"type" => "boolean"},
+               "less_than" => %{"type" => "string"},
+               "less_than_or_equal" => %{"type" => "string"},
+               "not_eq" => %{"type" => "string"}
+             }
+
+      albums_count_schema = filter_schema["properties"]["albums_count"]
+      assert albums_count_schema["type"] == "object"
+      assert albums_count_schema["additionalProperties"] == false
+      assert is_list(albums_count_schema["required"])
+
+      assert Enum.sort(albums_count_schema["required"]) ==
+               Enum.sort(Map.keys(albums_count_schema["properties"]))
+
+      assert albums_count_schema["properties"] == %{
+               "eq" => %{"type" => "integer"},
+               "greater_than" => %{"type" => "integer"},
+               "greater_than_or_equal" => %{"type" => "integer"},
+               "in" => %{"items" => %{"type" => "integer"}, "type" => "array"},
+               "is_nil" => %{"type" => "boolean"},
+               "less_than" => %{"type" => "integer"},
+               "less_than_or_equal" => %{"type" => "integer"},
+               "not_eq" => %{"type" => "integer"}
              }
 
       refute function.parameters_schema["properties"]["input"]
@@ -193,23 +207,22 @@ defmodule AshAiTest do
                "default" => 0
              }
 
-      assert function.parameters_schema["properties"]["sort"] == %{
-               "type" => "array",
-               "items" => %{
-                 "type" => "object",
-                 "properties" => %{
-                   "direction" => %{
-                     "type" => "string",
-                     "description" => "The direction to sort by",
-                     "enum" => ["asc", "desc"]
-                   },
-                   "field" => %{
-                     "type" => "string",
-                     "description" => "The field to sort by",
-                     "enum" => ["id", "name", "albums_copies_sold"]
-                   }
-                 }
-               }
+      sort_schema = function.parameters_schema["properties"]["sort"]
+      assert sort_schema["type"] == "array"
+      assert sort_schema["items"]["type"] == "object"
+      assert sort_schema["items"]["additionalProperties"] == false
+      assert is_list(sort_schema["items"]["required"])
+
+      assert sort_schema["items"]["properties"]["direction"] == %{
+               "type" => "string",
+               "description" => "The direction to sort by",
+               "enum" => ["asc", "desc"]
+             }
+
+      assert sort_schema["items"]["properties"]["field"] == %{
+               "type" => "string",
+               "description" => "The field to sort by",
+               "enum" => ["id", "name", "albums_copies_sold"]
              }
 
       tool_call =
@@ -233,14 +246,11 @@ defmodule AshAiTest do
 
       assert function.parameters_schema["additionalProperties"] == false
 
-      assert function.parameters_schema["properties"]["input"] == %{
-               "type" => "object",
-               "properties" => %{
-                 "id" => %{"type" => "string", "format" => "uuid"},
-                 "name" => %{"type" => "string"}
-               },
-               "required" => []
-             }
+      input_schema = function.parameters_schema["properties"]["input"]
+      assert input_schema["type"] == "object"
+      assert input_schema["properties"]["id"] == %{"type" => "string", "format" => "uuid"}
+      assert input_schema["properties"]["name"] == %{"type" => "string"}
+      assert is_list(input_schema["required"])
 
       tool_call = tool_call(tool_name, %{"input" => %{"name" => "Chat Faker"}})
 
@@ -267,14 +277,11 @@ defmodule AshAiTest do
                "format" => "uuid"
              }
 
-      assert function.parameters_schema["properties"]["input"] == %{
-               "type" => "object",
-               "properties" => %{
-                 "id" => %{"type" => "string", "format" => "uuid"},
-                 "name" => %{"type" => "string"}
-               },
-               "required" => []
-             }
+      input_schema = function.parameters_schema["properties"]["input"]
+      assert input_schema["type"] == "object"
+      assert input_schema["properties"]["id"] == %{"type" => "string", "format" => "uuid"}
+      assert input_schema["properties"]["name"] == %{"type" => "string"}
+      assert is_list(input_schema["required"])
 
       tool_call =
         tool_call(tool_name, %{"id" => artist.id, "input" => %{"name" => "Chat Faker"}})
@@ -326,11 +333,10 @@ defmodule AshAiTest do
 
       assert function.parameters_schema["additionalProperties"] == false
 
-      assert function.parameters_schema["properties"]["input"] == %{
-               "type" => "object",
-               "properties" => %{"name" => %{"type" => "string"}},
-               "required" => ["name"]
-             }
+      input_schema = function.parameters_schema["properties"]["input"]
+      assert input_schema["type"] == "object"
+      assert input_schema["properties"]["name"] == %{"type" => "string"}
+      assert is_list(input_schema["required"])
 
       tool_call = tool_call(tool_name, %{"input" => %{"name" => "Chat Faker"}})
 

@@ -162,14 +162,8 @@ defmodule AshAi.ToolTest do
     test "aggregate field options only include public attributes" do
       tool = get_test_tool()
 
-      result_type_options = tool.parameters_schema["properties"]["result_type"]["oneOf"]
-
-      aggregate_option =
-        Enum.find(result_type_options, fn opt ->
-          Map.has_key?(opt, "properties") && Map.has_key?(opt["properties"], "aggregate")
-        end)
-
-      aggregate_field_enum = aggregate_option["properties"]["field"]["enum"]
+      # result_type is now a flat string enum, and aggregate_field is a separate property
+      aggregate_field_enum = tool.parameters_schema["properties"]["aggregate_field"]["enum"]
 
       # Public attributes are present
       assert "id" in aggregate_field_enum

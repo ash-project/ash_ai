@@ -873,11 +873,13 @@ defmodule AshAi.OpenApi do
     if fields == [] do
       nil
     else
+      properties = Map.new(fields)
+
       %{
         type: :object,
-        properties: Map.new(fields),
-        additionalProperties: false
-        # required: required Missing?
+        properties: properties,
+        additionalProperties: false,
+        required: Map.keys(properties)
       }
       |> with_attribute_description(attribute_or_aggregate)
     end
