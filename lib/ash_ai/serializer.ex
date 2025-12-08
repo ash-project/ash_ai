@@ -64,6 +64,29 @@ defmodule AshAi.Serializer do
         key -> key
       end)
 
+    prepared_fields =
+      [
+        resource
+        |> Ash.Resource.Info.calculations()
+        |> Enum.filter(fn calculation ->
+          !match?(%Ash.NotLoaded{}, Map.get(record, calculation.name))
+        end)
+        |> Enum.map(& &1.name),
+        resource
+        |> Ash.Resource.Info.aggregates()
+        |> Enum.filter(fn aggregate ->
+          !match?(%Ash.NotLoaded{}, Map.get(record, aggregate.name))
+        end)
+        |> Enum.map(& &1.name),
+        resource
+        |> Ash.Resource.Info.relationships()
+        |> Enum.filter(fn relationship ->
+          !match?(%Ash.NotLoaded{}, Map.get(record, relationship.name))
+        end)
+        |> Enum.map(& &1.name)
+      ]
+      |> List.flatten()
+
     fields =
       if opts[:top_level?] do
         Map.get(request.fields, resource) || Map.get(request.route, :default_fields) ||
@@ -73,6 +96,8 @@ defmodule AshAi.Serializer do
           default_attributes(resource)
       end
       |> Enum.concat(load_fields)
+      |> Enum.concat(prepared_fields)
+      |> Enum.uniq()
 
     Enum.reduce(fields, %{}, fn field_name, acc ->
       field = Ash.Resource.Info.field(resource, field_name)
