@@ -659,7 +659,7 @@ defmodule AshAi.Tools do
 
   defp parse_error(error), do: error
 
-  # Filters the raw input map to only include keys that are actual Arguments or Attributes defined on the Action.
+  # Filters the input arguments to only include keys that are actual Arguments or Attributes defined on the Action.
   defp filter_action_inputs(arguments, action) do
     allowed_keys =
       action.arguments
