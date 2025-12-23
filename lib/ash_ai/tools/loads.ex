@@ -3,10 +3,9 @@ defmodule AshAi.Tools.Loads do
   Utilities for working with dynamic loads in AshAi tools.
 
   ## Overview
-  This module allows you to inject runtime values (like arguments provided by the LLM)
-  into the `load` options of an AshAi tool. This is essential for explicitly passing arguments
-  to calculations (e.g. date ranges, thresholds) because we can't assume that it is secure to
-  display something externally just because it was loaded by an action we just called.
+  This module allows you to inject runtime values into the `load` options of an AshAi tool.
+  This is essential for explicitly passing arguments to calculations (e.g. date ranges, thresholds)
+  because we can't assume that it is secure to display something externally just because it was loaded by an action we just called.
 
   ## ⚠️ Important: Action Arguments vs. Hidden Parameters
 
@@ -15,7 +14,7 @@ defmodule AshAi.Tools.Loads do
 
   ### Option A: Action Arguments (Recommended)
   Define the argument on your Action.
-  * **Pros:** The argument automatically appears in the JSON Schema sent to the LLM. Ash validates the type (e.g. ensures it is a valid Date).
+  * **Pros:** The argument automatically appears in the Schema sent to the LLM. Ash validates the type (e.g. ensures it is a valid Date).
   * **Usage:**
     ```elixir
     read :read_with_arguments do
