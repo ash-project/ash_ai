@@ -64,11 +64,15 @@ defmodule AshAi.Tools do
 
     actor = context[:actor]
     tenant = context[:tenant]
-    input = arguments["input"] || %{}
+
+    # Enforces the input arguments/attributes to be declared on the action in order to prevent NoSuchInput errors when extra parameters (used for calculation contexts/loads) are present.
+    input = filter_action_inputs(arguments, action)
     opts = [domain: domain, actor: actor, tenant: tenant, context: context[:context] || %{}]
 
     callbacks = context[:tool_callbacks] || %{}
-    concrete_load = Loads.resolve_arguments(load, input)
+
+    # We use unfiltered input because a tool's load definition may reference inputs used in calculation arguments that are not defined as action arguments.
+    concrete_load = Loads.resolve_arguments(load, arguments["input"] || %{})
 
     if on_start = callbacks[:on_tool_start] do
       on_start.(%ToolStartEvent{
@@ -654,4 +658,24 @@ defmodule AshAi.Tools do
   end
 
   defp parse_error(error), do: error
+
+  # Filters the raw input map to only include keys that are actual Arguments or Attributes defined on the Action.
+  defp filter_action_inputs(arguments, action) do
+    allowed_keys =
+      action.arguments
+      |> Enum.map(&to_string(&1.name))
+      |> MapSet.new()
+
+    # 'Read' actions do not have an :accept field, so this check safely ignores them.
+    allowed_keys =
+      if Map.has_key?(action, :accept) do
+        Enum.reduce(action.accept || [], allowed_keys, fn attr, acc ->
+          MapSet.put(acc, to_string(attr))
+        end)
+      else
+        allowed_keys
+      end
+
+    Map.take(arguments["input"] || %{}, MapSet.to_list(allowed_keys))
+  end
 end
