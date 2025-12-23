@@ -10,6 +10,7 @@ defmodule AshAi.Tools do
   require Ash.Expr
 
   alias AshAi.{Tool, ToolEndEvent, ToolStartEvent}
+  alias AshAi.Tools.Loads
 
   @doc """
   Converts a AshAi.Tool into a LangChain.Function
@@ -67,6 +68,7 @@ defmodule AshAi.Tools do
     opts = [domain: domain, actor: actor, tenant: tenant, context: context[:context] || %{}]
 
     callbacks = context[:tool_callbacks] || %{}
+    concrete_load = Loads.resolve_arguments(load, input)
 
     if on_start = callbacks[:on_tool_start] do
       on_start.(%ToolStartEvent{
@@ -142,7 +144,7 @@ defmodule AshAi.Tools do
               case result_type do
                 "run_query" ->
                   query
-                  |> Ash.Actions.Read.unpaginated_read(action, load: load)
+                  |> Ash.Actions.Read.unpaginated_read(action, load: concrete_load)
                   |> case do
                     {:ok, value} ->
                       value
@@ -153,7 +155,7 @@ defmodule AshAi.Tools do
                   |> then(fn result ->
                     result
                     |> AshAi.Serializer.serialize_value({:array, resource}, [], domain,
-                      load: load
+                      load: concrete_load
                     )
                     |> Jason.encode!()
                     |> then(&{:ok, &1, result})
@@ -251,7 +253,7 @@ defmodule AshAi.Tools do
                 return_errors?: true,
                 notify?: true,
                 strategy: [:atomic, :stream, :atomic_batches],
-                load: load,
+                load: concrete_load,
                 allow_stream_with: :full_read,
                 return_records?: true
               )
@@ -259,7 +261,7 @@ defmodule AshAi.Tools do
             |> case do
               %Ash.BulkResult{status: :success, records: [result]} ->
                 result
-                |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+                |> AshAi.Serializer.serialize_value(resource, [], domain, load: concrete_load)
                 |> Jason.encode!()
                 |> then(&{:ok, &1, result})
 
@@ -281,7 +283,7 @@ defmodule AshAi.Tools do
               Keyword.merge(opts,
                 return_errors?: true,
                 notify?: true,
-                load: load,
+                load: concrete_load,
                 strategy: [:atomic, :stream, :atomic_batches],
                 allow_stream_with: :full_read,
                 return_records?: true
@@ -290,7 +292,7 @@ defmodule AshAi.Tools do
             |> case do
               %Ash.BulkResult{status: :success, records: [result]} ->
                 result
-                |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+                |> AshAi.Serializer.serialize_value(resource, [], domain, load: concrete_load)
                 |> Jason.encode!()
                 |> then(&{:ok, &1, result})
 
@@ -303,10 +305,10 @@ defmodule AshAi.Tools do
           :create ->
             resource
             |> Ash.Changeset.for_create(action.name, input, opts)
-            |> Ash.create!(load: load)
+            |> Ash.create!(load: concrete_load)
             |> then(fn result ->
               result
-              |> AshAi.Serializer.serialize_value(resource, [], domain, load: load)
+              |> AshAi.Serializer.serialize_value(resource, [], domain, load: concrete_load)
               |> Jason.encode!()
               |> then(&{:ok, &1, result})
             end)
@@ -318,7 +320,9 @@ defmodule AshAi.Tools do
             |> then(fn result ->
               if action.returns do
                 result
-                |> AshAi.Serializer.serialize_value(action.returns, [], domain, load: load)
+                |> AshAi.Serializer.serialize_value(action.returns, [], domain,
+                  load: concrete_load
+                )
                 |> Jason.encode!()
               else
                 "success"
