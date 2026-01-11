@@ -128,7 +128,15 @@ read :semantic_search do
           query,
           vector_cosine_distance(full_text_vector, ^search_vector) < 0.5
         )
-        |> Ash.Query.sort(asc: vector_cosine_distance(full_text_vector, ^search_vector))
+        |> Ash.Query.sort([
+          {
+              calc(vector_cosine_distance(
+                full_text_vector,
+                ^search_vector
+              )),
+            :asc
+          }
+        ])
 
       {:error, error} ->
         {:error, error}
