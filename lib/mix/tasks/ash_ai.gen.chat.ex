@@ -639,60 +639,19 @@ if Code.ensure_loaded?(Igniter) do
       end
 
       defp message_chain(messages) do
-        Enum.flat_map(messages, fn
-          %{source: :agent} = message ->
-            assistant =
-              Context.assistant(
-                message.text || "",
-                tool_calls: normalize_tool_calls(message.tool_calls || [])
-              )
-
-            tool_results =
-              message.tool_results
-              |> List.wrap()
-              |> Enum.flat_map(fn result ->
-                case normalize_tool_result_message(result) do
-                  nil -> []
-                  message -> [message]
-                end
-              end)
-
-            [assistant | tool_results]
+        Enum.map(messages, fn
+          %{source: :agent, text: text} ->
+            # Historical tool call replay can break provider request validation for prior call IDs.
+            # Keep replay text-only; current turn tool usage is handled by AshAi.ToolLoop.
+            Context.assistant(text || "")
 
           %{source: :user, text: text} ->
-            [Context.user(text || "")]
-        end)
-      end
-
-      defp normalize_tool_calls(tool_calls) do
-        Enum.flat_map(List.wrap(tool_calls), fn call ->
-          normalized = %{
-            id:
-              call["id"] || call[:id] || call["call_id"] || call[:call_id] ||
-                "call_\\#{:erlang.unique_integer([:positive])}",
-            name: call["name"] || call[:name],
-            arguments: call["arguments"] || call[:arguments] || %{}
-          }
-
-          if is_binary(normalized.name), do: [normalized], else: []
+            Context.user(text || "")
         end)
       end
 
       defp append_event(items, value) when is_list(items), do: items ++ [value]
       defp append_event(_items, value), do: [value]
-
-      defp normalize_tool_result_message(result) do
-        id =
-          result["tool_call_id"] || result[:tool_call_id] || result["id"] || result[:id]
-
-        content = result["content"] || result[:content]
-
-        if is_binary(id) do
-          Context.tool_result(id, content || "")
-        else
-          nil
-        end
-      end
 
       defp normalize_tool_result(tool_call_id, {:ok, content, _raw}) do
         %{

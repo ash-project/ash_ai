@@ -110,6 +110,26 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     """)
   end
 
+  test "generated respond change replays text-only history to avoid stale tool call ids", %{
+    argv: argv
+  } do
+    argv = argv ++ ["--live"]
+
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv)
+      |> apply_igniter!()
+
+    respond_content =
+      igniter.rewrite.sources["lib/test/chat/message/changes/respond.ex"]
+      |> Rewrite.Source.get(:content)
+
+    assert respond_content =~ "Context.assistant(text || \"\")"
+    refute respond_content =~ "normalize_tool_calls(message.tool_calls || [])"
+    refute respond_content =~ "normalize_tool_result_message"
+    refute respond_content =~ "Context.tool_result(id, content || \"\")"
+  end
+
   test "--live with --user guards unauthenticated actor-required flows", %{argv: argv} do
     argv = argv ++ ["--live"]
 
