@@ -82,6 +82,22 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |> apply_igniter!()
   end
 
+  test "generated respond change initializes tool call accumulator as a list", %{argv: argv} do
+    argv = argv ++ ["--live"]
+
+    phx_test_project()
+    |> Igniter.compose_task("ash_ai.gen.chat", argv)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |Enum.reduce(%{text: "", tool_calls: [], tool_results: []}, fn
+    """)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |%{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
+    """)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |defp append_event(items, value) when is_list(items), do: items ++ [value]
+    """)
+  end
+
   test "--live with --user guards unauthenticated actor-required flows", %{argv: argv} do
     argv = argv ++ ["--live"]
 

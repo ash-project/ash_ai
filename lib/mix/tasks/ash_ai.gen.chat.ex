@@ -549,10 +549,14 @@ if Code.ensure_loaded?(Igniter) do
                 %{acc | text: acc.text <> (content || "")}
 
               {:tool_call, tool_call}, acc ->
-                %{acc | tool_calls: acc.tool_calls ++ [tool_call]}
+                %{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
 
               {:tool_result, %{id: id, result: result}}, acc ->
-                %{acc | tool_results: acc.tool_results ++ [normalize_tool_result(id, result)]}
+                %{
+                  acc
+                  | tool_results:
+                      append_event(acc.tool_results, normalize_tool_result(id, result))
+                }
 
               {:done, _}, acc ->
                 acc
@@ -630,6 +634,9 @@ if Code.ensure_loaded?(Igniter) do
           if is_binary(normalized.name), do: [normalized], else: []
         end)
       end
+
+      defp append_event(items, value) when is_list(items), do: items ++ [value]
+      defp append_event(_items, value), do: [value]
 
       defp normalize_tool_result_message(result) do
         id =
