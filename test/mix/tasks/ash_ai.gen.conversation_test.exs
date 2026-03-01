@@ -82,19 +82,31 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |> apply_igniter!()
   end
 
-  test "generated respond change initializes tool call accumulator as a list", %{argv: argv} do
+  test "generated respond change handles stream errors and keeps accumulator shapes safe", %{
+    argv: argv
+  } do
     argv = argv ++ ["--live"]
 
     phx_test_project()
     |> Igniter.compose_task("ash_ai.gen.chat", argv)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
-    |Enum.reduce(%{text: "", tool_calls: [], tool_results: []}, fn
+    |Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |%{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |defp append_event(items, value) when is_list(items), do: items ++ [value]
+    """)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |{:error, reason}, acc ->
+    |  %{acc | stream_error: reason}
+    """)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |if final_state.stream_error ||
+    """)
+    |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
+    |defp stream_error_text(:max_iterations_reached) do
     """)
   end
 
@@ -113,6 +125,53 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     ||> put_flash(:error, "You must sign in to access conversations")
     """)
     |> apply_igniter!()
+  end
+
+  test "when --user is not provided, generated conversation create action does not relate actor" do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", ["--live"])
+      |> apply_igniter!()
+
+    conversation_content =
+      igniter.rewrite.sources["lib/test/chat/conversation.ex"]
+      |> Rewrite.Source.get(:content)
+
+    refute conversation_content =~ "change relate_actor(:user)"
+  end
+
+  test "generated chat domain includes AshAi extension and starter tools", %{argv: argv} do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv)
+      |> apply_igniter!()
+
+    chat_content =
+      igniter.rewrite.sources["lib/test/chat.ex"]
+      |> Rewrite.Source.get(:content)
+
+    assert chat_content =~ "use Ash.Domain"
+    assert chat_content =~ "AshPhoenix"
+    assert chat_content =~ "AshAi"
+    assert chat_content =~ "tools do"
+
+    assert chat_content =~
+             "tool :chat_list_conversations, Test.Chat.Conversation, :my_conversations do"
+
+    assert chat_content =~ "tool :chat_message_history, Test.Chat.Message, :for_conversation do"
+  end
+
+  test "generated starter tools use :read when --user is not provided" do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", [])
+      |> apply_igniter!()
+
+    chat_content =
+      igniter.rewrite.sources["lib/test/chat.ex"]
+      |> Rewrite.Source.get(:content)
+
+    assert chat_content =~ "tool :chat_list_conversations, Test.Chat.Conversation, :read do"
   end
 
   test "generated UI delegates tool extraction to AshAi.ChatUI.Tools with warning handling", %{
@@ -137,7 +196,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     assert live_content =~ "defp tool_calls(message), do: safe_extract(message).tool_calls"
     assert live_content =~ "defp tool_results(message), do: safe_extract(message).tool_results"
     assert live_content =~ "put_flash(:warning, \"Some tool call data could not be displayed.\")"
-    assert live_content =~ "<.flash kind={:warning} flash={@flash} />"
+    assert live_content =~ "Phoenix.Flash.get(@flash, :warning)"
     assert live_content =~ "tool_call.arguments_preview"
     assert live_content =~ "tool_result.content_preview"
     refute live_content =~ "defp normalize_tool_call_arguments("
@@ -152,7 +211,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     assert component_content =~
              "put_flash(:warning, \"Some tool call data could not be displayed.\")"
 
-    assert component_content =~ "<.flash kind={:warning} flash={@flash} />"
+    assert component_content =~ "Phoenix.Flash.get(@flash, :warning)"
     assert component_content =~ "tool_call.arguments_preview"
     assert component_content =~ "tool_result.content_preview"
     refute component_content =~ "defp normalize_tool_call_arguments("

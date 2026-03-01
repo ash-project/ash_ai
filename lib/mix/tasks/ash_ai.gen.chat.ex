@@ -69,6 +69,15 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     ```elixir
     @chat_ui_tools MyApp.ChatUITools
     ```
+
+    ## Starter Tools
+
+    Generated chat domains include a small default tool set so tool calling works immediately:
+
+    * `:chat_list_conversations` - lists conversations visible to the actor.
+    * `:chat_message_history` - fetches messages for a specific conversation.
+
+    Add your own domain tools for app-specific behavior.
     """
   end
 end
@@ -130,7 +139,8 @@ if Code.ensure_loaded?(Igniter) do
 
       The chat feature has been generated using the #{to_string(igniter.args.options[:provider])} provider via ReqLLM.
       Please see ReqLLM's documentation if you need to configure a different model or provider settings.
-      All tools in your application are available in the chat by default. Change tools: true to tools: [:a, :list, :of, :tools] to change that.
+      Generated chat includes starter tools (`:chat_list_conversations`, `:chat_message_history`) so tool calling works out of the box.
+      `tools: true` includes all tools available in your AshAi domains. Change to `tools: [:a, :list, :of, :tools]` to scope tool access.
       """)
       |> maybe_add_live_component_notice(chat)
     end
@@ -203,6 +213,13 @@ if Code.ensure_loaded?(Igniter) do
       generate_name = Module.concat([conversation, Changes, GenerateName])
       provider = llm_provider_config(igniter.args.options[:provider])
 
+      relate_actor_change =
+        if user do
+          "    change relate_actor(:user)\n"
+        else
+          ""
+        end
+
       igniter
       |> Igniter.compose_task(
         "ash.gen.resource",
@@ -227,8 +244,7 @@ if Code.ensure_loaded?(Igniter) do
       |> Ash.Resource.Igniter.add_new_action(conversation, :create, """
       create :create do
         accept [:title]
-        change relate_actor(:user)
-      end
+      #{relate_actor_change}      end
       """)
       |> Ash.Resource.Igniter.add_new_calculation(conversation, :needs_name, """
       calculate :needs_title, :boolean do
@@ -540,7 +556,7 @@ if Code.ensure_loaded?(Igniter) do
               tenant: context.tenant,
               context: Map.new(Ash.Context.to_opts(context))
             )
-            |> Enum.reduce(%{text: "", tool_calls: [], tool_results: []}, fn
+            |> Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
               {:content, content}, acc ->
                 if content not in [nil, ""] do
                   #{inspect(message)}
@@ -569,6 +585,9 @@ if Code.ensure_loaded?(Igniter) do
                       append_event(acc.tool_results, normalize_tool_result(id, result))
                 }
 
+              {:error, reason}, acc ->
+                %{acc | stream_error: reason}
+
               {:done, _}, acc ->
                 acc
 
@@ -576,15 +595,28 @@ if Code.ensure_loaded?(Igniter) do
                 acc
             end)
 
+          stream_error_text = stream_error_text(final_state.stream_error)
+
           final_text =
-            if String.trim(final_state.text || "") == "" &&
-                 (final_state.tool_calls != [] || final_state.tool_results != []) do
-              "Completed tool call."
-            else
-              final_state.text
+            cond do
+              stream_error_text && String.trim(final_state.text || "") != "" ->
+                final_state.text <> "\\n\\n" <> stream_error_text
+
+              stream_error_text ->
+                stream_error_text
+
+              String.trim(final_state.text || "") == "" &&
+                  (final_state.tool_calls != [] || final_state.tool_results != []) ->
+                "Completed tool call."
+
+              true ->
+                final_state.text
             end
 
-          if final_state.tool_calls != [] || final_state.tool_results != [] || final_text != "" do
+          if final_state.stream_error ||
+               final_state.tool_calls != [] ||
+               final_state.tool_results != [] ||
+               final_text != "" do
             #{inspect(message)}
             |> Ash.Changeset.for_create(
               :upsert_response,
@@ -676,6 +708,16 @@ if Code.ensure_loaded?(Igniter) do
           content: content,
           is_error: true
         }
+      end
+
+      defp stream_error_text(nil), do: nil
+
+      defp stream_error_text(:max_iterations_reached) do
+        "I hit a response limit while generating this reply. Please try again."
+      end
+
+      defp stream_error_text(_reason) do
+        "I hit an error while generating this response. Please try again."
       end
       """)
     end
@@ -811,6 +853,7 @@ if Code.ensure_loaded?(Igniter) do
     defp add_code_interfaces(igniter, chat, conversation, message, user) do
       igniter
       |> Spark.Igniter.add_extension(chat, Ash.Domain, :extensions, AshPhoenix)
+      |> Spark.Igniter.add_extension(chat, Ash.Domain, :extensions, AshAi)
       |> Ash.Domain.Igniter.add_new_code_interface(
         chat,
         conversation,
@@ -857,6 +900,85 @@ if Code.ensure_loaded?(Igniter) do
             :list_conversations,
             "define :list_conversations, action: :read"
           )
+        end
+      end)
+      |> add_default_tools(chat, conversation, message, user)
+    end
+
+    defp add_default_tools(igniter, chat, conversation, message, user) do
+      list_action = if(user, do: :my_conversations, else: :read)
+
+      Igniter.Project.Module.find_and_update_module!(igniter, chat, fn zipper ->
+        with {:ok, zipper} <- ensure_tools(zipper),
+             {:ok, zipper} <-
+               add_new_domain_tool(
+                 zipper,
+                 :chat_list_conversations,
+                 conversation,
+                 list_action,
+                 "List chat conversations visible to the current actor."
+               ),
+             {:ok, zipper} <-
+               add_new_domain_tool(
+                 zipper,
+                 :chat_message_history,
+                 message,
+                 :for_conversation,
+                 "Read chat messages for a conversation_id."
+               ) do
+          {:ok, zipper}
+        else
+          _ ->
+            {:ok, zipper}
+        end
+      end)
+    end
+
+    defp ensure_tools(zipper) do
+      with {:ok, zipper} <-
+             Igniter.Code.Function.move_to_function_call_in_current_scope(zipper, :tools, 1),
+           {:ok, zipper} <- Igniter.Code.Common.move_to_do_block(zipper) do
+        {:ok, zipper}
+      else
+        _ ->
+          zipper =
+            Igniter.Code.Common.add_code(zipper, """
+            tools do
+            end
+            """)
+
+          with {:ok, zipper} <-
+                 Igniter.Code.Function.move_to_function_call_in_current_scope(zipper, :tools, 1),
+               {:ok, zipper} <- Igniter.Code.Common.move_to_do_block(zipper) do
+            {:ok, zipper}
+          else
+            _ ->
+              :error
+          end
+      end
+    end
+
+    defp add_new_domain_tool(zipper, tool_name, resource, action, description) do
+      Igniter.Code.Common.within(zipper, fn zipper ->
+        case Igniter.Code.Function.move_to_function_call_in_current_scope(
+               zipper,
+               :tool,
+               [3, 4],
+               &Igniter.Code.Function.argument_equals?(&1, 0, tool_name)
+             ) do
+          {:ok, _} ->
+            {:ok, zipper}
+
+          :error ->
+            {:ok,
+             Igniter.Code.Common.add_code(
+               zipper,
+               """
+               tool #{inspect(tool_name)}, #{inspect(resource)}, :#{action} do
+                 description #{inspect(description)}
+               end
+               """
+             )}
         end
       end)
     end
@@ -1259,7 +1381,12 @@ if Code.ensure_loaded?(Igniter) do
             <div class="drawer-content flex flex-col">
               <.flash kind={:info} flash={@flash} />
               <.flash kind={:error} flash={@flash} />
-              <.flash kind={:warning} flash={@flash} />
+              <div
+                :if={Phoenix.Flash.get(@flash, :warning)}
+                class="alert alert-warning m-4 mb-0 text-sm"
+              >
+                {Phoenix.Flash.get(@flash, :warning)}
+              </div>
               <div class="navbar bg-base-300 w-full">
                 <div class="flex-none md:hidden">
                   <label for="ash-ai-drawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
@@ -1294,7 +1421,7 @@ if Code.ensure_loaded?(Igniter) do
                 <div
                   id="message-container"
                   phx-update="stream"
-                  class="flex-1 overflow-y-auto px-4 py-2 flex flex-col-reverse"
+                  class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 flex flex-col-reverse"
                 >
                   <%= for {id, message} <- @streams.messages do %>
                     <div
@@ -1320,10 +1447,10 @@ if Code.ensure_loaded?(Igniter) do
                       </div>
                       <div
                         :if={message.source == :agent && tool_calls(message) != []}
-                        class="mt-2 flex max-w-[36rem] flex-wrap gap-1 text-[11px] opacity-80"
+                        class="mt-2 flex w-full max-w-[36rem] min-w-0 flex-wrap gap-1 text-[11px] opacity-80"
                       >
                         <%= for tool_call <- tool_calls(message) do %>
-                          <span class="badge badge-outline badge-info">
+                          <span class="badge badge-outline badge-info max-w-full min-w-0 justify-start overflow-hidden text-ellipsis whitespace-nowrap">
                             tool: {tool_call.name}
                             <span :if={tool_call.arguments != %{}}>
                               ({tool_call.arguments_preview})
@@ -1333,12 +1460,12 @@ if Code.ensure_loaded?(Igniter) do
                       </div>
                       <div
                         :if={message.source == :agent && tool_results(message) != []}
-                        class="chat-footer mt-1 flex max-w-[36rem] flex-col gap-1"
+                        class="chat-footer mt-1 flex w-full max-w-[36rem] min-w-0 flex-col gap-1"
                       >
                         <%= for tool_result <- tool_results(message) do %>
                           <div
                             class={[
-                              "rounded px-2 py-1 text-xs leading-relaxed break-words",
+                              "rounded max-w-full overflow-hidden px-2 py-1 text-xs leading-relaxed break-words",
                               tool_result.is_error && "bg-error/20",
                               !tool_result.is_error && "bg-base-300"
                             ]}
@@ -1347,7 +1474,7 @@ if Code.ensure_loaded?(Igniter) do
                               {if tool_result.is_error, do: "tool_error", else: "tool_result"}
                             </span>
                             <span :if={tool_result.name}> ({tool_result.name})</span>
-                            <span class="break-words">
+                            <span class="break-all">
                               : {tool_result.content_preview}
                             </span>
                           </div>
@@ -1812,7 +1939,12 @@ if Code.ensure_loaded?(Igniter) do
           <div class="flex-1 flex flex-col">
             <.flash kind={:info} flash={@flash} />
             <.flash kind={:error} flash={@flash} />
-            <.flash kind={:warning} flash={@flash} />
+            <div
+              :if={Phoenix.Flash.get(@flash, :warning)}
+              class="alert alert-warning m-4 mb-0 text-sm"
+            >
+              {Phoenix.Flash.get(@flash, :warning)}
+            </div>
             <div class="navbar bg-base-300 w-full">
               <img
                 src="https://github.com/ash-project/ash_ai/blob/main/logos/ash_ai.png?raw=true"
@@ -1830,7 +1962,7 @@ if Code.ensure_loaded?(Igniter) do
               <div
                 id={"\#{@id}-message-container"}
                 phx-update="stream"
-                class="flex-1 overflow-y-auto px-4 py-2 flex flex-col-reverse"
+                class="flex-1 overflow-y-auto overflow-x-hidden px-4 py-2 flex flex-col-reverse"
               >
                 <%= for {id, message} <- @streams.messages do %>
                   <div
@@ -1856,10 +1988,10 @@ if Code.ensure_loaded?(Igniter) do
                     </div>
                     <div
                       :if={message.source == :agent && tool_calls(message) != []}
-                      class="mt-2 flex max-w-[36rem] flex-wrap gap-1 text-[11px] opacity-80"
+                      class="mt-2 flex w-full max-w-[36rem] min-w-0 flex-wrap gap-1 text-[11px] opacity-80"
                     >
                       <%= for tool_call <- tool_calls(message) do %>
-                        <span class="badge badge-outline badge-info">
+                        <span class="badge badge-outline badge-info max-w-full min-w-0 justify-start overflow-hidden text-ellipsis whitespace-nowrap">
                           tool: {tool_call.name}
                           <span :if={tool_call.arguments != %{}}>
                             ({tool_call.arguments_preview})
@@ -1869,12 +2001,12 @@ if Code.ensure_loaded?(Igniter) do
                     </div>
                     <div
                       :if={message.source == :agent && tool_results(message) != []}
-                      class="chat-footer mt-1 flex max-w-[36rem] flex-col gap-1"
+                      class="chat-footer mt-1 flex w-full max-w-[36rem] min-w-0 flex-col gap-1"
                     >
                       <%= for tool_result <- tool_results(message) do %>
                         <div
                           class={[
-                            "rounded px-2 py-1 text-xs leading-relaxed break-words",
+                            "rounded max-w-full overflow-hidden px-2 py-1 text-xs leading-relaxed break-words",
                             tool_result.is_error && "bg-error/20",
                             !tool_result.is_error && "bg-base-300"
                           ]}
@@ -1883,7 +2015,7 @@ if Code.ensure_loaded?(Igniter) do
                             {if tool_result.is_error, do: "tool_error", else: "tool_result"}
                           </span>
                           <span :if={tool_result.name}> ({tool_result.name})</span>
-                          <span class="break-words">
+                          <span class="break-all">
                             : {tool_result.content_preview}
                           </span>
                         </div>

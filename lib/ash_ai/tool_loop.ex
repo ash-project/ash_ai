@@ -10,6 +10,7 @@ defmodule AshAi.ToolLoop do
   """
 
   alias ReqLLM.Context
+  alias ReqLLM.Message.ContentPart
 
   defmodule IterationEvent do
     @moduledoc """
@@ -55,6 +56,7 @@ defmodule AshAi.ToolLoop do
   - `{:tool_call, %{id: id, name: name, arguments: args}}`
   - `{:tool_result, %{id: id, result: result}}`
   - `{:iteration, %IterationEvent{}}`
+  - `{:error, reason}`
   - `{:done, %Result{}}`
   """
   def stream(messages, opts) do
@@ -126,6 +128,7 @@ defmodule AshAi.ToolLoop do
         {:ok, stream_response} ->
           chunks = Enum.to_list(stream_response.stream)
           content_events = content_events(chunks)
+          chunk_tool_call_ids = chunk_tool_call_ids(chunks)
 
           classification =
             stream_response
@@ -134,18 +137,11 @@ defmodule AshAi.ToolLoop do
 
           if classification.type == :tool_calls do
             tool_calls =
-              Enum.map(classification.tool_calls, fn tool_call ->
-                %{
-                  id: Map.get(tool_call, :id) || generate_tool_id(),
-                  name: Map.fetch!(tool_call, :name),
-                  arguments: Map.get(tool_call, :arguments, %{})
-                }
-              end)
+              classification.tool_calls
+              |> normalize_tool_calls(chunk_tool_call_ids)
+              |> unprocessed_tool_calls(messages)
 
-            assistant_with_tools =
-              Context.assistant(classification.text || "", tool_calls: tool_calls)
-
-            messages = messages ++ [assistant_with_tools]
+            messages = append_tool_call_turn(messages, classification.text || "", tool_calls)
 
             {messages, tool_events} = run_tools_streaming(tool_calls, messages, registry, context)
 
@@ -244,22 +240,21 @@ defmodule AshAi.ToolLoop do
     else
       case req_llm.stream_text(model, messages, tools: tools) do
         {:ok, stream_response} ->
-          classification = ReqLLM.StreamResponse.classify(stream_response)
+          chunks = Enum.to_list(stream_response.stream)
+          chunk_tool_call_ids = chunk_tool_call_ids(chunks)
+
+          classification =
+            stream_response
+            |> Map.put(:stream, chunks)
+            |> ReqLLM.StreamResponse.classify()
 
           if classification.type == :tool_calls do
             tool_calls =
-              Enum.map(classification.tool_calls, fn tool_call ->
-                %{
-                  id: Map.get(tool_call, :id) || generate_tool_id(),
-                  name: Map.fetch!(tool_call, :name),
-                  arguments: Map.get(tool_call, :arguments, %{})
-                }
-              end)
+              classification.tool_calls
+              |> normalize_tool_calls(chunk_tool_call_ids)
+              |> unprocessed_tool_calls(messages)
 
-            assistant_with_tools =
-              Context.assistant(classification.text || "", tool_calls: tool_calls)
-
-            messages = messages ++ [assistant_with_tools]
+            messages = append_tool_call_turn(messages, classification.text || "", tool_calls)
             messages = run_tools(tool_calls, messages, registry, context)
 
             run_loop(
@@ -349,6 +344,217 @@ defmodule AshAi.ToolLoop do
 
   defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
   defp decode_tool_call_arguments(_), do: {:ok, %{}}
+
+  defp chunk_tool_call_ids(chunks) do
+    chunks
+    |> Enum.filter(&(&1.type == :tool_call))
+    |> Enum.map(fn chunk ->
+      metadata = chunk.metadata || %{}
+      metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
+    end)
+  end
+
+  defp normalize_tool_calls(tool_calls, chunk_tool_call_ids) do
+    tool_calls
+    |> List.wrap()
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {tool_call, index} ->
+      case normalize_tool_call(tool_call, Enum.at(chunk_tool_call_ids, index)) do
+        nil -> []
+        normalized -> [normalized]
+      end
+    end)
+  end
+
+  defp normalize_tool_call(%ReqLLM.ToolCall{} = tool_call, chunk_id) do
+    tool_call
+    |> ReqLLM.ToolCall.to_map()
+    |> normalize_tool_call(chunk_id)
+  end
+
+  defp normalize_tool_call(tool_call, chunk_id) when is_map(tool_call) do
+    name =
+      Map.get(tool_call, :name) ||
+        Map.get(tool_call, "name") ||
+        get_in(tool_call, [:function, :name]) ||
+        get_in(tool_call, ["function", "name"])
+
+    arguments =
+      Map.get(tool_call, :arguments) ||
+        Map.get(tool_call, "arguments") ||
+        get_in(tool_call, [:function, :arguments]) ||
+        get_in(tool_call, ["function", "arguments"]) ||
+        %{}
+
+    id =
+      chunk_id ||
+        Map.get(tool_call, :id) ||
+        Map.get(tool_call, "id") ||
+        Map.get(tool_call, :call_id) ||
+        Map.get(tool_call, "call_id")
+
+    if is_binary(name) and name != "" do
+      %{
+        id: normalize_tool_call_id(id),
+        name: name,
+        arguments: normalize_tool_call_arguments(arguments)
+      }
+    else
+      nil
+    end
+  end
+
+  defp normalize_tool_call(_tool_call, _chunk_id), do: nil
+
+  defp normalize_tool_call_id(id) when is_binary(id) and id != "", do: id
+  defp normalize_tool_call_id(id) when is_atom(id), do: Atom.to_string(id)
+  defp normalize_tool_call_id(id) when is_number(id), do: to_string(id)
+  defp normalize_tool_call_id(_), do: generate_tool_id()
+
+  defp normalize_tool_call_arguments(arguments) when is_map(arguments), do: arguments
+
+  defp normalize_tool_call_arguments(arguments) when is_binary(arguments) do
+    case Jason.decode(arguments) do
+      {:ok, parsed} when is_map(parsed) -> parsed
+      _ -> arguments
+    end
+  end
+
+  defp normalize_tool_call_arguments(_), do: %{}
+
+  defp append_tool_call_turn(messages, _text, []), do: messages
+
+  defp append_tool_call_turn(messages, text, tool_calls) do
+    case merge_into_previous_tool_turn(messages, text || "", tool_calls) do
+      {:ok, merged_messages} ->
+        merged_messages
+
+      :no_merge ->
+        messages ++ [Context.assistant(text || "", tool_calls: tool_calls)]
+    end
+  end
+
+  defp merge_into_previous_tool_turn(messages, text, tool_calls) do
+    {trailing_tools_rev, rest_rev} =
+      messages
+      |> Enum.reverse()
+      |> Enum.split_while(fn message -> Map.get(message, :role) == :tool end)
+
+    trailing_tools = Enum.reverse(trailing_tools_rev)
+    rest = Enum.reverse(rest_rev)
+
+    case List.last(rest) do
+      %{role: :assistant} = assistant ->
+        if has_tool_calls?(assistant.tool_calls) do
+          prefix = Enum.drop(rest, -1)
+
+          merged_tool_calls =
+            merge_tool_call_lists(
+              assistant.tool_calls || [],
+              normalize_context_tool_calls(tool_calls)
+            )
+
+          merged_assistant = %{
+            assistant
+            | tool_calls: merged_tool_calls,
+              content: merge_assistant_content(assistant.content || [], text || "")
+          }
+
+          {:ok, prefix ++ [merged_assistant] ++ trailing_tools}
+        else
+          :no_merge
+        end
+
+      _ ->
+        :no_merge
+    end
+  end
+
+  defp unprocessed_tool_calls(tool_calls, messages) do
+    processed_ids =
+      messages
+      |> Enum.filter(fn message -> Map.get(message, :role) == :tool end)
+      |> Enum.map(&Map.get(&1, :tool_call_id))
+      |> Enum.filter(&is_binary/1)
+      |> MapSet.new()
+
+    Enum.reject(List.wrap(tool_calls), fn tool_call ->
+      case tool_call_id(tool_call) do
+        id when is_binary(id) -> MapSet.member?(processed_ids, id)
+        _ -> false
+      end
+    end)
+  end
+
+  defp merge_tool_call_lists(existing, new_calls) do
+    {merged, _seen_ids} =
+      Enum.reduce(List.wrap(existing) ++ List.wrap(new_calls), {[], MapSet.new()}, fn call,
+                                                                                      {acc, seen} ->
+        case tool_call_id(call) do
+          id when is_binary(id) ->
+            if MapSet.member?(seen, id) do
+              {acc, seen}
+            else
+              {acc ++ [call], MapSet.put(seen, id)}
+            end
+
+          _ ->
+            {acc ++ [call], seen}
+        end
+      end)
+
+    merged
+  end
+
+  defp tool_call_id(%ReqLLM.ToolCall{} = tool_call), do: tool_call.id
+
+  defp tool_call_id(tool_call) when is_map(tool_call) do
+    Map.get(tool_call, :id) ||
+      Map.get(tool_call, "id") ||
+      Map.get(tool_call, :call_id) ||
+      Map.get(tool_call, "call_id")
+  end
+
+  defp tool_call_id(_), do: nil
+
+  defp has_tool_calls?(tool_calls) when is_list(tool_calls), do: tool_calls != []
+  defp has_tool_calls?(_), do: false
+
+  defp normalize_context_tool_calls(tool_calls) do
+    Context.assistant("", tool_calls: tool_calls).tool_calls || []
+  end
+
+  defp merge_assistant_content(content, text) when text in [nil, ""], do: content
+
+  defp merge_assistant_content(content, text) do
+    existing_text = assistant_text(content)
+
+    combined_text =
+      if existing_text == "" do
+        text
+      else
+        existing_text <> "\n" <> text
+      end
+
+    [ContentPart.text(combined_text)]
+  end
+
+  defp assistant_text(content_parts) when is_list(content_parts) do
+    content_parts
+    |> Enum.map(fn
+      %ContentPart{type: :text, text: text} when is_binary(text) -> text
+      %{type: :text, text: text} when is_binary(text) -> text
+      _ -> ""
+    end)
+    |> Enum.join("")
+    |> String.trim()
+  end
+
+  defp assistant_text(_), do: ""
+
+  defp metadata_field(metadata, key) when is_map(metadata) do
+    Map.get(metadata, key) || Map.get(metadata, to_string(key))
+  end
 
   defp generate_tool_id do
     "call_#{:erlang.unique_integer([:positive])}"

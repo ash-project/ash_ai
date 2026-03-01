@@ -122,7 +122,7 @@ end
 
 ## `mix ash_ai.gen.chat`
 
-This is a new and experimental tool to generate a chat feature for your Ash & Phoenix application. It is backed by `ash_oban` and `ash_postgres`, using `pub_sub` to stream messages to the client. This is primarily a tool to get started with chat features and is by no means intended to handle every case you can come up with.
+This is a new and experimental tool to generate a chat feature for your Ash & Phoenix application. It is backed by `ash_oban` and `ash_postgres`, using `pub_sub` to stream messages to the client. Generated responders use `AshAi.ToolLoop.stream/2` (ReqLLM streaming) for incremental response updates. This is primarily a tool to get started with chat features and is by no means intended to handle every case you can come up with.
 
 To get started:
 ```
@@ -175,7 +175,11 @@ If you need custom behavior, override the seam in the generated module:
 
 ### Register tools for the chatbot
 
-You should then be able to type chat messages, but until you have some tools registered (see below) and set a default system prompt, the LLM won't know anything about your app.
+Generated chat domains include two starter tools out of the box:
+- `:chat_list_conversations`
+- `:chat_message_history`
+
+These are useful for validating tool calling quickly. For real app behavior, add domain-specific tools (see below).
 
 ## Expose actions as tool calls
 
@@ -193,7 +197,7 @@ end
 ```
 
 Expose these actions as tools. Use `AshAi.build_tools_and_registry/1` to get ReqLLM tools and callbacks,
-or use `AshAi.ToolLoop.run/2` to execute the full model + tool loop.
+or use `AshAi.ToolLoop.run/2` / `AshAi.ToolLoop.stream/2` to execute the full model + tool loop.
 
 ## Expose content as MCP resources
 
