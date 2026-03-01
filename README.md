@@ -163,6 +163,16 @@ The Chat UI liveview templates assume you have Tailwind and DaisyUI installed fo
 
 You can then start your server and visit `http://localhost:4000/chat` to see the chat feature in action. You will be prompted to register first and sign in the first time.
 
+### Tool call/result UI extraction
+
+Generated `ChatLive` and `ChatComponent` modules call `AshAi.ChatUI.Tools.extract/1` to normalize tool call and tool result data.
+
+If you need custom behavior, override the seam in the generated module:
+
+```elixir
+@chat_ui_tools MyApp.ChatUITools
+```
+
 ### Register tools for the chatbot
 
 You should then be able to type chat messages, but until you have some tools registered (see below) and set a default system prompt, the LLM won't know anything about your app.

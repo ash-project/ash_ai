@@ -58,6 +58,17 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     * `--extend` - Extensions to apply to the generated resources, passed through to `mix ash.gen.resource`.
     * `--live` - Generate a full-page Phoenix LiveView for the chat UI.
     * `--live-component` - Generate a reusable Phoenix LiveComponent for embedding the chat UI in existing pages.
+
+    ## Tool Call/Result UI Extraction
+
+    Generated chat UI modules delegate tool call and tool result parsing to `AshAi.ChatUI.Tools.extract/1`.
+    This keeps generated modules small while preserving a stable override seam.
+
+    Override in generated modules if you need custom parsing:
+
+    ```elixir
+    @chat_ui_tools MyApp.ChatUITools
+    ```
     """
   end
 end
@@ -1239,6 +1250,7 @@ if Code.ensure_loaded?(Igniter) do
       """
       use #{web_module}, :live_view
       @actor_required? #{actor_required?}
+      @chat_ui_tools AshAi.ChatUI.Tools
       #{on_mount}
         def render(assigns) do
           ~H\"""
@@ -1247,6 +1259,7 @@ if Code.ensure_loaded?(Igniter) do
             <div class="drawer-content flex flex-col">
               <.flash kind={:info} flash={@flash} />
               <.flash kind={:error} flash={@flash} />
+              <.flash kind={:warning} flash={@flash} />
               <div class="navbar bg-base-300 w-full">
                 <div class="flex-none md:hidden">
                   <label for="ash-ai-drawer" aria-label="open sidebar" class="btn btn-square btn-ghost">
@@ -1313,7 +1326,7 @@ if Code.ensure_loaded?(Igniter) do
                           <span class="badge badge-outline badge-info">
                             tool: {tool_call.name}
                             <span :if={tool_call.arguments != %{}}>
-                              ({tool_call_arguments_preview(tool_call.arguments)})
+                              ({tool_call.arguments_preview})
                             </span>
                           </span>
                         <% end %>
@@ -1335,7 +1348,7 @@ if Code.ensure_loaded?(Igniter) do
                             </span>
                             <span :if={tool_result.name}> ({tool_result.name})</span>
                             <span class="break-words">
-                              : {tool_result_preview(tool_result.content)}
+                              : {tool_result.content_preview}
                             </span>
                           </div>
                         <% end %>
@@ -1438,6 +1451,7 @@ if Code.ensure_loaded?(Igniter) do
             |> assign(:page_title, "Chat")
             |> stream(:conversations, conversations)
             |> assign(:agent_responding, false)
+            |> assign(:tool_data_warning_shown?, false)
             |> assign(:messages, [])
 
           {:ok, socket}
@@ -1467,6 +1481,7 @@ if Code.ensure_loaded?(Igniter) do
           end
 
           socket
+          |> maybe_warn_tool_data(messages)
           |> assign(:conversation, conversation)
           |> assign(:agent_responding, agent_response_pending?(messages))
           |> stream(:messages, messages)
@@ -1524,10 +1539,13 @@ if Code.ensure_loaded?(Igniter) do
               socket
             ) do
           if socket.assigns.conversation && socket.assigns.conversation.id == conversation_id do
-            {:noreply,
-             socket
-             |> stream_insert(:messages, message, at: 0)
-             |> update_agent_responding(message)}
+            socket =
+              socket
+              |> maybe_warn_tool_data(message)
+              |> stream_insert(:messages, message, at: 0)
+              |> update_agent_responding(message)
+
+            {:noreply, socket}
           else
             {:noreply, socket}
           end
@@ -1567,132 +1585,78 @@ if Code.ensure_loaded?(Igniter) do
           )
         end
 
-        defp tool_calls(message) do
-          message
-          |> message_field(:tool_calls)
-          |> List.wrap()
-          |> Enum.flat_map(fn call ->
-            name = message_field(call, :name)
+        defp tool_calls(message), do: safe_extract(message).tool_calls
 
-            if is_binary(name) do
-              [
-                %{
-                  id:
-                    message_field(call, :id) || message_field(call, :call_id) ||
-                      "call_unknown",
-                  name: name,
-                  arguments: normalize_tool_call_arguments(message_field(call, :arguments))
-                }
-              ]
-            else
-              []
-            end
+        defp tool_results(message), do: safe_extract(message).tool_results
+
+        defp safe_extract(message) do
+          case @chat_ui_tools.extract(message) do
+            {:ok, extracted} ->
+              extracted
+
+            {:error, _} ->
+              %{tool_calls: [], tool_results: []}
+          end
+        end
+
+        defp maybe_warn_tool_data(socket, messages) when is_list(messages) do
+          Enum.reduce(messages, socket, fn message, acc ->
+            maybe_warn_tool_data(acc, message)
           end)
         end
 
-        defp normalize_tool_call_arguments(nil), do: %{}
+        defp maybe_warn_tool_data(socket, message) do
+          if agent_message?(message) do
+            case @chat_ui_tools.extract(message) do
+              {:ok, _} ->
+                socket
 
-        defp normalize_tool_call_arguments(arguments) when is_binary(arguments) do
-          case Jason.decode(arguments) do
-            {:ok, decoded} when is_map(decoded) -> decoded
-            _ -> %{"raw" => arguments}
-          end
-        end
-
-        defp normalize_tool_call_arguments(arguments) when is_map(arguments), do: arguments
-        defp normalize_tool_call_arguments(arguments), do: %{"raw" => inspect(arguments)}
-
-        defp tool_call_arguments_preview(arguments) do
-          arguments
-          |> normalize_tool_call_arguments()
-          |> Jason.encode!()
-          |> String.slice(0, 80)
-        end
-
-        defp tool_results(message) do
-          calls_by_id =
-            tool_calls(message)
-            |> Map.new(fn call -> {call.id, call.name} end)
-
-          message
-          |> message_field(:tool_results)
-          |> List.wrap()
-          |> Enum.flat_map(fn result ->
-            id = message_field(result, :tool_call_id) || message_field(result, :id)
-            content = message_field(result, :content)
-            is_error = message_field(result, :is_error) in [true, "true"]
-
-            if is_binary(id) || not is_nil(content) do
-              [
-                %{
-                  id: id || "tool_result",
-                  name: if(is_binary(id), do: Map.get(calls_by_id, id), else: nil),
-                  content: content,
-                  is_error: is_error
-                }
-              ]
-            else
-              []
+              {:error, _} ->
+                maybe_put_tool_data_warning(socket)
             end
-          end)
-        end
-
-        defp tool_result_preview(content) do
-          content
-          |> normalize_text_content()
-          |> String.replace(~r/\\s+/, " ")
-          |> String.trim()
-          |> String.slice(0, 180)
-        end
-
-        defp normalize_text_content(nil), do: ""
-        defp normalize_text_content(content) when is_binary(content) do
-          case Jason.decode(content) do
-            {:ok, decoded} -> normalize_text_content(decoded)
-            {:error, _} -> content
+          else
+            socket
           end
         end
 
-        defp normalize_text_content(content) when is_map(content) or is_list(content) do
-          Jason.encode!(content)
-        end
-
-        defp normalize_text_content(content), do: inspect(content)
-
-        defp message_field(message, key) do
-          case message do
-            %{^key => value} ->
-              value
-
-            %{} ->
-              Map.get(message, Atom.to_string(key))
-
-            _ ->
-              nil
+        defp maybe_put_tool_data_warning(socket) do
+          if socket.assigns[:tool_data_warning_shown?] do
+            socket
+          else
+            socket
+            |> put_flash(:warning, "Some tool call data could not be displayed.")
+            |> assign(:tool_data_warning_shown?, true)
           end
         end
 
-        defp message_source(message), do: message_field(message, :source)
+        defp message_source(%{source: source}), do: source
+        defp message_source(%{"source" => source}), do: source
+        defp message_source(_), do: nil
 
-        defp message_complete?(message), do: message_field(message, :complete) in [true, "true"]
+        defp message_complete?(%{complete: complete}), do: complete in [true, "true"]
+        defp message_complete?(%{"complete" => complete}), do: complete in [true, "true"]
+        defp message_complete?(_), do: false
+
+        defp user_message?(message), do: message_source(message) in [:user, "user"]
+        defp agent_message?(message), do: message_source(message) in [:agent, "agent"]
 
         defp update_agent_responding(socket, message) do
-          case message_source(message) do
-            :user ->
+          cond do
+            user_message?(message) ->
               assign(socket, :agent_responding, true)
 
-            :agent ->
+            agent_message?(message) ->
               assign(socket, :agent_responding, !message_complete?(message))
 
-            _ ->
+            true ->
               socket
           end
         end
 
         defp agent_response_pending?(messages) do
-          case Enum.find(messages, fn message -> message_source(message) in [:user, :agent] end) do
+          case Enum.find(messages, fn message -> user_message?(message) or agent_message?(message) end) do
             nil -> false
-            message -> message_source(message) == :user || !message_complete?(message)
+            message -> user_message?(message) || !message_complete?(message)
           end
         end
 
@@ -1747,6 +1711,7 @@ if Code.ensure_loaded?(Igniter) do
 
       """
       use #{inspect(web_module)}, :live_component
+      @chat_ui_tools AshAi.ChatUI.Tools
 
       @impl true
       def update(%{broadcast: broadcast}, socket) do
@@ -1771,6 +1736,7 @@ if Code.ensure_loaded?(Igniter) do
             |> assign_new(:conversation, fn -> nil end)
             |> assign_new(:conversation_id, fn -> nil end)
             |> assign_new(:agent_responding, fn -> false end)
+            |> assign_new(:tool_data_warning_shown?, fn -> false end)
             |> stream(:conversations, conversations)
             |> stream(:messages, [])
             |> assign_message_form()
@@ -1846,6 +1812,7 @@ if Code.ensure_loaded?(Igniter) do
           <div class="flex-1 flex flex-col">
             <.flash kind={:info} flash={@flash} />
             <.flash kind={:error} flash={@flash} />
+            <.flash kind={:warning} flash={@flash} />
             <div class="navbar bg-base-300 w-full">
               <img
                 src="https://github.com/ash-project/ash_ai/blob/main/logos/ash_ai.png?raw=true"
@@ -1895,7 +1862,7 @@ if Code.ensure_loaded?(Igniter) do
                         <span class="badge badge-outline badge-info">
                           tool: {tool_call.name}
                           <span :if={tool_call.arguments != %{}}>
-                            ({tool_call_arguments_preview(tool_call.arguments)})
+                            ({tool_call.arguments_preview})
                           </span>
                         </span>
                       <% end %>
@@ -1917,7 +1884,7 @@ if Code.ensure_loaded?(Igniter) do
                           </span>
                           <span :if={tool_result.name}> ({tool_result.name})</span>
                           <span class="break-words">
-                            : {tool_result_preview(tool_result.content)}
+                            : {tool_result.content_preview}
                           </span>
                         </div>
                       <% end %>
@@ -2019,6 +1986,7 @@ if Code.ensure_loaded?(Igniter) do
           #{inspect(endpoint)}.subscribe("chat:messages:\#{conversation.id}")
 
           socket
+          |> maybe_warn_tool_data(messages)
           |> assign(:conversation, conversation)
           |> assign(:agent_responding, agent_response_pending?(messages))
           |> stream(:messages, messages, reset: true)
@@ -2048,6 +2016,7 @@ if Code.ensure_loaded?(Igniter) do
       }) do
         if socket.assigns.conversation && socket.assigns.conversation.id == conversation_id do
           socket
+          |> maybe_warn_tool_data(message)
           |> stream_insert(:messages, message, at: 0)
           |> update_agent_responding(message)
         else
@@ -2099,132 +2068,78 @@ if Code.ensure_loaded?(Igniter) do
         )
       end
 
-      defp tool_calls(message) do
-        message
-        |> message_field(:tool_calls)
-        |> List.wrap()
-        |> Enum.flat_map(fn call ->
-          name = message_field(call, :name)
+      defp tool_calls(message), do: safe_extract(message).tool_calls
 
-          if is_binary(name) do
-            [
-              %{
-                id:
-                  message_field(call, :id) || message_field(call, :call_id) ||
-                    "call_unknown",
-                name: name,
-                arguments: normalize_tool_call_arguments(message_field(call, :arguments))
-              }
-            ]
-          else
-            []
-          end
+      defp tool_results(message), do: safe_extract(message).tool_results
+
+      defp safe_extract(message) do
+        case @chat_ui_tools.extract(message) do
+          {:ok, extracted} ->
+            extracted
+
+          {:error, _} ->
+            %{tool_calls: [], tool_results: []}
+        end
+      end
+
+      defp maybe_warn_tool_data(socket, messages) when is_list(messages) do
+        Enum.reduce(messages, socket, fn message, acc ->
+          maybe_warn_tool_data(acc, message)
         end)
       end
 
-      defp normalize_tool_call_arguments(nil), do: %{}
+      defp maybe_warn_tool_data(socket, message) do
+        if agent_message?(message) do
+          case @chat_ui_tools.extract(message) do
+            {:ok, _} ->
+              socket
 
-      defp normalize_tool_call_arguments(arguments) when is_binary(arguments) do
-        case Jason.decode(arguments) do
-          {:ok, decoded} when is_map(decoded) -> decoded
-          _ -> %{"raw" => arguments}
-        end
-      end
-
-      defp normalize_tool_call_arguments(arguments) when is_map(arguments), do: arguments
-      defp normalize_tool_call_arguments(arguments), do: %{"raw" => inspect(arguments)}
-
-      defp tool_call_arguments_preview(arguments) do
-        arguments
-        |> normalize_tool_call_arguments()
-        |> Jason.encode!()
-        |> String.slice(0, 80)
-      end
-
-      defp tool_results(message) do
-        calls_by_id =
-          tool_calls(message)
-          |> Map.new(fn call -> {call.id, call.name} end)
-
-        message
-        |> message_field(:tool_results)
-        |> List.wrap()
-        |> Enum.flat_map(fn result ->
-          id = message_field(result, :tool_call_id) || message_field(result, :id)
-          content = message_field(result, :content)
-          is_error = message_field(result, :is_error) in [true, "true"]
-
-          if is_binary(id) || not is_nil(content) do
-            [
-              %{
-                id: id || "tool_result",
-                name: if(is_binary(id), do: Map.get(calls_by_id, id), else: nil),
-                content: content,
-                is_error: is_error
-              }
-            ]
-          else
-            []
+            {:error, _} ->
+              maybe_put_tool_data_warning(socket)
           end
-        end)
-      end
-
-      defp tool_result_preview(content) do
-        content
-        |> normalize_text_content()
-        |> String.replace(~r/\\s+/, " ")
-        |> String.trim()
-        |> String.slice(0, 180)
-      end
-
-      defp normalize_text_content(nil), do: ""
-      defp normalize_text_content(content) when is_binary(content) do
-        case Jason.decode(content) do
-          {:ok, decoded} -> normalize_text_content(decoded)
-          {:error, _} -> content
+        else
+          socket
         end
       end
 
-      defp normalize_text_content(content) when is_map(content) or is_list(content) do
-        Jason.encode!(content)
-      end
-
-      defp normalize_text_content(content), do: inspect(content)
-
-      defp message_field(message, key) do
-        case message do
-          %{^key => value} ->
-            value
-
-          %{} ->
-            Map.get(message, Atom.to_string(key))
-
-          _ ->
-            nil
+      defp maybe_put_tool_data_warning(socket) do
+        if socket.assigns[:tool_data_warning_shown?] do
+          socket
+        else
+          socket
+          |> put_flash(:warning, "Some tool call data could not be displayed.")
+          |> assign(:tool_data_warning_shown?, true)
         end
       end
 
-      defp message_source(message), do: message_field(message, :source)
+      defp message_source(%{source: source}), do: source
+      defp message_source(%{"source" => source}), do: source
+      defp message_source(_), do: nil
 
-      defp message_complete?(message), do: message_field(message, :complete) in [true, "true"]
+      defp message_complete?(%{complete: complete}), do: complete in [true, "true"]
+      defp message_complete?(%{"complete" => complete}), do: complete in [true, "true"]
+      defp message_complete?(_), do: false
+
+      defp user_message?(message), do: message_source(message) in [:user, "user"]
+      defp agent_message?(message), do: message_source(message) in [:agent, "agent"]
 
       defp update_agent_responding(socket, message) do
-        case message_source(message) do
-          :user ->
+        cond do
+          user_message?(message) ->
             assign(socket, :agent_responding, true)
 
-          :agent ->
+          agent_message?(message) ->
             assign(socket, :agent_responding, !message_complete?(message))
 
-          _ ->
+          true ->
             socket
         end
       end
 
       defp agent_response_pending?(messages) do
-        case Enum.find(messages, fn message -> message_source(message) in [:user, :agent] end) do
+        case Enum.find(messages, fn message -> user_message?(message) or agent_message?(message) end) do
           nil -> false
-          message -> message_source(message) == :user || !message_complete?(message)
+          message -> user_message?(message) || !message_complete?(message)
         end
       end
 

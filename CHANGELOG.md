@@ -45,6 +45,7 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 * prompt actions: support `verbose?` tool-loop lifecycle logging
 * prompt actions: use permissive schema for unconstrained `:map` returns
 * `ash_ai.gen.chat`: preserve and preview tool call arguments in both LiveView and LiveComponent templates
+* `ash_ai.gen.chat`: collapse generated tool UI helpers into `AshAi.ChatUI.Tools.extract/1` with one-time warning flash on malformed tool data
 * docs: add legacy compatibility notes for adapter mapping and embedding return tuple behavior
 
 ## [v0.5.0](https://github.com/ash-project/ash_ai/compare/v0.4.0...v0.5.0) (2026-01-26)

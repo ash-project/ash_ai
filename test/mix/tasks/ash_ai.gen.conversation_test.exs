@@ -115,24 +115,47 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |> apply_igniter!()
   end
 
-  test "tool call arguments are preserved and previewed in both generated UI branches", %{
+  test "generated UI delegates tool extraction to AshAi.ChatUI.Tools with warning handling", %{
     argv: argv
   } do
     argv = argv ++ ["--live", "--live-component"]
 
-    phx_test_project()
-    |> Igniter.compose_task("ash_ai.gen.chat", argv)
-    |> assert_has_patch("lib/test_web/live/chat_live.ex", """
-    |arguments: normalize_tool_call_arguments(message_field(call, :arguments))
-    """)
-    |> assert_has_patch("lib/test_web/live/chat_live.ex", """
-    |tool_call_arguments_preview(tool_call.arguments)
-    """)
-    |> assert_has_patch("lib/test_web/chat_component.ex", """
-    |arguments: normalize_tool_call_arguments(message_field(call, :arguments))
-    """)
-    |> assert_has_patch("lib/test_web/chat_component.ex", """
-    |tool_call_arguments_preview(tool_call.arguments)
-    """)
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv)
+      |> apply_igniter!()
+
+    live_content =
+      igniter.rewrite.sources["lib/test_web/live/chat_live.ex"]
+      |> Rewrite.Source.get(:content)
+
+    component_content =
+      igniter.rewrite.sources["lib/test_web/chat_component.ex"]
+      |> Rewrite.Source.get(:content)
+
+    assert live_content =~ "@chat_ui_tools AshAi.ChatUI.Tools"
+    assert live_content =~ "defp tool_calls(message), do: safe_extract(message).tool_calls"
+    assert live_content =~ "defp tool_results(message), do: safe_extract(message).tool_results"
+    assert live_content =~ "put_flash(:warning, \"Some tool call data could not be displayed.\")"
+    assert live_content =~ "<.flash kind={:warning} flash={@flash} />"
+    assert live_content =~ "tool_call.arguments_preview"
+    assert live_content =~ "tool_result.content_preview"
+    refute live_content =~ "defp normalize_tool_call_arguments("
+    refute live_content =~ "defp tool_result_preview("
+
+    assert component_content =~ "@chat_ui_tools AshAi.ChatUI.Tools"
+    assert component_content =~ "defp tool_calls(message), do: safe_extract(message).tool_calls"
+
+    assert component_content =~
+             "defp tool_results(message), do: safe_extract(message).tool_results"
+
+    assert component_content =~
+             "put_flash(:warning, \"Some tool call data could not be displayed.\")"
+
+    assert component_content =~ "<.flash kind={:warning} flash={@flash} />"
+    assert component_content =~ "tool_call.arguments_preview"
+    assert component_content =~ "tool_result.content_preview"
+    refute component_content =~ "defp normalize_tool_call_arguments("
+    refute component_content =~ "defp tool_result_preview("
   end
 end
