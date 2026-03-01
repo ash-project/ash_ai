@@ -331,10 +331,12 @@ defmodule AshAi do
           """
         ],
         max_iterations: [
-          type: :pos_integer,
+          type: {:or, [:pos_integer, {:literal, :infinity}]},
           default: 10,
           doc: """
           Maximum number of tool-calling iterations before terminating.
+
+          Set to `:infinity` to disable iteration limits.
           """
         ]
       ]

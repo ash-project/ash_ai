@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs.contributors>
+# SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
 #
 # SPDX-License-Identifier: MIT
 
@@ -148,6 +148,16 @@ defmodule AshAi.ReqLLMToolTest do
     test "req_llm option defaults to ReqLLM module" do
       opts = AshAi.Options.validate!(actions: [{TestResource, :*}])
       assert opts.req_llm == ReqLLM
+    end
+
+    test "max_iterations accepts :infinity" do
+      opts = AshAi.Options.validate!(actions: [{TestResource, :*}], max_iterations: :infinity)
+      assert opts.max_iterations == :infinity
+    end
+
+    test "max_iterations defaults to 10 when not set" do
+      opts = AshAi.Options.validate!(actions: [{TestResource, :*}])
+      assert opts.max_iterations == 10
     end
   end
 

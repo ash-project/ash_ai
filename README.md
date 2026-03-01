@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs.contributors>
+SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
 
 SPDX-License-Identifier: MIT
 -->
@@ -292,6 +292,12 @@ action :analyze_sentiment, :atom do
 end
 ```
 
+Prompt-backed action options to know:
+- `tools:` can be `false`, `true`, or a list of tool names.
+- `max_iterations:` defaults to `:infinity` for prompt actions (set an integer to bound tool loops).
+- `verbose?: true` enables debug logging for tool loop lifecycle events.
+- Tool loop failures are returned as action errors (with loop reason details) instead of raising runtime exceptions.
+
 ### Using Custom Types for Structured Outputs
 
 The action's return type provides the JSON schema automatically. For complex structured outputs, you can use any Ash type:
@@ -319,6 +325,8 @@ action :parse_job, JobListing do
   )
 end
 ```
+
+For unconstrained `:map` returns, prompt actions use a permissive map schema (`type: object`) so arbitrary map keys are accepted.
 
 ### Setting up ReqLLM
 

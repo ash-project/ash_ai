@@ -131,6 +131,29 @@ Optional sanity check:
 rg -n "LangChain|langchain" lib test config
 ```
 
+## Legacy Compatibility Notes
+
+- `verbose?` on prompt-backed actions is supported and logs tool-loop lifecycle events when set to `true`.
+- Prompt-backed actions default to `max_iterations: :infinity` for tool loops; set an integer to enforce limits.
+- Tool-loop failures in prompt-backed actions are returned as action errors (instead of runtime raises), including the loop reason.
+- Unconstrained `:map` prompt return types use a permissive schema (`type: object`) to avoid over-constraining map keys.
+
+### Legacy Adapter Mapping
+
+The old LangChain-era adapter concepts map to ReqLLM-era behavior as follows:
+- `StructuredOutput` -> `ReqLLM.generate_object/4` with schema-derived typed action returns.
+- `CompletionTool` -> `AshAi.ToolLoop.run/2` or `AshAi.ToolLoop.stream/2` tool-calling orchestration.
+- `RequestJson` -> prompt templates/messages + typed return schema casting in `prompt/2`.
+- `Raw` -> use non-structured text generation directly via ReqLLM in custom code paths when typed action returns are not desired.
+
+`modify_chain` is supported via a compatibility shim and receives `AshAi.Actions.Prompt.LegacyChainCompat` (not a LangChain chain). Prefer `transform_flow` for ReqLLM-native customization.
+
+### Embedding Return Shape
+
+`AshAi.EmbeddingModels.ReqLLM.generate/2` returns:
+- `{:ok, embeddings}` on success
+- `{:error, reason}` on failure
+
 ## Common Issues
 
 - Missing API key errors:

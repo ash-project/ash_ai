@@ -1,5 +1,5 @@
 <!--
-SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs.contributors>
+SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
 
 SPDX-License-Identifier: MIT
 -->
@@ -37,6 +37,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 * Replace `AshAi.setup_ash_ai/2` usage with `AshAi.ToolLoop` or `AshAi.build_tools_and_registry/1`.
 * Update runtime configuration keys:
   * `config :langchain, ...` -> `config :req_llm, ...`
+
+### Improvements
+
+* prompt actions: default tool-loop `max_iterations` to `:infinity` (unless explicitly set)
+* prompt actions: return tool-loop failures as action errors with reason details
+* prompt actions: support `verbose?` tool-loop lifecycle logging
+* prompt actions: use permissive schema for unconstrained `:map` returns
+* `ash_ai.gen.chat`: preserve and preview tool call arguments in both LiveView and LiveComponent templates
+* docs: add legacy compatibility notes for adapter mapping and embedding return tuple behavior
 
 ## [v0.5.0](https://github.com/ash-project/ash_ai/compare/v0.4.0...v0.5.0) (2026-01-26)
 
