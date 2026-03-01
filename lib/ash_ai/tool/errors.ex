@@ -17,7 +17,7 @@ defmodule AshAi.Tool.Errors do
   def format(domain, resource, error, action_type) do
     error
     |> Ash.Error.to_error_class()
-    |> then(&AshJsonApi.Error.to_json_api_errors(domain, resource, &1, action_type))
+    |> then(&AshAi.to_json_api_errors(domain, resource, &1, action_type))
     |> serialize_errors()
     |> Jason.encode!()
   end
