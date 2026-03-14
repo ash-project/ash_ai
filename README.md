@@ -153,7 +153,7 @@ mix ash_ai.gen.chat --live
 
 ### Specify your LLM API key
 
-By default, it uses OpenAI as the LLM provider, so set your API key as an environment variable (for example, `OPENAI_API_KEY=sk_...`).
+By default, it uses OpenAI as the LLM provider, so set your API key as an environment variable (for example, `OPENAI_API_KEY=sk-...`).
 
 ### Ensure you have Tailwind and DaisyUI
 
