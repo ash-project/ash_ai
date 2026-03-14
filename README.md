@@ -199,6 +199,8 @@ end
 Expose these actions as tools. Use `AshAi.build_tools_and_registry/1` to get ReqLLM tools and callbacks,
 or use `AshAi.ToolLoop.run/2` / `AshAi.ToolLoop.stream/2` to execute the full model + tool loop.
 
+For migration guidance around `modify_chain`, `extra_tools`, `req_llm_opts`, and legacy adapter mapping, see [LangChain to ReqLLM Migration Guide](/documentation/topics/langchain-to-reqllm-migration.md).
+
 ## Expose content as MCP resources
 
 MCP resources provide LLMs with access to static or dynamic content like UI components, data files, or images. Unlike tools which perform actions, resources return content that the LLM can read and reference.

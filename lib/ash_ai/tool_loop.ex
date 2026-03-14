@@ -41,6 +41,7 @@ defmodule AshAi.ToolLoop do
       messages,
       tools,
       registry,
+      opts.req_llm_opts,
       context,
       1,
       opts.max_iterations,
@@ -79,6 +80,7 @@ defmodule AshAi.ToolLoop do
       messages: messages,
       tools: tools,
       registry: registry,
+      req_llm_opts: opts.req_llm_opts,
       context: context,
       iteration: 1,
       max_iterations: opts.max_iterations,
@@ -108,6 +110,7 @@ defmodule AshAi.ToolLoop do
       messages: messages,
       tools: tools,
       registry: registry,
+      req_llm_opts: req_llm_opts,
       context: context,
       iteration: iteration,
       max_iterations: max_iterations,
@@ -124,7 +127,7 @@ defmodule AshAi.ToolLoop do
 
       {:done, [{:error, :max_iterations_reached}], result}
     else
-      case req_llm.stream_text(model, messages, tools: tools) do
+      case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
         {:ok, stream_response} ->
           chunks = Enum.to_list(stream_response.stream)
           content_events = content_events(chunks)
@@ -218,6 +221,12 @@ defmodule AshAi.ToolLoop do
     }
   end
 
+  defp req_llm_stream_opts(req_llm_opts, tools) do
+    req_llm_opts
+    |> Keyword.drop([:tools])
+    |> Keyword.put(:tools, tools)
+  end
+
   defp resolve_model(model, opts) when is_function(model, 1),
     do: resolve_model(model.(opts), opts)
 
@@ -230,6 +239,7 @@ defmodule AshAi.ToolLoop do
          messages,
          tools,
          registry,
+         req_llm_opts,
          context,
          iteration,
          max_iterations,
@@ -238,7 +248,7 @@ defmodule AshAi.ToolLoop do
     if max_iterations_reached?(iteration, max_iterations) do
       {:error, :max_iterations_reached}
     else
-      case req_llm.stream_text(model, messages, tools: tools) do
+      case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
         {:ok, stream_response} ->
           chunks = Enum.to_list(stream_response.stream)
           chunk_tool_call_ids = chunk_tool_call_ids(chunks)
@@ -263,6 +273,7 @@ defmodule AshAi.ToolLoop do
               messages,
               tools,
               registry,
+              req_llm_opts,
               context,
               iteration + 1,
               max_iterations,

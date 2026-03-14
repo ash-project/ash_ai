@@ -65,9 +65,11 @@ defmodule AshAi.Actions.Prompt do
 
   - `:prompt` - A custom prompt. Supports multiple formats - see the prompt section below.
   - `:req_llm` - Override the ReqLLM module (useful for testing with mocks).
+  - `:req_llm_opts` - Additional ReqLLM request options passed through to generation and tool loops.
   - `:transform_flow` - ReqLLM-native flow customization hook (`fn flow_state, context -> flow_state end`).
   - `:modify_chain` - Legacy compatibility shim for old chain customizers.
   - `:tools` - `false`, `true`, or a list of tool names to allow tool-calling in the action.
+  - `:extra_tools` - Additional arbitrary `ReqLLM.Tool`s to expose during tool-calling.
   - `:max_iterations` - Maximum tool-loop iterations. Defaults to `:infinity` for prompt actions.
   - `:verbose?` - When true, logs tool-loop lifecycle events with `Logger.debug/1`.
 
@@ -181,6 +183,7 @@ defmodule AshAi.Actions.Prompt do
       req_llm_opts: req_llm_opts,
       messages: reqllm_context.messages,
       tool_selection: Keyword.get(opts, :tools, false),
+      extra_tools: Keyword.get(opts, :extra_tools, []),
       max_iterations: Keyword.get(opts, :max_iterations, :infinity),
       strict: Keyword.get(opts, :strict, true),
       verbose?: Keyword.get(opts, :verbose?, false),
@@ -300,36 +303,31 @@ defmodule AshAi.Actions.Prompt do
   end
 
   defp maybe_run_tools(flow_state, input, opts) do
-    case flow_state.tool_selection do
-      false ->
-        {:ok, ReqLLM.Context.new(flow_state.messages)}
+    if should_run_tool_loop?(flow_state) do
+      case prompt_loop_opts(flow_state.tool_selection, input, flow_state, opts) do
+        {:ok, loop_opts} ->
+          case AshAi.ToolLoop.run(flow_state.messages, loop_opts) do
+            {:ok, %AshAi.ToolLoop.Result{messages: messages}} ->
+              {:ok, ReqLLM.Context.new(messages)}
 
-      nil ->
-        {:ok, ReqLLM.Context.new(flow_state.messages)}
+            {:error, reason} ->
+              if flow_state.verbose? do
+                Logger.debug(fn ->
+                  "AshAi.Actions.Prompt tool loop failed: #{inspect(reason)}"
+                end)
+              end
 
-      tool_selection ->
-        case prompt_loop_opts(tool_selection, input, flow_state, opts) do
-          {:ok, loop_opts} ->
-            case AshAi.ToolLoop.run(flow_state.messages, loop_opts) do
-              {:ok, %AshAi.ToolLoop.Result{messages: messages}} ->
-                {:ok, ReqLLM.Context.new(messages)}
+              {:error,
+               Ash.Error.Unknown.UnknownError.exception(
+                 error: "Tool loop failed in prompt action: #{inspect(reason)}"
+               )}
+          end
 
-              {:error, reason} ->
-                if flow_state.verbose? do
-                  Logger.debug(fn ->
-                    "AshAi.Actions.Prompt tool loop failed: #{inspect(reason)}"
-                  end)
-                end
-
-                {:error,
-                 Ash.Error.Unknown.UnknownError.exception(
-                   error: "Tool loop failed in prompt action: #{inspect(reason)}"
-                 )}
-            end
-
-          {:error, error} ->
-            {:error, error}
-        end
+        {:error, error} ->
+          {:error, error}
+      end
+    else
+      {:ok, ReqLLM.Context.new(flow_state.messages)}
     end
   end
 
@@ -340,12 +338,14 @@ defmodule AshAi.Actions.Prompt do
       [
         model: flow_state.model,
         req_llm: flow_state.req_llm,
+        req_llm_opts: flow_state.req_llm_opts,
         max_iterations: flow_state.max_iterations,
         actor: flow_state.actor,
         tenant: flow_state.tenant,
         context: flow_state.source_context,
         strict: flow_state.strict,
-        tools: tool_selection
+        tools: tool_selection,
+        extra_tools: flow_state.extra_tools
       ]
       |> maybe_put_option(
         :on_tool_start,
@@ -360,6 +360,9 @@ defmodule AshAi.Actions.Prompt do
       )
 
     cond do
+      needs_ash_tools?(tool_selection) == false ->
+        {:ok, base_opts}
+
       Keyword.has_key?(opts, :actions) ->
         {:ok, Keyword.put(base_opts, :actions, Keyword.fetch!(opts, :actions))}
 
@@ -386,6 +389,14 @@ defmodule AshAi.Actions.Prompt do
            """
          )}
     end
+  end
+
+  defp should_run_tool_loop?(flow_state) do
+    needs_ash_tools?(flow_state.tool_selection) or flow_state.extra_tools != []
+  end
+
+  defp needs_ash_tools?(tool_selection) do
+    tool_selection == true or (is_list(tool_selection) and tool_selection != [])
   end
 
   defp build_json_schema(input) do

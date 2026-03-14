@@ -80,6 +80,30 @@ defmodule AshAi.ReqLLMToolTest do
       assert is_function(registry["read_test_resources"], 2)
       assert is_function(registry["custom_test_action"], 2)
     end
+
+    test "build_tools_and_registry includes extra tools" do
+      extra_tool = plain_extra_tool()
+      context_tool = context_extra_tool()
+
+      {tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, :*}],
+          extra_tools: [extra_tool, context_tool]
+        )
+
+      tool_names = Enum.map(tools, & &1.name)
+
+      assert "plain_extra_tool" in tool_names
+      assert "context_extra_tool" in tool_names
+      assert is_function(registry["plain_extra_tool"], 2)
+      assert is_function(registry["context_extra_tool"], 2)
+    end
+
+    test "tools: false with extra_tools returns only extra tools" do
+      tools = AshAi.list_tools(tools: false, extra_tools: [plain_extra_tool()])
+
+      assert Enum.map(tools, & &1.name) == ["plain_extra_tool"]
+    end
   end
 
   describe "tool callback execution" do
@@ -138,6 +162,42 @@ defmodule AshAi.ReqLLMToolTest do
       assert first_error["status"] == "400"
       assert is_binary(first_error["detail"])
     end
+
+    test "executes a plain extra ReqLLM tool through the registry" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, :*}],
+          extra_tools: [plain_extra_tool()]
+        )
+
+      assert {:ok, %{"echo" => "hello"}, %{"echo" => "hello"}} =
+               registry["plain_extra_tool"].(%{"message" => "hello"}, context())
+    end
+
+    test "executes a context-aware extra tool through the registry" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, :*}],
+          extra_tools: [context_extra_tool()]
+        )
+
+      ctx = %{actor: :mike, tenant: nil, context: %{trace_id: "abc"}, tool_callbacks: %{}}
+
+      assert {:ok, %{"actor" => "mike", "message" => "hello"},
+              %{"actor" => "mike", "message" => "hello"}} =
+               registry["context_extra_tool"].(%{"message" => "hello"}, ctx)
+
+      assert_receive {:context_extra_tool_called, %{actor: :mike, context: %{trace_id: "abc"}}}
+    end
+
+    test "duplicate tool names across AshAi tools and extra_tools raise" do
+      assert_raise ArgumentError, ~r/Duplicate tool names: read_test_resources/, fn ->
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, :*}],
+          extra_tools: [duplicate_name_extra_tool()]
+        )
+      end
+    end
   end
 
   describe "options validation" do
@@ -161,6 +221,21 @@ defmodule AshAi.ReqLLMToolTest do
       assert opts.req_llm == ReqLLM
     end
 
+    test "req_llm_opts default to an empty keyword list" do
+      opts = AshAi.Options.validate!(actions: [{TestResource, :*}])
+      assert opts.req_llm_opts == []
+    end
+
+    test "req_llm_opts can be overridden" do
+      opts =
+        AshAi.Options.validate!(
+          actions: [{TestResource, :*}],
+          req_llm_opts: [trace_id: "from_test"]
+        )
+
+      assert opts.req_llm_opts == [trace_id: "from_test"]
+    end
+
     test "max_iterations accepts :infinity" do
       opts = AshAi.Options.validate!(actions: [{TestResource, :*}], max_iterations: :infinity)
       assert opts.max_iterations == :infinity
@@ -174,5 +249,46 @@ defmodule AshAi.ReqLLMToolTest do
 
   defp context do
     %{actor: nil, tenant: nil, context: %{}, tool_callbacks: %{}}
+  end
+
+  defp plain_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "plain_extra_tool",
+      description: "A plain extra ReqLLM tool",
+      parameter_schema: [
+        message: [type: :string, required: true]
+      ],
+      callback: fn arguments ->
+        message = arguments[:message] || arguments["message"]
+        {:ok, %{"echo" => message}}
+      end
+    )
+  end
+
+  defp context_extra_tool do
+    tool =
+      ReqLLM.Tool.new!(
+        name: "context_extra_tool",
+        description: "A context-aware extra ReqLLM tool",
+        parameter_schema: [
+          message: [type: :string, required: true]
+        ],
+        callback: fn _args -> {:ok, %{}} end
+      )
+
+    {tool,
+     fn arguments, ctx ->
+       message = arguments[:message] || arguments["message"]
+       send(self(), {:context_extra_tool_called, %{actor: ctx[:actor], context: ctx[:context]}})
+       {:ok, %{"actor" => Atom.to_string(ctx[:actor]), "message" => message}}
+     end}
+  end
+
+  defp duplicate_name_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "read_test_resources",
+      description: "Conflicts with an AshAi tool",
+      callback: fn _args -> {:ok, "duplicate"} end
+    )
   end
 end

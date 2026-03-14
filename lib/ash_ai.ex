@@ -330,6 +330,26 @@ defmodule AshAi do
           Useful for tests with a mock ReqLLM module.
           """
         ],
+        req_llm_opts: [
+          type: :keyword_list,
+          default: [],
+          doc: """
+          Additional options passed through to ReqLLM requests.
+
+          AshAi still controls the final `:tools` value used for tool-calling.
+          """
+        ],
+        extra_tools: [
+          type: {:list, :any},
+          default: [],
+          doc: """
+          Additional ReqLLM tools to expose alongside AshAi-discovered tools.
+
+          Accepts either:
+          - `%ReqLLM.Tool{}`
+          - `{%ReqLLM.Tool{}, callback}` where `callback` is `fn args, context -> ... end`
+          """
+        ],
         max_iterations: [
           type: {:or, [:pos_integer, {:literal, :infinity}]},
           default: 10,
@@ -659,45 +679,49 @@ defmodule AshAi do
   end
 
   def exposed_tools(opts) do
-    if opts.actions do
-      Enum.flat_map(opts.actions, fn
-        {resource, actions} ->
-          domain = Ash.Resource.Info.domain(resource)
-
-          if !domain do
-            raise "Cannot use an ash resource that does not have a domain"
-          end
-
-          tools = AshAi.Info.tools(domain)
-
-          if !Enum.any?(tools, fn tool ->
-               tool.resource == resource && (actions == :* || tool.action in actions)
-             end) do
-            raise "Cannot use an action that is not exposed as a tool"
-          end
-
-          if actions == :* do
-            tools
-            |> Enum.filter(&(&1.resource == resource))
-            |> Enum.map(fn tool ->
-              %{tool | domain: domain, action: Ash.Resource.Info.action(resource, tool.action)}
-            end)
-          else
-            tools
-            |> Enum.filter(&(&1.resource == resource && &1.action in actions))
-            |> Enum.map(fn tool ->
-              %{tool | domain: domain, action: Ash.Resource.Info.action(resource, tool.action)}
-            end)
-          end
-      end)
+    if opts.tools in [false, []] do
+      []
     else
-      if !opts.otp_app do
-        raise "Must specify `otp_app` if you do not specify `actions`"
-      end
+      if opts.actions do
+        Enum.flat_map(opts.actions, fn
+          {resource, actions} ->
+            domain = Ash.Resource.Info.domain(resource)
 
-      for domain <- Application.get_env(opts.otp_app, :ash_domains) || [],
-          tool <- AshAi.Info.tools(domain) do
-        %{tool | domain: domain, action: Ash.Resource.Info.action(tool.resource, tool.action)}
+            if !domain do
+              raise "Cannot use an ash resource that does not have a domain"
+            end
+
+            tools = AshAi.Info.tools(domain)
+
+            if !Enum.any?(tools, fn tool ->
+                 tool.resource == resource && (actions == :* || tool.action in actions)
+               end) do
+              raise "Cannot use an action that is not exposed as a tool"
+            end
+
+            if actions == :* do
+              tools
+              |> Enum.filter(&(&1.resource == resource))
+              |> Enum.map(fn tool ->
+                %{tool | domain: domain, action: Ash.Resource.Info.action(resource, tool.action)}
+              end)
+            else
+              tools
+              |> Enum.filter(&(&1.resource == resource && &1.action in actions))
+              |> Enum.map(fn tool ->
+                %{tool | domain: domain, action: Ash.Resource.Info.action(resource, tool.action)}
+              end)
+            end
+        end)
+      else
+        if !opts.otp_app do
+          raise "Must specify `otp_app` if you do not specify `actions`"
+        end
+
+        for domain <- Application.get_env(opts.otp_app, :ash_domains) || [],
+            tool <- AshAi.Info.tools(domain) do
+          %{tool | domain: domain, action: Ash.Resource.Info.action(tool.resource, tool.action)}
+        end
       end
     end
     |> Enum.uniq()

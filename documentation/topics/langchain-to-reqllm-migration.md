@@ -27,7 +27,7 @@ In `mix.exs`:
 - Add ReqLLM dependency:
 
 ```elixir
-{:req_llm, "~> 1.6"}
+{:req_llm, "~> 1.7"}
 ```
 
 Then fetch and resolve:
@@ -92,6 +92,74 @@ Supported model forms:
 - ReqLLM tuple model forms
 - Function returning one of the above
 
+### Customizing Prompt Actions
+
+For prompt-backed actions, the new customization boundary is:
+
+- `tools:` filters AshAi-exposed tools.
+- `extra_tools:` adds arbitrary `ReqLLM.Tool`s.
+- `req_llm_opts:` passes provider/request options through to ReqLLM.
+- `transform_flow:` is the preferred ReqLLM-native customization hook.
+- `modify_chain:` remains available as a compatibility shim.
+
+Before, custom tools were often attached by mutating the LangChain chain:
+
+```elixir
+run prompt(llm,
+  tools: true,
+  modify_chain: fn chain, _context ->
+    chain
+    |> LangChain.Chains.LLMChain.add_tools([my_custom_tool])
+    |> LangChain.Chains.LLMChain.update_custom_context(%{trace_id: "abc"})
+  end
+)
+```
+
+Now, keep AshAi tools and arbitrary ReqLLM tools separate:
+
+```elixir
+run prompt("openai:gpt-4o",
+  tools: true,
+  extra_tools: [
+    ReqLLM.Tool.new!(
+      name: "lookup_weather",
+      description: "Look up weather by city",
+      parameter_schema: [city: [type: :string, required: true]],
+      callback: fn %{"city" => city} -> {:ok, %{city: city, forecast: "sunny"}} end
+    )
+  ],
+  req_llm_opts: [trace_id: "abc"]
+)
+```
+
+If you need to customize prompt action flow programmatically, prefer `transform_flow`:
+
+```elixir
+run prompt("openai:gpt-4o",
+  tools: [],
+  transform_flow: fn flow_state, _context ->
+    %{
+      flow_state
+      | extra_tools: flow_state.extra_tools ++ [my_custom_tool],
+        req_llm_opts: Keyword.put(flow_state.req_llm_opts, :trace_id, "abc")
+    }
+  end
+)
+```
+
+If you are migrating an existing `modify_chain` callback, the compatibility shim supports the same high-level intent without exposing a real LangChain chain:
+
+```elixir
+run prompt("openai:gpt-4o",
+  tools: [],
+  modify_chain: fn chain_like, _context ->
+    chain_like
+    |> AshAi.Actions.Prompt.LegacyChainCompat.append_extra_tools([my_custom_tool])
+    |> AshAi.Actions.Prompt.LegacyChainCompat.put_req_llm_opts(trace_id: "abc")
+  end
+)
+```
+
 ## 6) Update Embeddings (If Used)
 
 Use `AshAi.EmbeddingModels.ReqLLM` with explicit `model` and `dimensions`.
@@ -146,7 +214,7 @@ The old LangChain-era adapter concepts map to ReqLLM-era behavior as follows:
 - `RequestJson` -> prompt templates/messages + typed return schema casting in `prompt/2`.
 - `Raw` -> use non-structured text generation directly via ReqLLM in custom code paths when typed action returns are not desired.
 
-`modify_chain` is supported via a compatibility shim and receives `AshAi.Actions.Prompt.LegacyChainCompat` (not a LangChain chain). Prefer `transform_flow` for ReqLLM-native customization.
+`modify_chain` is supported via a compatibility shim and receives `AshAi.Actions.Prompt.LegacyChainCompat` (not a LangChain chain). Prefer `transform_flow` for ReqLLM-native customization, `tools:` for AshAi-exposed tools, and `extra_tools:` for arbitrary ReqLLM tools.
 
 ### Embedding Return Shape
 

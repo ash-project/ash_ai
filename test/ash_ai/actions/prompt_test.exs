@@ -120,6 +120,54 @@ defmodule AshAi.Actions.PromptTest do
     end
   end
 
+  defmodule FakeReqLLMToolLoopWithOptsCapture do
+    @moduledoc "Fake ReqLLM that captures tool loop opts and then returns a final object"
+
+    def stream_text(model, messages, opts \\ []) do
+      send(self(), {:prompt_tool_loop_stream_called, model, messages, opts})
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      if count == 0 do
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.tool_call(
+               "prompt_extra_tool",
+               %{"message" => "from extra tool"},
+               %{
+                 id: "call_prompt_extra",
+                 index: 0
+               }
+             ),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: model,
+           context: ReqLLM.Context.new(messages)
+         }}
+      else
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.text("done"),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: model,
+           context: ReqLLM.Context.new(messages)
+         }}
+      end
+    end
+
+    def generate_object(model, context, _schema, opts \\ []) do
+      send(self(), {:prompt_generate_object_with_opts_called, model, context, opts})
+      {:ok, %{object: %{"result" => "tool_loop_result"}}}
+    end
+  end
+
   defmodule Sentiment do
     use Ash.Resource, data_layer: :embedded
 
@@ -224,6 +272,50 @@ defmodule AshAi.Actions.PromptTest do
                 )
                 |> AshAi.Actions.Prompt.LegacyChainCompat.append_message(
                   ReqLLM.Context.user("modify_chain_marker")
+                )
+              end
+            )
+      end
+
+      action :analyze_with_transform_flow_extra_tool, :string do
+        description("Test transform_flow with extra_tools and req_llm_opts")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: "Use the extra tool for: <%= @input.arguments.text %>",
+              tools: [],
+              req_llm: FakeReqLLMToolLoopWithOptsCapture,
+              transform_flow: fn flow_state, _context ->
+                %{
+                  flow_state
+                  | extra_tools:
+                      flow_state.extra_tools ++ [AshAi.Actions.PromptTest.prompt_extra_tool()],
+                    req_llm_opts:
+                      Keyword.put(
+                        flow_state.req_llm_opts,
+                        :trace_id,
+                        "from_transform_flow_tool_loop"
+                      )
+                }
+              end
+            )
+      end
+
+      action :analyze_with_modify_chain_extra_tool, :string do
+        description("Test modify_chain with extra_tools and req_llm_opts")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: "Use the extra tool for: <%= @input.arguments.text %>",
+              tools: [],
+              req_llm: FakeReqLLMToolLoopWithOptsCapture,
+              modify_chain: fn chain_like, _context ->
+                chain_like
+                |> AshAi.Actions.Prompt.LegacyChainCompat.append_extra_tools([
+                  AshAi.Actions.PromptTest.prompt_extra_tool()
+                ])
+                |> AshAi.Actions.Prompt.LegacyChainCompat.put_req_llm_opts(
+                  trace_id: "from_modify_chain_tool_loop"
                 )
               end
             )
@@ -446,6 +538,54 @@ defmodule AshAi.Actions.PromptTest do
 
       assert marker_message
     end
+
+    test "transform_flow can append extra_tools and forward req_llm_opts into tool loops" do
+      Process.delete({FakeReqLLMToolLoopWithOptsCapture, :call_count})
+
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:analyze_with_transform_flow_extra_tool, %{text: "hello"})
+        |> Ash.run_action!()
+
+      assert result == "tool_loop_result"
+
+      assert_receive {:prompt_tool_loop_stream_called, "openai:gpt-4o", _messages, opts}
+      assert Keyword.get(opts, :trace_id) == "from_transform_flow_tool_loop"
+      assert Enum.map(Keyword.fetch!(opts, :tools), & &1.name) == ["prompt_extra_tool"]
+      assert_receive {:prompt_extra_tool_called, "from extra tool"}
+
+      assert_receive {:prompt_generate_object_with_opts_called, "openai:gpt-4o", context, opts}
+      assert Keyword.get(opts, :trace_id) == "from_transform_flow_tool_loop"
+
+      assert Enum.any?(context.messages, fn message ->
+               message.role == :tool &&
+                 ReqLLM.ToolResult.output_from_message(message) == %{"echo" => "from extra tool"}
+             end)
+    end
+
+    test "modify_chain compatibility shim can append extra_tools and forward req_llm_opts into tool loops" do
+      Process.delete({FakeReqLLMToolLoopWithOptsCapture, :call_count})
+
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:analyze_with_modify_chain_extra_tool, %{text: "hello"})
+        |> Ash.run_action!()
+
+      assert result == "tool_loop_result"
+
+      assert_receive {:prompt_tool_loop_stream_called, "openai:gpt-4o", _messages, opts}
+      assert Keyword.get(opts, :trace_id) == "from_modify_chain_tool_loop"
+      assert Enum.map(Keyword.fetch!(opts, :tools), & &1.name) == ["prompt_extra_tool"]
+      assert_receive {:prompt_extra_tool_called, "from extra tool"}
+
+      assert_receive {:prompt_generate_object_with_opts_called, "openai:gpt-4o", context, opts}
+      assert Keyword.get(opts, :trace_id) == "from_modify_chain_tool_loop"
+
+      assert Enum.any?(context.messages, fn message ->
+               message.role == :tool &&
+                 ReqLLM.ToolResult.output_from_message(message) == %{"echo" => "from extra tool"}
+             end)
+    end
   end
 
   describe "prompt with function format" do
@@ -585,5 +725,20 @@ defmodule AshAi.Actions.PromptTest do
       assert_receive {:map_schema, schema}
       assert schema["properties"]["result"] in [%{"type" => "object"}, %{type: :object}]
     end
+  end
+
+  def prompt_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "prompt_extra_tool",
+      description: "Prompt-only extra tool",
+      parameter_schema: [
+        message: [type: :string, required: true]
+      ],
+      callback: fn arguments ->
+        message = arguments[:message] || arguments["message"]
+        send(self(), {:prompt_extra_tool_called, message})
+        {:ok, %{"echo" => message}}
+      end
+    )
   end
 end

@@ -154,7 +154,7 @@ defmodule AshAi.MixProject do
       {:ash, ash_version("~> 3.0 and >= 3.7.1")},
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
-      {:req_llm, "~> 1.6"},
+      {:req_llm, "~> 1.7"},
       {:ash_postgres, "~> 2.5", optional: true},
       {:ash_oban, "~> 0.5", optional: true},
       {:ash_phoenix, "~> 2.0", optional: true},

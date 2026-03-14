@@ -304,6 +304,61 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMExtraTool do
+    def stream_text(_model, _messages, opts \\ []) do
+      send(self(), {:extra_tool_stream_opts, opts})
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      if count == 0 do
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.tool_call("plain_extra_tool", %{"message" => "hello"}, %{
+               id: "call_extra",
+               index: 0
+             }),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "openai:gpt-4o",
+           context: ReqLLM.Context.new([])
+         }}
+      else
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.text("done"),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "openai:gpt-4o",
+           context: ReqLLM.Context.new([])
+         }}
+      end
+    end
+  end
+
+  defmodule FakeReqLLMStreamOptsCapture do
+    def stream_text(_model, _messages, opts \\ []) do
+      send(self(), {:tool_loop_stream_opts, opts})
+
+      {:ok,
+       %ReqLLM.StreamResponse{
+         stream: [
+           ReqLLM.StreamChunk.text("done"),
+           ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+         ],
+         metadata_handle: :ignored,
+         cancel: fn -> :ok end,
+         model: "openai:gpt-4o",
+         context: ReqLLM.Context.new([])
+       }}
+    end
+  end
+
   test "run/2 returns {:error, reason} when req_llm.stream_text fails" do
     messages = [Context.user("hello")]
 
@@ -429,6 +484,82 @@ defmodule AshAi.ToolLoopTest do
     assert match?({:done, %ToolLoop.Result{final_text: "done"}}, List.last(events))
   end
 
+  test "run/2 executes extra tools without AshAi-discovered tools" do
+    Process.delete({FakeReqLLMExtraTool, :call_count})
+    messages = [Context.user("trigger extra tool")]
+
+    assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+             ToolLoop.run(messages,
+               tools: false,
+               extra_tools: [plain_extra_tool()],
+               model: "openai:gpt-4o",
+               req_llm: FakeReqLLMExtraTool
+             )
+
+    tool_message = Enum.find(final_messages, &(&1.role == :tool))
+    assert tool_message.tool_call_id == "call_extra"
+    assert ReqLLM.ToolResult.output_from_message(tool_message) == %{"echo" => "hello"}
+  end
+
+  test "stream/2 emits tool events for extra tools" do
+    Process.delete({FakeReqLLMExtraTool, :call_count})
+    messages = [Context.user("trigger extra tool")]
+
+    events =
+      ToolLoop.stream(messages,
+        tools: false,
+        extra_tools: [plain_extra_tool()],
+        model: "openai:gpt-4o",
+        req_llm: FakeReqLLMExtraTool
+      )
+      |> Enum.to_list()
+
+    assert Enum.any?(events, fn
+             {:tool_call, %{id: "call_extra", name: "plain_extra_tool"}} -> true
+             _ -> false
+           end)
+
+    assert Enum.any?(events, fn
+             {:tool_result,
+              %{id: "call_extra", result: {:ok, %{"echo" => "hello"}, %{"echo" => "hello"}}}} ->
+               true
+
+             _ ->
+               false
+           end)
+  end
+
+  test "run/2 forwards req_llm_opts to ReqLLM.stream_text/3" do
+    messages = [Context.user("capture opts")]
+
+    assert {:ok, %ToolLoop.Result{final_text: "done"}} =
+             ToolLoop.run(messages,
+               tools: false,
+               extra_tools: [plain_extra_tool()],
+               model: "openai:gpt-4o",
+               req_llm: FakeReqLLMStreamOptsCapture,
+               req_llm_opts: [trace_id: "from_tool_loop", temperature: 0.2]
+             )
+
+    assert_receive {:tool_loop_stream_opts, opts}
+    assert Keyword.get(opts, :trace_id) == "from_tool_loop"
+    assert Keyword.get(opts, :temperature) == 0.2
+    assert Enum.map(Keyword.fetch!(opts, :tools), & &1.name) == ["plain_extra_tool"]
+  end
+
+  test "duplicate tool names fail before the tool loop starts" do
+    messages = [Context.user("duplicate tools")]
+
+    assert_raise ArgumentError, ~r/Duplicate tool names: echo_tool/, fn ->
+      ToolLoop.run(messages,
+        actions: [{TestResource, :*}],
+        model: "openai:gpt-4o",
+        req_llm: FakeReqLLMStreamError,
+        extra_tools: [duplicate_name_extra_tool()]
+      )
+    end
+  end
+
   test "run/2 merges tool-call turns even when each turn includes assistant text" do
     Process.delete({FakeReqLLMToolCallsWithInterleavedText, :call_count})
     messages = [Context.user("trigger tools")]
@@ -460,5 +591,27 @@ defmodule AshAi.ToolLoopTest do
     assert assistant_text =~ "First tool pass."
     assert assistant_text =~ "Second tool pass."
     assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+  end
+
+  defp plain_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "plain_extra_tool",
+      description: "Plain extra tool",
+      parameter_schema: [
+        message: [type: :string, required: true]
+      ],
+      callback: fn arguments ->
+        message = arguments[:message] || arguments["message"]
+        {:ok, %{"echo" => message}}
+      end
+    )
+  end
+
+  defp duplicate_name_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "echo_tool",
+      description: "Conflicts with AshAi tool",
+      callback: fn _args -> {:ok, "duplicate"} end
+    )
   end
 end

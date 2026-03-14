@@ -16,6 +16,7 @@ defmodule AshAi.Actions.Prompt.LegacyChainCompat do
     :llm,
     :messages,
     :tools,
+    :extra_tools,
     :verbose,
     :custom_context,
     :req_llm_opts,
@@ -30,6 +31,7 @@ defmodule AshAi.Actions.Prompt.LegacyChainCompat do
           llm: term(),
           messages: list(),
           tools: false | true | [atom()],
+          extra_tools: list(),
           verbose: boolean(),
           custom_context: map(),
           req_llm_opts: Keyword.t(),
@@ -46,6 +48,7 @@ defmodule AshAi.Actions.Prompt.LegacyChainCompat do
       llm: flow_state.model,
       messages: flow_state.messages,
       tools: flow_state.tool_selection,
+      extra_tools: flow_state.extra_tools || [],
       verbose: flow_state.verbose?,
       custom_context: flow_state.source_context || %{},
       req_llm_opts: flow_state.req_llm_opts || [],
@@ -64,6 +67,7 @@ defmodule AshAi.Actions.Prompt.LegacyChainCompat do
       | model: compat.llm,
         messages: compat.messages || [],
         tool_selection: compat.tools,
+        extra_tools: compat.extra_tools || [],
         verbose?: compat.verbose || false,
         source_context: compat.custom_context || %{},
         req_llm_opts: compat.req_llm_opts || [],
@@ -123,6 +127,18 @@ defmodule AshAi.Actions.Prompt.LegacyChainCompat do
       end
 
     %{compat | tools: tools}
+  end
+
+  @doc "Replaces additional ReqLLM tools."
+  @spec set_extra_tools(t(), list()) :: t()
+  def set_extra_tools(%__MODULE__{} = compat, extra_tools) when is_list(extra_tools) do
+    %{compat | extra_tools: extra_tools}
+  end
+
+  @doc "Appends additional ReqLLM tools."
+  @spec append_extra_tools(t(), list()) :: t()
+  def append_extra_tools(%__MODULE__{} = compat, extra_tools) when is_list(extra_tools) do
+    %{compat | extra_tools: (compat.extra_tools || []) ++ extra_tools}
   end
 
   @doc "Sets tool lifecycle callbacks."
