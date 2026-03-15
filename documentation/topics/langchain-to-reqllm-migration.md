@@ -100,7 +100,6 @@ For prompt-backed actions, the new customization boundary is:
 - `extra_tools:` adds arbitrary `ReqLLM.Tool`s.
 - `req_llm_opts:` passes provider/request options through to ReqLLM.
 - `transform_flow:` is the preferred ReqLLM-native customization hook.
-- `modify_chain:` remains available as a compatibility shim.
 
 Before, custom tools were often attached by mutating the LangChain chain:
 
@@ -132,7 +131,7 @@ run prompt("openai:gpt-4o",
 )
 ```
 
-If you need to customize prompt action flow programmatically, prefer `transform_flow`:
+If you used `modify_chain` for prompt customization before, now express those changes directly against `transform_flow`:
 
 ```elixir
 run prompt("openai:gpt-4o",
@@ -143,19 +142,6 @@ run prompt("openai:gpt-4o",
       | extra_tools: flow_state.extra_tools ++ [my_custom_tool],
         req_llm_opts: Keyword.put(flow_state.req_llm_opts, :trace_id, "abc")
     }
-  end
-)
-```
-
-If you are migrating an existing `modify_chain` callback, the compatibility shim supports the same high-level intent without exposing a real LangChain chain:
-
-```elixir
-run prompt("openai:gpt-4o",
-  tools: [],
-  modify_chain: fn chain_like, _context ->
-    chain_like
-    |> AshAi.Actions.Prompt.LegacyChainCompat.append_extra_tools([my_custom_tool])
-    |> AshAi.Actions.Prompt.LegacyChainCompat.put_req_llm_opts(trace_id: "abc")
   end
 )
 ```
@@ -214,7 +200,7 @@ The old LangChain-era adapter concepts map to ReqLLM-era behavior as follows:
 - `RequestJson` -> prompt templates/messages + typed return schema casting in `prompt/2`.
 - `Raw` -> use non-structured text generation directly via ReqLLM in custom code paths when typed action returns are not desired.
 
-`modify_chain` is supported via a compatibility shim and receives `AshAi.Actions.Prompt.LegacyChainCompat` (not a LangChain chain). Prefer `transform_flow` for ReqLLM-native customization, `tools:` for AshAi-exposed tools, and `extra_tools:` for arbitrary ReqLLM tools.
+When migrating old `modify_chain` usage, move that customization into `transform_flow`, `tools:`, `extra_tools:`, and `req_llm_opts:` directly.
 
 ### Embedding Return Shape
 

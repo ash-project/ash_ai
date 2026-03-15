@@ -257,26 +257,6 @@ defmodule AshAi.Actions.PromptTest do
             )
       end
 
-      action :analyze_with_modify_chain_compat, :string do
-        description("Test legacy modify_chain compatibility shim")
-        argument(:text, :string, allow_nil?: false)
-
-        run prompt("openai:gpt-4o",
-              prompt: "Process this text: <%= @input.arguments.text %>",
-              req_llm: FakeReqLLMWithOptsCapture,
-              modify_chain: fn chain_like, _context ->
-                chain_like
-                |> AshAi.Actions.Prompt.LegacyChainCompat.put_model("openai:gpt-4o-mini")
-                |> AshAi.Actions.Prompt.LegacyChainCompat.put_req_llm_opts(
-                  trace_id: "from_modify_chain"
-                )
-                |> AshAi.Actions.Prompt.LegacyChainCompat.append_message(
-                  ReqLLM.Context.user("modify_chain_marker")
-                )
-              end
-            )
-      end
-
       action :analyze_with_transform_flow_extra_tool, :string do
         description("Test transform_flow with extra_tools and req_llm_opts")
         argument(:text, :string, allow_nil?: false)
@@ -298,37 +278,6 @@ defmodule AshAi.Actions.PromptTest do
                       )
                 }
               end
-            )
-      end
-
-      action :analyze_with_modify_chain_extra_tool, :string do
-        description("Test modify_chain with extra_tools and req_llm_opts")
-        argument(:text, :string, allow_nil?: false)
-
-        run prompt("openai:gpt-4o",
-              prompt: "Use the extra tool for: <%= @input.arguments.text %>",
-              tools: [],
-              req_llm: FakeReqLLMToolLoopWithOptsCapture,
-              modify_chain: fn chain_like, _context ->
-                chain_like
-                |> AshAi.Actions.Prompt.LegacyChainCompat.append_extra_tools([
-                  AshAi.Actions.PromptTest.prompt_extra_tool()
-                ])
-                |> AshAi.Actions.Prompt.LegacyChainCompat.put_req_llm_opts(
-                  trace_id: "from_modify_chain_tool_loop"
-                )
-              end
-            )
-      end
-
-      action :analyze_with_invalid_modify_chain_return, :string do
-        description("Test invalid modify_chain callback return handling")
-        argument(:text, :string, allow_nil?: false)
-
-        run prompt("openai:gpt-4o",
-              prompt: "Process this text: <%= @input.arguments.text %>",
-              req_llm: FakeReqLLM,
-              modify_chain: fn _chain_like, _context -> :invalid_return end
             )
       end
 
@@ -520,25 +469,6 @@ defmodule AshAi.Actions.PromptTest do
       assert marker_message
     end
 
-    test "modify_chain compatibility shim customizes model, req_llm opts, and messages" do
-      result =
-        TestResource
-        |> Ash.ActionInput.for_action(:analyze_with_modify_chain_compat, %{text: "hello world"})
-        |> Ash.run_action!()
-
-      assert result == "test_result"
-
-      assert_receive {:generate_object_with_opts_called, "openai:gpt-4o-mini", context, opts}
-      assert Keyword.get(opts, :trace_id) == "from_modify_chain"
-
-      marker_message =
-        Enum.find(context.messages, fn message ->
-          message.role == :user && content_contains?(message.content, "modify_chain_marker")
-        end)
-
-      assert marker_message
-    end
-
     test "transform_flow can append extra_tools and forward req_llm_opts into tool loops" do
       Process.delete({FakeReqLLMToolLoopWithOptsCapture, :call_count})
 
@@ -556,30 +486,6 @@ defmodule AshAi.Actions.PromptTest do
 
       assert_receive {:prompt_generate_object_with_opts_called, "openai:gpt-4o", context, opts}
       assert Keyword.get(opts, :trace_id) == "from_transform_flow_tool_loop"
-
-      assert Enum.any?(context.messages, fn message ->
-               message.role == :tool &&
-                 ReqLLM.ToolResult.output_from_message(message) == %{"echo" => "from extra tool"}
-             end)
-    end
-
-    test "modify_chain compatibility shim can append extra_tools and forward req_llm_opts into tool loops" do
-      Process.delete({FakeReqLLMToolLoopWithOptsCapture, :call_count})
-
-      result =
-        TestResource
-        |> Ash.ActionInput.for_action(:analyze_with_modify_chain_extra_tool, %{text: "hello"})
-        |> Ash.run_action!()
-
-      assert result == "tool_loop_result"
-
-      assert_receive {:prompt_tool_loop_stream_called, "openai:gpt-4o", _messages, opts}
-      assert Keyword.get(opts, :trace_id) == "from_modify_chain_tool_loop"
-      assert Enum.map(Keyword.fetch!(opts, :tools), & &1.name) == ["prompt_extra_tool"]
-      assert_receive {:prompt_extra_tool_called, "from extra tool"}
-
-      assert_receive {:prompt_generate_object_with_opts_called, "openai:gpt-4o", context, opts}
-      assert Keyword.get(opts, :trace_id) == "from_modify_chain_tool_loop"
 
       assert Enum.any?(context.messages, fn message ->
                message.role == :tool &&
@@ -699,17 +605,6 @@ defmodule AshAi.Actions.PromptTest do
                )
 
       assert inspect(error) =~ "Prompt action tool use requires either"
-    end
-
-    test "invalid modify_chain callback return is surfaced as action error" do
-      assert {:error, %Ash.Error.Unknown{} = error} =
-               TestResource
-               |> Ash.ActionInput.for_action(:analyze_with_invalid_modify_chain_return, %{
-                 text: "test"
-               })
-               |> Ash.run_action()
-
-      assert inspect(error) =~ "modify_chain callback must return"
     end
   end
 

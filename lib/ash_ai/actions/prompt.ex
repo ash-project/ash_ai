@@ -4,7 +4,7 @@
 
 defmodule AshAi.Actions.Prompt do
   require Logger
-  alias __MODULE__.{FlowState, LegacyChainCompat}
+  alias __MODULE__.FlowState
 
   @prompt_template {"""
                     You are responsible for performing the `<%= @input.action.name %>` action.
@@ -67,7 +67,6 @@ defmodule AshAi.Actions.Prompt do
   - `:req_llm` - Override the ReqLLM module (useful for testing with mocks).
   - `:req_llm_opts` - Additional ReqLLM request options passed through to generation and tool loops.
   - `:transform_flow` - ReqLLM-native flow customization hook (`fn flow_state, context -> flow_state end`).
-  - `:modify_chain` - Legacy compatibility shim for old chain customizers.
   - `:tools` - `false`, `true`, or a list of tool names to allow tool-calling in the action.
   - `:extra_tools` - Additional arbitrary `ReqLLM.Tool`s to expose during tool-calling.
   - `:max_iterations` - Maximum tool-loop iterations. Defaults to `:infinity` for prompt actions.
@@ -77,7 +76,6 @@ defmodule AshAi.Actions.Prompt do
 
   - Tool-loop failures are returned as action errors with loop reason details.
   - Unconstrained `:map` return types use a permissive map schema (`type: object`).
-  - `:modify_chain` remains supported via a compatibility shim and does not expose a real LangChain chain.
 
   ## Prompt Formats
 
@@ -196,13 +194,7 @@ defmodule AshAi.Actions.Prompt do
   end
 
   defp apply_flow_customizations(flow_state, context, opts) do
-    case apply_transform_flow(flow_state, opts[:transform_flow], context) do
-      {:ok, flow_state} ->
-        apply_modify_chain(flow_state, opts[:modify_chain], context)
-
-      {:error, error} ->
-        {:error, error}
-    end
+    apply_transform_flow(flow_state, opts[:transform_flow], context)
   end
 
   defp apply_transform_flow(flow_state, nil, _context), do: {:ok, flow_state}
@@ -230,44 +222,6 @@ defmodule AshAi.Actions.Prompt do
 
   defp apply_transform_flow(_flow_state, transform_flow, _context) do
     {:error, invalid_callback_option(:transform_flow, transform_flow)}
-  end
-
-  defp apply_modify_chain(flow_state, nil, _context), do: {:ok, flow_state}
-
-  defp apply_modify_chain(flow_state, modify_chain, context) when is_function(modify_chain, 2) do
-    compat_chain = LegacyChainCompat.from_flow_state(flow_state)
-
-    case run_flow_callback(:modify_chain, fn -> modify_chain.(compat_chain, context) end) do
-      {:ok, %LegacyChainCompat{} = compat} ->
-        {:ok, LegacyChainCompat.to_flow_state(compat)}
-
-      {:ok, {:ok, %LegacyChainCompat{} = compat}} ->
-        {:ok, LegacyChainCompat.to_flow_state(compat)}
-
-      {:ok, %FlowState{} = transformed} ->
-        {:ok, transformed}
-
-      {:ok, {:ok, %FlowState{} = transformed}} ->
-        {:ok, transformed}
-
-      {:ok, {:error, reason}} ->
-        {:error, callback_error(:modify_chain, reason)}
-
-      {:ok, other} ->
-        {:error,
-         invalid_callback_result(
-           :modify_chain,
-           "AshAi.Actions.Prompt.LegacyChainCompat or AshAi.Actions.Prompt.FlowState",
-           other
-         )}
-
-      {:error, error} ->
-        {:error, error}
-    end
-  end
-
-  defp apply_modify_chain(_flow_state, modify_chain, _context) do
-    {:error, invalid_callback_option(:modify_chain, modify_chain)}
   end
 
   defp run_flow_callback(callback_name, fun) do
