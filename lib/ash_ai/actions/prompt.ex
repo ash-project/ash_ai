@@ -375,7 +375,10 @@ defmodule AshAi.Actions.Prompt do
     else
       %{
         "type" => "object",
-        "properties" => %{},
+        "properties" => %{
+          "result" => %{"type" => "null"}
+        },
+        "required" => ["result"],
         "additionalProperties" => false
       }
     end
@@ -444,6 +447,16 @@ defmodule AshAi.Actions.Prompt do
 
   defp maybe_put_option(opts, _key, nil), do: opts
   defp maybe_put_option(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp cast_result(result, %{returns: nil}) do
+    case unwrap_result(result) do
+      nil ->
+        :ok
+
+      value ->
+        {:error, "Failed to cast LLM response: expected nil return, got: #{inspect(value)}"}
+    end
+  end
 
   defp cast_result(result, action) do
     value = unwrap_result(result)

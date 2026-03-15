@@ -98,6 +98,15 @@ defmodule AshAi.Actions.PromptTest do
     end
   end
 
+  defmodule FakeReqLLMWithNullSchema do
+    @moduledoc "Fake ReqLLM that captures schema used for nil outputs"
+
+    def generate_object(_model, _context, schema, _opts \\ []) do
+      send(self(), {:null_schema, schema})
+      {:ok, %{object: %{"result" => nil}}}
+    end
+  end
+
   defmodule FakeReqLLMToolLoopInfiniteToolCalls do
     @moduledoc "Fake ReqLLM that always requests a tool call while streaming"
 
@@ -356,6 +365,16 @@ defmodule AshAi.Actions.PromptTest do
         run prompt("openai:gpt-4o",
               prompt: "Return a map for: <%= @input.arguments.text %>",
               req_llm: FakeReqLLMWithMapSchema
+            )
+      end
+
+      action :perform_without_return do
+        description("Test nil return handling")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: "Perform the action for: <%= @input.arguments.text %>",
+              req_llm: FakeReqLLMWithNullSchema
             )
       end
 
@@ -619,6 +638,26 @@ defmodule AshAi.Actions.PromptTest do
 
       assert_receive {:map_schema, schema}
       assert schema["properties"]["result"] in [%{"type" => "object"}, %{type: :object}]
+    end
+  end
+
+  describe "nil returns" do
+    test "uses the legacy null result wrapper for actions without declared returns" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:perform_without_return, %{text: "do it"})
+        |> Ash.run_action!()
+
+      assert result == :ok
+
+      assert_receive {:null_schema, schema}
+
+      assert schema == %{
+               "type" => "object",
+               "properties" => %{"result" => %{"type" => "null"}},
+               "required" => ["result"],
+               "additionalProperties" => false
+             }
     end
   end
 
