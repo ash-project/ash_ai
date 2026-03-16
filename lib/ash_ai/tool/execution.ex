@@ -104,13 +104,12 @@ defmodule AshAi.Tool.Execution do
 
   defp build_sort(sort) when is_list(sort) do
     sort
-    |> Enum.map(fn map ->
+    |> Enum.map_join(",", fn map ->
       case map["direction"] || "asc" do
         "asc" -> map["field"]
         "desc" -> "-#{map["field"]}"
       end
     end)
-    |> Enum.join(",")
   end
 
   defp build_sort(_), do: ""

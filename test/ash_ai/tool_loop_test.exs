@@ -582,11 +582,10 @@ defmodule AshAi.ToolLoopTest do
       assistant_tool_turns
       |> hd()
       |> Map.get(:content, [])
-      |> Enum.map(fn
+      |> Enum.map_join(fn
         %{type: :text, text: text} when is_binary(text) -> text
         _ -> ""
       end)
-      |> Enum.join("")
 
     assert assistant_text =~ "First tool pass."
     assert assistant_text =~ "Second tool pass."

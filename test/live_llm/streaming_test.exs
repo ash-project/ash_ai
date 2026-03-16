@@ -80,7 +80,7 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(content_events) >= 1
+      assert content_events != []
 
       done_events =
         Enum.filter(events, fn
@@ -88,7 +88,7 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(done_events) == 1
+      assert done_events |> Enum.take(2) |> length() == 1
 
       {:done, result} = List.last(events)
       assert %ToolLoop.Result{} = result
@@ -130,8 +130,8 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(tool_call_events) >= 1
-      assert length(tool_result_events) >= 1
+      assert tool_call_events != []
+      assert tool_result_events != []
 
       {:tool_call, tool_call} = hd(tool_call_events)
       assert tool_call.name == "list_stream_items"
@@ -166,7 +166,7 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(iteration_events) >= 1
+      assert iteration_events != []
 
       {:done, result} = List.last(events)
       assert result.iterations >= 2
@@ -227,7 +227,7 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(content_events) >= 1
+      assert content_events != []
 
       {:done, result} = List.last(events)
       assert %ToolLoop.Result{} = result
@@ -262,7 +262,7 @@ defmodule AshAi.LiveLLM.StreamingTest do
           _ -> false
         end)
 
-      assert length(tool_call_events) >= 1
+      assert tool_call_events != []
     end
   end
 end

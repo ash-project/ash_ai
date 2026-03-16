@@ -11,8 +11,10 @@ defmodule AshAi.Tool.Builder do
   and creating the callback function that executes the tool.
   """
 
-  alias AshAi.Tool.{Schema, Execution}
-  alias AshAi.{ToolStartEvent, ToolEndEvent}
+  alias AshAi.Tool.Execution
+  alias AshAi.Tool.Schema
+  alias AshAi.ToolEndEvent
+  alias AshAi.ToolStartEvent
 
   @doc """
   Builds a ReqLLM.Tool struct and callback function from an AshAi.Tool definition.

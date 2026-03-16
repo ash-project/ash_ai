@@ -85,7 +85,7 @@ defmodule AshAi.LiveLLM.ToolCallingTest do
         )
 
       assert result.iterations >= 1
-      assert length(result.tool_calls_made) >= 1
+      assert result.tool_calls_made != []
 
       tool_names = Enum.map(result.tool_calls_made, & &1.name)
       assert "list_items" in tool_names
@@ -136,8 +136,7 @@ defmodule AshAi.LiveLLM.ToolCallingTest do
 
       assert result.iterations >= 1
 
-      assert result.final_text =~ ~r/no items|empty|nothing/i or
-               length(result.tool_calls_made) >= 1
+      assert result.final_text =~ ~r/no items|empty|nothing/i or result.tool_calls_made != []
     end
   end
 
@@ -166,7 +165,7 @@ defmodule AshAi.LiveLLM.ToolCallingTest do
         )
 
       assert result.iterations >= 1
-      assert length(result.tool_calls_made) >= 1
+      assert result.tool_calls_made != []
 
       tool_names = Enum.map(result.tool_calls_made, & &1.name)
       assert "list_items" in tool_names

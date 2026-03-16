@@ -20,7 +20,7 @@ defmodule AshAi.Tools do
   """
 
   alias AshAi.{Tool, ToolEndEvent, ToolStartEvent}
-  alias AshAi.Tool.{Builder, Schema, Execution}
+  alias AshAi.Tool.{Builder, Execution, Schema}
 
   @doc """
   Returns the JSON Schema parameter schema for a tool definition.

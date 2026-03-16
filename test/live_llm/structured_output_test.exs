@@ -180,7 +180,7 @@ defmodule AshAi.LiveLLM.StructuredOutputTest do
         |> Ash.run_action!(domain: TestDomain)
 
       assert is_list(result)
-      assert length(result) >= 1
+      assert result != []
 
       Enum.each(result, fn entity ->
         assert is_binary(entity.name)

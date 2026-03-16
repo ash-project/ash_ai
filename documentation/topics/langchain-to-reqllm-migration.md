@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # LangChain to ReqLLM Migration Guide
 
 This guide covers migrating an `ash_ai` app from the old LangChain-based runtime to the ReqLLM-based runtime.

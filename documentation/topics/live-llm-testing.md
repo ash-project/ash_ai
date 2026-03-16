@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
+
+SPDX-License-Identifier: MIT
+-->
+
 # Live LLM Testing
 
 AshAi includes a comprehensive suite of integration tests that make real API calls to LLM providers. These tests are excluded from the normal test run to avoid costs and API rate limits.

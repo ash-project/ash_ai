@@ -552,12 +552,11 @@ defmodule AshAi.ToolLoop do
 
   defp assistant_text(content_parts) when is_list(content_parts) do
     content_parts
-    |> Enum.map(fn
+    |> Enum.map_join(fn
       %ContentPart{type: :text, text: text} when is_binary(text) -> text
       %{type: :text, text: text} when is_binary(text) -> text
       _ -> ""
     end)
-    |> Enum.join("")
     |> String.trim()
   end
 
