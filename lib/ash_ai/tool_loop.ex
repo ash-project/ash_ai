@@ -144,7 +144,7 @@ defmodule AshAi.ToolLoop do
               |> normalize_tool_calls(chunk_tool_call_ids)
               |> unprocessed_tool_calls(messages)
 
-            messages = append_tool_call_turn(messages, classification.text || "", tool_calls)
+            messages = append_tool_call_turn(messages, classification.text, tool_calls)
 
             {messages, tool_events} = run_tools_streaming(tool_calls, messages, registry, context)
 
@@ -162,7 +162,7 @@ defmodule AshAi.ToolLoop do
                [{:iteration, %IterationEvent{iteration: iteration + 1}}], new_state}
           else
             messages =
-              if classification.text in [nil, ""] do
+              if classification.text == "" do
                 messages
               else
                 messages ++ [Context.assistant(classification.text)]
@@ -170,7 +170,7 @@ defmodule AshAi.ToolLoop do
 
             result = %Result{
               messages: messages,
-              final_text: classification.text || "",
+              final_text: classification.text,
               iterations: iteration,
               tool_calls_made: tool_calls_made
             }
@@ -213,7 +213,7 @@ defmodule AshAi.ToolLoop do
     %{
       actor: opts.actor,
       tenant: opts.tenant,
-      context: opts.context || %{},
+      context: opts.context,
       tool_callbacks: %{
         on_tool_start: opts.on_tool_start,
         on_tool_end: opts.on_tool_end
@@ -264,7 +264,7 @@ defmodule AshAi.ToolLoop do
               |> normalize_tool_calls(chunk_tool_call_ids)
               |> unprocessed_tool_calls(messages)
 
-            messages = append_tool_call_turn(messages, classification.text || "", tool_calls)
+            messages = append_tool_call_turn(messages, classification.text, tool_calls)
             messages = run_tools(tool_calls, messages, registry, context)
 
             run_loop(
@@ -281,7 +281,7 @@ defmodule AshAi.ToolLoop do
             )
           else
             messages =
-              if classification.text in [nil, ""] do
+              if classification.text == "" do
                 messages
               else
                 messages ++ [Context.assistant(classification.text)]
@@ -290,7 +290,7 @@ defmodule AshAi.ToolLoop do
             {:ok,
              %Result{
                messages: messages,
-               final_text: classification.text || "",
+               final_text: classification.text,
                iterations: iteration,
                tool_calls_made: tool_calls_made
              }}
@@ -436,12 +436,12 @@ defmodule AshAi.ToolLoop do
   defp append_tool_call_turn(messages, _text, []), do: messages
 
   defp append_tool_call_turn(messages, text, tool_calls) do
-    case merge_into_previous_tool_turn(messages, text || "", tool_calls) do
+    case merge_into_previous_tool_turn(messages, text, tool_calls) do
       {:ok, merged_messages} ->
         merged_messages
 
       :no_merge ->
-        messages ++ [Context.assistant(text || "", tool_calls: tool_calls)]
+        messages ++ [Context.assistant(text, tool_calls: tool_calls)]
     end
   end
 
@@ -468,7 +468,7 @@ defmodule AshAi.ToolLoop do
           merged_assistant = %{
             assistant
             | tool_calls: merged_tool_calls,
-              content: merge_assistant_content(assistant.content || [], text || "")
+              content: merge_assistant_content(assistant.content, text)
           }
 
           {:ok, prefix ++ [merged_assistant] ++ trailing_tools}

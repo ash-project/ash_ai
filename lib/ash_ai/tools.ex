@@ -157,19 +157,10 @@ defmodule AshAi.Tools do
     %{tool | callback: fn arguments -> callback.(arguments, context) end}
   end
 
-  defp normalize_extra_tool_result({:ok, content, raw}), do: {:ok, content, raw}
   defp normalize_extra_tool_result({:ok, content}), do: {:ok, content, content}
 
   defp normalize_extra_tool_result({:error, content}) do
     {:error, normalize_extra_tool_error(content)}
-  end
-
-  defp normalize_extra_tool_result(other) do
-    {:error,
-     Jason.encode!(%{
-       error:
-         "Extra tool callback must return {:ok, result}, {:ok, content, raw}, or {:error, reason}. Got: #{inspect(other)}"
-     })}
   end
 
   defp ensure_unique_tool_names!(tool_tuples) do

@@ -383,10 +383,10 @@ defmodule AshAi do
   Interactive IEx chat loop powered by ReqLLM.
   """
   def iex_chat(opts \\ []) do
-    opts = Options.validate!(opts)
+    validated_opts = Options.validate!(opts)
 
     base_messages =
-      case opts.system_prompt do
+      case validated_opts.system_prompt do
         :none ->
           []
 
@@ -399,7 +399,7 @@ defmodule AshAi do
           ]
 
         system_prompt ->
-          [Context.system(system_prompt.(opts))]
+          [Context.system(system_prompt.(validated_opts))]
       end
 
     run_iex_loop(base_messages, opts)
@@ -408,12 +408,17 @@ defmodule AshAi do
   defp run_iex_loop(messages, opts) do
     case AshAi.ToolLoop.run(messages, opts) do
       {:ok, %AshAi.ToolLoop.Result{messages: updated_messages, final_text: final_text}} ->
-        if final_text not in [nil, ""] do
+        if final_text != "" do
           IO.puts(final_text)
         end
 
-        user_message = get_user_message()
-        run_iex_loop(updated_messages ++ [Context.user(user_message)], opts)
+        case get_user_message() do
+          :eof ->
+            :ok
+
+          user_message ->
+            run_iex_loop(updated_messages ++ [Context.user(user_message)], opts)
+        end
 
       {:error, error} ->
         raise "Something went wrong:\n #{inspect(error)}"
@@ -422,7 +427,7 @@ defmodule AshAi do
 
   defp get_user_message do
     case Mix.shell().prompt("> ") do
-      nil -> get_user_message()
+      nil -> :eof
       "" -> get_user_message()
       "\n" -> get_user_message()
       message -> message
