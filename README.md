@@ -199,6 +199,25 @@ end
 Expose these actions as tools. Use `AshAi.build_tools_and_registry/1` to get ReqLLM tools and callbacks,
 or use `AshAi.ToolLoop.run/2` / `AshAi.ToolLoop.stream/2` to execute the full model + tool loop.
 
+You can also define tools directly on a resource using the 2-argument shorthand:
+
+```elixir
+defmodule MyApp.Blog.Post do
+  use Ash.Resource, extensions: [AshAi]
+
+  tools do
+    tool :read_posts, :read
+    tool :create_post, :create
+  end
+end
+```
+
+This shorthand expands to the same tool definition as `tool :name, MyApp.Blog.Post, :action`.
+
+When discovering tools with `AshAi.exposed_tools/1` and `actions: [{Resource, ...}]`, AshAi includes:
+- tools defined on the domain for that resource
+- tools defined directly on the resource
+
 For migration guidance around `extra_tools`, `req_llm_opts`, and legacy adapter mapping, see [LangChain to ReqLLM Migration Guide](/documentation/topics/langchain-to-reqllm-migration.md).
 
 ## Expose content as MCP resources
