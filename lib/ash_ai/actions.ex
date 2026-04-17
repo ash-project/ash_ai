@@ -61,4 +61,25 @@ defmodule AshAi.Actions do
       {AshAi.Actions.Prompt, Keyword.merge(unquote(opts), model: unquote(model))}
     end
   end
+
+  @doc """
+  Resource-level shorthand for AshAi tools.
+
+  Allows defining tools inside an `Ash.Resource` as:
+
+      tools do
+        tool :list_posts, :read
+      end
+
+  This expands to the standard 3-argument tool form using the current module
+  as the tool resource.
+  """
+  defmacro tool(name, action) do
+    caller_module = __CALLER__.module
+
+    quote do
+      require AshAi.Tools.Tool
+      AshAi.Tools.Tool.tool(unquote(name), unquote(caller_module), unquote(action))
+    end
+  end
 end
