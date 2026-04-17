@@ -15,7 +15,7 @@ defmodule AshAi do
 
   use Spark.Dsl.Extension,
     sections: AshAi.Dsl.sections(),
-    imports: [AshAi.Actions],
+    imports: [AshAi.Actions, AshAi.Macros],
     transformers: [AshAi.Transformers.Vectorize, AshAi.Transformers.McpApps],
     verifiers: [AshAi.Verifiers.McpResourceActionsReturnString]
 
