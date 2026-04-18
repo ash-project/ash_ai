@@ -45,7 +45,7 @@ defmodule AshAi.Dsl do
 
   @tool_schema [
     name: [type: :atom, required: true],
-    resource: [type: {:spark, Ash.Resource}, required: true],
+    resource: [type: {:spark, Ash.Resource}, required: false],
     action: [type: :atom, required: true],
     action_parameters: [
       type: {:list, :atom},
@@ -208,7 +208,7 @@ defmodule AshAi.Dsl do
     ],
     target: AshAi.Tool,
     schema: @tool_schema,
-    args: [:name, :resource, :action],
+    args: [:name, {:optional, :resource}, :action],
     entities: [
       arguments: [@tool_argument]
     ]

@@ -52,6 +52,58 @@ defmodule AshAi.ResourceToolsTest do
       assert tool.resource == ResourceToolResource
       assert tool.action == :read
     end
+
+    test "resource-level tools reject explicit resource argument" do
+      module =
+        Module.concat(__MODULE__, :"InvalidResourceTool#{System.unique_integer([:positive])}")
+
+      assert_raise Spark.Error.DslError, ~r/Resource-level tools cannot set `resource`/, fn ->
+        Module.create(
+          module,
+          quote do
+            use Ash.Resource,
+              domain: ResourceToolDomain,
+              extensions: [AshAi],
+              data_layer: Ash.DataLayer.Ets,
+              validate_domain_inclusion?: false
+
+            attributes do
+              uuid_v7_primary_key(:id, writable?: true)
+            end
+
+            actions do
+              defaults([:read])
+            end
+
+            tools do
+              tool :resource_read, ResourceToolResource, :read
+            end
+          end,
+          Macro.Env.location(__ENV__)
+        )
+      end
+    end
+  end
+
+  describe "domain-level tools requirements" do
+    test "domain-level tools require resource argument" do
+      module =
+        Module.concat(__MODULE__, :"InvalidDomainTool#{System.unique_integer([:positive])}")
+
+      assert_raise Spark.Error.DslError, ~r/is missing a resource/, fn ->
+        Module.create(
+          module,
+          quote do
+            use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+            tools do
+              tool(:missing_resource, :read)
+            end
+          end,
+          Macro.Env.location(__ENV__)
+        )
+      end
+    end
   end
 
   describe "AshAi.exposed_tools/1 discovery" do
