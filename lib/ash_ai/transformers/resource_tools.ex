@@ -8,9 +8,11 @@ defmodule AshAi.Transformers.ResourceTools do
 
   alias Spark.Dsl.Transformer
 
+  def after?(_), do: true
+
   def transform(dsl_state) do
     module = Transformer.get_persisted(dsl_state, :module)
-    resource_dsl? = not is_nil(Ash.Resource.Info.data_layer(dsl_state))
+    resource_dsl? = resource_dsl?(module)
 
     dsl_state
     |> Transformer.get_entities([:tools])
@@ -49,5 +51,9 @@ defmodule AshAi.Transformers.ResourceTools do
       end
     end)
     |> then(&{:ok, &1})
+  end
+
+  defp resource_dsl?(module) do
+    Module.get_attribute(module, :spark_is) == Ash.Resource
   end
 end

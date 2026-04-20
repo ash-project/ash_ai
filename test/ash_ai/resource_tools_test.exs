@@ -5,7 +5,12 @@
 defmodule AshAi.ResourceToolsTest do
   use ExUnit.Case, async: true
 
-  alias __MODULE__.{ResourceToolDomain, ResourceToolResource}
+  alias __MODULE__.{
+    DuplicateNameDomain,
+    DuplicateNameResource,
+    ResourceToolDomain,
+    ResourceToolResource
+  }
 
   defmodule ResourceToolResource do
     use Ash.Resource,
@@ -39,6 +44,39 @@ defmodule AshAi.ResourceToolsTest do
 
     tools do
       tool :domain_create_alias, ResourceToolResource, :create
+    end
+  end
+
+  defmodule DuplicateNameResource do
+    use Ash.Resource,
+      domain: DuplicateNameDomain,
+      extensions: [AshAi],
+      data_layer: Ash.DataLayer.Ets,
+      validate_domain_inclusion?: false
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+    end
+
+    actions do
+      defaults([:read])
+    end
+
+    tools do
+      tool(:duplicate_name, :read)
+    end
+  end
+
+  defmodule DuplicateNameDomain do
+    use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+    resources do
+      resource DuplicateNameResource
+    end
+
+    tools do
+      tool :duplicate_name, DuplicateNameResource, :read,
+        description: "Domain-level tool description"
     end
   end
 
@@ -122,6 +160,12 @@ defmodule AshAi.ResourceToolsTest do
       assert tools
              |> Enum.map(& &1.name)
              |> MapSet.new() == MapSet.new([:resource_create, :domain_create_alias])
+    end
+
+    test "raises for duplicate tool names across domain and resource definitions" do
+      assert_raise ArgumentError, ~r/Duplicate tool names found/, fn ->
+        AshAi.exposed_tools(actions: [{DuplicateNameResource, :*}])
+      end
     end
   end
 end

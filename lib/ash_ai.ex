@@ -760,7 +760,7 @@ defmodule AshAi do
         |> attach_tool_runtime_details(domain)
       end)
 
-    Enum.uniq(domain_tools ++ resource_tools)
+    ensure_unique_tool_names!(domain_tools ++ resource_tools, domain)
   end
 
   defp tools_for_resource(resource) do
@@ -779,6 +779,30 @@ defmodule AshAi do
     Enum.map(tools, fn tool ->
       %{tool | domain: domain, action: Ash.Resource.Info.action(tool.resource, tool.action)}
     end)
+  end
+
+  defp ensure_unique_tool_names!(tools, domain) do
+    duplicates =
+      tools
+      |> Enum.map(& &1.name)
+      |> Enum.frequencies()
+      |> Enum.filter(fn {_name, count} -> count > 1 end)
+      |> Enum.map(fn {name, _count} -> name end)
+      |> Enum.sort()
+
+    case duplicates do
+      [] ->
+        tools
+
+      names ->
+        raise ArgumentError, """
+        Duplicate tool names found in #{inspect(domain)}: #{Enum.join(names, ", ")}.
+
+        Tool names must be unique per domain across both:
+        - domain-level `tools do ... end`
+        - resource-level `tools do ... end`
+        """
+    end
   end
 
   def has_vectorize_change?(%Ash.Changeset{} = changeset) do
