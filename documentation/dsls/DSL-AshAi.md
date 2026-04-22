@@ -19,7 +19,7 @@ Documentation for `AshAi`.
 
 ### tools.tool
 ```elixir
-tool name, resource, action
+tool name, resource \\ nil, action
 ```
 
 
@@ -62,7 +62,7 @@ tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 | Name | Type | Default | Docs |
 |------|------|---------|------|
 | [`name`](#tools-tool-name){: #tools-tool-name .spark-required} | `atom` |  |  |
-| [`resource`](#tools-tool-resource){: #tools-tool-resource .spark-required} | `module` |  |  |
+| [`resource`](#tools-tool-resource){: #tools-tool-resource } | `module` |  |  |
 | [`action`](#tools-tool-action){: #tools-tool-action .spark-required} | `atom` |  |  |
 ### Options
 
