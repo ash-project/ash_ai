@@ -282,11 +282,14 @@ defmodule AshAi.OpenApiTest do
 
       read_action = resource |> Ash.Resource.Info.action(:read)
 
-      assert get_action_specific_properties(
-               read_action,
-               resource,
-               AshAi.OpenApi
-             ) == %{
+      actual =
+        get_action_specific_properties(
+          read_action,
+          resource,
+          AshAi.OpenApi
+        )
+
+      assert actual == %{
                id: %{
                  type: :object,
                  properties: %{
@@ -298,8 +301,8 @@ defmodule AshAi.OpenApiTest do
                    not_eq: %{type: :string, format: :uuid},
                    less_than_or_equal: %{type: :string, format: :uuid},
                    greater_than_or_equal: %{type: :string, format: :uuid},
-                   is_distinct_from: %{type: :string},
-                   is_not_distinct_from: %{type: :string}
+                   is_distinct_from: %{type: :string, format: :uuid},
+                   is_not_distinct_from: %{type: :string, format: :uuid}
                  },
                  additionalProperties: false
                },
@@ -395,9 +398,7 @@ defmodule AshAi.OpenApiTest do
                        }
                      },
                      additionalProperties: false
-                   },
-                   is_distinct_from: %{type: :string},
-                   is_not_distinct_from: %{type: :string}
+                   }
                  },
                  additionalProperties: false
                },
@@ -410,8 +411,8 @@ defmodule AshAi.OpenApiTest do
                    less_than: %{type: :integer},
                    greater_than: %{type: :integer},
                    not_eq: %{type: :integer},
-                   is_distinct_from: %{type: :string},
-                   is_not_distinct_from: %{type: :string},
+                   is_distinct_from: %{type: :integer},
+                   is_not_distinct_from: %{type: :integer},
                    less_than_or_equal: %{type: :integer},
                    greater_than_or_equal: %{type: :integer}
                  },
@@ -441,8 +442,8 @@ defmodule AshAi.OpenApiTest do
                    not_eq: %{type: :string, format: :uuid},
                    less_than_or_equal: %{type: :string, format: :uuid},
                    greater_than_or_equal: %{type: :string, format: :uuid},
-                   is_distinct_from: %{type: :string},
-                   is_not_distinct_from: %{type: :string}
+                   is_distinct_from: %{type: :string, format: :uuid},
+                   is_not_distinct_from: %{type: :string, format: :uuid}
                  },
                  additionalProperties: false
                }
