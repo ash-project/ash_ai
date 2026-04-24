@@ -13,6 +13,7 @@ defmodule AshAi.Mcp.ToolsTest do
   alias AshAi.Test.Music
 
   @opts [tools: [:list_artists], otp_app: :ash_ai]
+  @opts_with_create [tools: [:list_artists, :create_artist_after], otp_app: :ash_ai]
   @opts_with_meta [tools: [:list_artists_with_meta], otp_app: :ash_ai]
   @opts_with_ui [tools: [:list_artists_with_ui], otp_app: :ash_ai]
 
@@ -124,6 +125,27 @@ defmodule AshAi.Mcp.ToolsTest do
 
       assert body["result"]["_meta"]["openai/toolInvocation/invoking"] == "Loading artists…"
       assert body["result"]["_meta"]["openai/toolInvocation/invoked"] == "Artists loaded."
+    end
+
+    test "returns isError true with human-readable text for tool execution errors" do
+      session_id = initialize_and_get_session_id(@opts_with_create)
+
+      response =
+        call_tool(
+          session_id,
+          "create_artist_after",
+          %{"arguments" => %{"input" => %{"name" => 123}}},
+          @opts_with_create
+        )
+
+      body = decode_response(response)
+
+      assert response.status == 200
+      assert body["jsonrpc"] == "2.0"
+      assert body["result"]["isError"] == true
+      assert [%{"type" => "text", "text" => error_text}] = body["result"]["content"]
+      assert is_binary(error_text)
+      refute body["error"]
     end
 
     test "returns error for non-existent tool" do
