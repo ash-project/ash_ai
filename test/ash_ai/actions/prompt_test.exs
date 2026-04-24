@@ -498,7 +498,7 @@ defmodule AshAi.Actions.PromptTest do
 
       assert result == "tool_loop_result"
 
-      assert_receive {:prompt_tool_loop_stream_called, "openai:gpt-4o", _messages, opts}
+      assert_receive {:prompt_tool_loop_stream_called, %{model: "gpt-4o"}, _messages, opts}
       assert Keyword.get(opts, :trace_id) == "from_transform_flow_tool_loop"
       assert Enum.map(Keyword.fetch!(opts, :tools), & &1.name) == ["prompt_extra_tool"]
       assert_receive {:prompt_extra_tool_called, "from extra tool"}

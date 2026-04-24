@@ -161,12 +161,7 @@ defmodule AshAi.ToolLoop do
                tool_events ++
                [{:iteration, %IterationEvent{iteration: iteration + 1}}], new_state}
           else
-            messages =
-              if classification.text == "" do
-                messages
-              else
-                messages ++ [Context.assistant(classification.text)]
-              end
+            messages = maybe_append_assistant_message(messages, classification.text, model)
 
             result = %Result{
               messages: messages,
@@ -231,7 +226,7 @@ defmodule AshAi.ToolLoop do
     do: resolve_model(model.(opts), opts)
 
   defp resolve_model(model, _opts) when is_function(model, 0), do: model.()
-  defp resolve_model(model, _opts), do: model
+  defp resolve_model(model, _opts), do: ReqLLM.model!(model)
 
   defp run_loop(
          req_llm,
@@ -280,12 +275,7 @@ defmodule AshAi.ToolLoop do
               tool_calls_made ++ tool_calls
             )
           else
-            messages =
-              if classification.text == "" do
-                messages
-              else
-                messages ++ [Context.assistant(classification.text)]
-              end
+            messages = maybe_append_assistant_message(messages, classification.text, model)
 
             {:ok,
              %Result{
@@ -355,6 +345,15 @@ defmodule AshAi.ToolLoop do
 
   defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
   defp decode_tool_call_arguments(_), do: {:ok, %{}}
+
+  defp maybe_append_assistant_message(messages, _text, %{provider: :anthropic}), do: messages
+
+  defp maybe_append_assistant_message(messages, text, _model)
+       when is_binary(text) and text != "" do
+    messages ++ [Context.assistant(text)]
+  end
+
+  defp maybe_append_assistant_message(messages, _, _), do: messages
 
   defp chunk_tool_call_ids(chunks) do
     chunks

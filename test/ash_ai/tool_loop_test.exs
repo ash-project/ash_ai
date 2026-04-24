@@ -359,6 +359,57 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMToolCallThenText do
+    def stream_text(_model, _messages, _opts \\ []) do
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      if count == 0 do
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.tool_call("echo_tool", %{"input" => %{"message" => "x"}}, %{
+               id: "call_1",
+               index: 0
+             }),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "anthropic:claude-opus-4-6",
+           context: ReqLLM.Context.new([])
+         }}
+      else
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.text("done"),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "anthropic:claude-opus-4-6",
+           context: ReqLLM.Context.new([])
+         }}
+      end
+    end
+  end
+
+  defmodule FakeReqLLMAnthropicEmptyText do
+    def stream_text(_model, _messages, _opts \\ []) do
+      {:ok,
+       %ReqLLM.StreamResponse{
+         stream: [
+           ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+         ],
+         metadata_handle: :ignored,
+         cancel: fn -> :ok end,
+         model: "anthropic:claude-opus-4-6",
+         context: ReqLLM.Context.new([])
+       }}
+    end
+  end
+
   test "run/2 returns {:error, reason} when req_llm.stream_text fails" do
     messages = [Context.user("hello")]
 
@@ -445,9 +496,7 @@ defmodule AshAi.ToolLoopTest do
              )
 
     assistant_tool_turns =
-      Enum.filter(final_messages, fn message ->
-        message.role == :assistant && List.wrap(message.tool_calls) != []
-      end)
+      Enum.filter(final_messages, &tool_call?/1)
 
     assert length(assistant_tool_turns) == 1
 
@@ -571,10 +620,7 @@ defmodule AshAi.ToolLoopTest do
                req_llm: FakeReqLLMToolCallsWithInterleavedText
              )
 
-    assistant_tool_turns =
-      Enum.filter(final_messages, fn message ->
-        message.role == :assistant && List.wrap(message.tool_calls) != []
-      end)
+    assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
     assert length(assistant_tool_turns) == 1
 
@@ -590,6 +636,175 @@ defmodule AshAi.ToolLoopTest do
     assert assistant_text =~ "First tool pass."
     assert assistant_text =~ "Second tool pass."
     assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+  end
+
+  describe "trailing assistant message handling" do
+    test "run/2 with Anthropic model does not append trailing assistant message when no tools are called" do
+      messages = [Context.user("hello")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages,
+                 tools: false,
+                 model: "anthropic:claude-opus-4-6",
+                 req_llm: FakeReqLLMStreamOptsCapture
+               )
+
+      assert final_messages == messages
+      refute List.last(final_messages).role == :assistant
+    end
+
+    test "run/2 with Anthropic model ends with tool result after tool call" do
+      Process.delete({FakeReqLLMToolCallThenText, :call_count})
+      messages = [Context.user("trigger tool")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages,
+                 actions: [{TestResource, :*}],
+                 model: "anthropic:claude-opus-4-6",
+                 req_llm: FakeReqLLMToolCallThenText
+               )
+
+      assert List.last(final_messages).role == :tool
+
+      assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
+
+      assert length(assistant_tool_turns) == 1
+    end
+
+    test "stream/2 with Anthropic model does not append trailing assistant message when no tools are called" do
+      messages = [Context.user("hello")]
+
+      events =
+        ToolLoop.stream(messages,
+          tools: false,
+          model: "anthropic:claude-opus-4-6",
+          req_llm: FakeReqLLMStreamOptsCapture
+        )
+        |> Enum.to_list()
+
+      assert {:done, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               List.last(events)
+
+      assert final_messages == messages
+      refute List.last(final_messages).role == :assistant
+    end
+
+    test "stream/2 with Anthropic model ends with tool result after tool call" do
+      Process.delete({FakeReqLLMToolCallThenText, :call_count})
+      messages = [Context.user("trigger tool")]
+
+      events =
+        ToolLoop.stream(messages,
+          actions: [{TestResource, :*}],
+          model: "anthropic:claude-opus-4-6",
+          req_llm: FakeReqLLMToolCallThenText
+        )
+        |> Enum.to_list()
+
+      assert Enum.any?(events, &match?({:tool_call, %{id: "call_1"}}, &1))
+      assert Enum.any?(events, &match?({:tool_result, %{id: "call_1"}}, &1))
+
+      assert {:done, %ToolLoop.Result{messages: final_messages}} = List.last(events)
+      assert List.last(final_messages).role == :tool
+    end
+
+    test "run/2 with OpenAI model still appends trailing assistant message" do
+      messages = [Context.user("hello")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages,
+                 tools: false,
+                 model: "openai:gpt-4o",
+                 req_llm: FakeReqLLMStreamOptsCapture
+               )
+
+      last = List.last(final_messages)
+      assert last.role == :assistant
+
+      assistant_text =
+        last
+        |> Map.get(:content, [])
+        |> Enum.map_join(fn
+          %{type: :text, text: text} when is_binary(text) -> text
+          _ -> ""
+        end)
+
+      assert assistant_text =~ "done"
+    end
+
+    test "run/2 with Anthropic model and empty final text returns messages unchanged" do
+      messages = [Context.user("hello")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "", messages: ^messages}} =
+               ToolLoop.run(messages,
+                 tools: false,
+                 model: "anthropic:claude-opus-4-6",
+                 req_llm: FakeReqLLMAnthropicEmptyText
+               )
+    end
+
+    test "run/2 with Anthropic model across sequential tool-call rounds never ends on an assistant message" do
+      Process.delete({FakeReqLLMSequentialToolCalls, :call_count})
+      messages = [Context.user("trigger tools")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages,
+                 actions: [{TestResource, :*}],
+                 model: "anthropic:claude-opus-4-6",
+                 req_llm: FakeReqLLMSequentialToolCalls
+               )
+
+      refute List.last(final_messages).role == :assistant
+      assert List.last(final_messages).role == :tool
+
+      assert_tool_results_after_tool_calls(final_messages)
+    end
+
+    test "run/2 with Anthropic model and interleaved assistant text + tool_calls never ends on an assistant message" do
+      Process.delete({FakeReqLLMToolCallsWithInterleavedText, :call_count})
+      messages = [Context.user("trigger tools")]
+
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages,
+                 actions: [{TestResource, :*}],
+                 model: "anthropic:claude-opus-4-6",
+                 req_llm: FakeReqLLMToolCallsWithInterleavedText
+               )
+
+      refute List.last(final_messages).role == :assistant
+      assert List.last(final_messages).role == :tool
+
+      assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
+
+      assert length(assistant_tool_turns) == 1
+
+      assistant_text =
+        assistant_tool_turns
+        |> hd()
+        |> Map.get(:content, [])
+        |> Enum.map_join(fn
+          %{type: :text, text: text} when is_binary(text) -> text
+          _ -> ""
+        end)
+
+      assert assistant_text =~ "First tool pass."
+      assert assistant_text =~ "Second tool pass."
+
+      assert_tool_results_after_tool_calls(final_messages)
+    end
+  end
+
+  defp assert_tool_results_after_tool_calls(messages) do
+    messages
+    |> Enum.with_index()
+    |> Enum.each(fn {message, idx} ->
+      if tool_call?(message) do
+        next = Enum.at(messages, idx + 1)
+
+        assert next && next.role == :tool,
+               "assistant message with tool_calls at index #{idx} must be followed by a tool_result, got: #{inspect(next)}"
+      end
+    end)
   end
 
   defp plain_extra_tool do
@@ -613,4 +828,10 @@ defmodule AshAi.ToolLoopTest do
       callback: fn _args -> {:ok, "duplicate"} end
     )
   end
+
+  defp tool_call?(%{role: :assistant, tool_calls: tool_calls}) do
+    List.wrap(tool_calls) != []
+  end
+
+  defp tool_call?(_message), do: false
 end
