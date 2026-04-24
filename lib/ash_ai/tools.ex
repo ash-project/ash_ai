@@ -8,14 +8,14 @@ defmodule AshAi.Tools do
 
   This module provides the main interface for working with AshAi tools.
   It builds ReqLLM tools/registries and executes tool calls with consistent
-  JSON:API error formatting.
+  error formatting.
 
   ## Architecture
 
   The tool functionality is organized into several specialized modules:
   - `AshAi.Tool.Schema` - Generates JSON schemas for tool parameters
   - `AshAi.Tool.Execution` - Executes Ash actions from tool calls
-  - `AshAi.Tool.Errors` - Formats errors as JSON:API responses
+  - `AshAi.Tool.Errors` - Formats errors as human-readable text
   - `AshAi.Tool.Builder` - Creates ReqLLM.Tool structs and callbacks
   """
 

@@ -152,15 +152,15 @@ defmodule AshAi.ReqLLMToolTest do
       assert is_binary(result)
     end
 
-    test "returns JSON:API-style errors for invalid tool input" do
+    test "returns human-readable errors for invalid tool input" do
       {_tools, registry} = AshAi.build_tools_and_registry(actions: [{TestResource, :*}])
 
-      assert {:error, json_error} =
+      assert {:error, error_text} =
                registry["create_test_resource"].(%{"input" => %{}}, context())
 
-      assert {:ok, [first_error | _]} = Jason.decode(json_error)
-      assert first_error["status"] == "400"
-      assert is_binary(first_error["detail"])
+      assert is_binary(error_text)
+      assert error_text =~ "name"
+      assert error_text =~ "required"
     end
 
     test "executes a plain extra ReqLLM tool through the registry" do

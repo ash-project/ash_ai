@@ -23,7 +23,7 @@ defmodule AshAi.Tool.Execution do
 
   Returns:
   - `{:ok, json_result, raw_result}` for successful tool calls
-  - `{:error, json_error}` for execution failures
+  - `{:error, error_text}` for execution failures
   """
   def run(
         %AshAi.Tool{
@@ -70,11 +70,10 @@ defmodule AshAi.Tool.Execution do
       end
     rescue
       error ->
-        error = Ash.Error.to_error_class(error)
-        {:error, Errors.format(domain, resource, error, action.type)}
+        {:error, Errors.format(error)}
     catch
-      {:tool_error, json_error, result_context} ->
-        {:ok, json_error, result_context}
+      {:tool_error, error_msg} ->
+        {:error, error_msg}
     end
   end
 
@@ -379,19 +378,7 @@ defmodule AshAi.Tool.Execution do
       error_msg =
         "Unknown arguments provided: #{Enum.join(unknown_keys, ", ")}. Valid arguments are: #{Enum.join(allowed_keys, ", ")}"
 
-      json_error =
-        %{
-          errors: [
-            %{
-              code: "invalid_argument",
-              detail: error_msg,
-              source: %{pointer: "/input"}
-            }
-          ]
-        }
-        |> Jason.encode!()
-
-      throw({:tool_error, json_error, %{error: error_msg}})
+      throw({:tool_error, error_msg})
     else
       :ok
     end

@@ -399,15 +399,16 @@ defmodule AshAi.Mcp.Server do
 
             {:json_response, Jason.encode!(response), session_id}
 
-          {:error, error} ->
+          {:error, error_text} ->
+            result = %{
+              "isError" => true,
+              "content" => [%{"type" => "text", "text" => error_text}]
+            }
+
             response = %{
               "jsonrpc" => "2.0",
               "id" => id,
-              "error" => %{
-                "code" => -32_000,
-                "message" => "Tool execution failed",
-                "data" => %{"error" => error}
-              }
+              "result" => result
             }
 
             {:json_response, Jason.encode!(response), session_id}
@@ -505,7 +506,7 @@ defmodule AshAi.Mcp.Server do
 
   defp read_mcp_resource(
          %AshAi.McpResource{
-           domain: domain,
+           domain: _domain,
            resource: resource,
            action: action
          },
@@ -532,13 +533,7 @@ defmodule AshAi.Mcp.Server do
     |> Ash.run_action()
     |> case do
       {:error, error} ->
-        error = Ash.Error.to_error_class(error)
-
-        {:error,
-         domain
-         |> AshJsonApi.Error.to_json_api_errors(resource, error, action.type)
-         |> AshAi.Serializer.serialize_errors()
-         |> Jason.encode!()}
+        {:error, AshAi.Tool.Errors.format(error)}
 
       result ->
         result
