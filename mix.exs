@@ -160,6 +160,7 @@ defmodule AshAi.MixProject do
       {:ash_phoenix, "~> 2.0", optional: true},
       {:igniter, "~> 0.5", optional: true},
       {:plug, "~> 1.17", optional: true},
+      {:phoenix_html, "~> 4.0", optional: true},
       {:ash_authentication, "~> 4.8", optional: true},
       # dev/test deps
       {:phx_new, "~> 1.7", optional: true},
