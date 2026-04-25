@@ -25,5 +25,9 @@ defmodule AshAi.Test.OauthDomain do
 
   resources do
     resource AshAi.Test.OauthUser
+    resource AshAi.Test.OAuthClient
+    resource AshAi.Test.OAuthAuthorizationCode
+    resource AshAi.Test.OAuthRefreshToken
+    resource AshAi.Test.OAuthConsent
   end
 end
