@@ -65,6 +65,7 @@ config :my_app, AshAi.Oauth,
   issuer_url: System.fetch_env!("ISSUER_URL"),                   # e.g. "https://app.example.com"
   canonical_mcp_url: System.fetch_env!("MCP_CANONICAL_URL"),     # e.g. "https://app.example.com/mcp"
   signing_secret: System.fetch_env!("MCP_SIGNING_SECRET"),       # 32+ random bytes, base64 or hex
+  # ...or pass a {Module, opts} tuple where Module implements AshAuthentication.Secret
   client_resource: MyApp.Accounts.OAuthClient,
   authorization_code_resource: MyApp.Accounts.OAuthAuthorizationCode,
   refresh_token_resource: MyApp.Accounts.OAuthRefreshToken,

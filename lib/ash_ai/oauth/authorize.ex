@@ -41,7 +41,7 @@ if Code.ensure_loaded?(Plug) do
 
       with {:ok, validated} <- validate_params(otp_app, params),
            {:ok, user} <- require_user(conn) do
-        case existing_consent(otp_app, user, validated.client) do
+        case existing_consent(otp_app, user, validated.client, validated.scope) do
           true -> issue_code_and_redirect(conn, otp_app, user, validated)
           false -> render_consent(conn, otp_app, validated)
         end
@@ -132,8 +132,8 @@ if Code.ensure_loaded?(Plug) do
 
     defp check_redirect_uri(_, _), do: {:error, :bad_redirect}
 
-    defp check_resource(otp_app, %{"resource" => res}) do
-      if res == Config.canonical_mcp_url(otp_app),
+    defp check_resource(otp_app, %{"resource" => res}) when is_binary(res) do
+      if Config.normalize_url(res) == Config.canonical_mcp_url(otp_app),
         do: :ok,
         else: {:error, "invalid_target", "resource does not match this MCP server"}
     end
@@ -149,17 +149,28 @@ if Code.ensure_loaded?(Plug) do
       end
     end
 
-    defp existing_consent(otp_app, user, client) do
+    # Returns `true` only when prior consent exists AND the consented scope
+    # is a superset of the currently-requested scope. Prevents silent
+    # privilege expansion when scopes grow over time.
+    defp existing_consent(otp_app, user, client, requested_scope) do
       consent_resource = Config.consent_resource(otp_app)
 
       consent_resource
       |> Ash.Query.filter(user_id == ^user.id and client_id == ^client.id)
       |> Ash.read_one(authorize?: false)
       |> case do
-        {:ok, %{}} -> true
+        {:ok, %{scope: stored}} -> scope_covers?(stored, requested_scope)
         _ -> false
       end
     end
+
+    defp scope_covers?(stored, requested) when is_binary(stored) and is_binary(requested) do
+      stored_set = stored |> String.split(" ", trim: true) |> MapSet.new()
+      requested_set = requested |> String.split(" ", trim: true) |> MapSet.new()
+      MapSet.subset?(requested_set, stored_set)
+    end
+
+    defp scope_covers?(_, _), do: false
 
     defp grant_consent(otp_app, user, %{client: client, scope: scope}) do
       Config.consent_resource(otp_app)

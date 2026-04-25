@@ -84,9 +84,12 @@ if Code.ensure_loaded?(Plug) do
 
     defp check_pkce(_, _), do: {:error, :pkce}
 
-    defp check_resource_match(otp_app, %{"resource" => res}, code) do
+    defp check_resource_match(otp_app, %{"resource" => res}, code) when is_binary(res) do
       expected = Config.canonical_mcp_url(otp_app)
-      if res == expected and code.resource_uri == expected, do: :ok, else: {:error, :resource}
+
+      if Config.normalize_url(res) == expected and code.resource_uri == expected,
+        do: :ok,
+        else: {:error, :resource}
     end
 
     defp check_resource_match(_, _, _), do: {:error, :resource}
@@ -206,9 +209,25 @@ if Code.ensure_loaded?(Plug) do
       end
     end
 
+    # On reuse-detection, walk forward through `rotated_to_id` and revoke every
+    # descendant of the offending refresh token. Per OAuth 2.1 §4.3.1.
     defp revoke_chain(otp_app, hash) do
-      with {:ok, row} <- find_refresh(otp_app, hash) do
-        row |> Ash.Changeset.for_update(:revoke, %{}) |> Ash.update(authorize?: false)
+      case find_refresh(otp_app, hash) do
+        {:ok, row} -> revoke_descendants(otp_app, row)
+        _ -> :noop
+      end
+    end
+
+    defp revoke_descendants(otp_app, row) do
+      row |> Ash.Changeset.for_update(:revoke, %{}) |> Ash.update(authorize?: false)
+
+      if row.rotated_to_id do
+        case Ash.get(Config.refresh_token_resource(otp_app), row.rotated_to_id, authorize?: false) do
+          {:ok, next} -> revoke_descendants(otp_app, next)
+          _ -> :ok
+        end
+      else
+        :ok
       end
     end
   end

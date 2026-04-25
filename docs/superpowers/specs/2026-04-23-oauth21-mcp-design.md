@@ -393,7 +393,7 @@ Each item is a test case in §10.
 - ✅ **Refresh token rotation + reuse detection** — §6.7.
 - ✅ **Short access token TTL** — default 1h.
 - ✅ **Authorization codes one-shot, ≤10 min** — §6.7 step 3.
-- ✅ **jti revocation** — via `TokenResource`.
+- ⏳ **jti revocation** — deferred to v2. v1 ships with short access-token TTL (1h default) and revokable refresh tokens; minted access tokens themselves cannot be revoked early.
 
 ## 10. Testing strategy
 

@@ -88,7 +88,14 @@ defmodule AshAi.Oauth.Config do
     end
   end
 
-  defp normalize_url(url) when is_binary(url) do
+  @doc """
+  Normalize a URL: lowercase scheme + host, strip trailing slash, no fragment.
+
+  Used internally on configured URLs and exposed for normalizing inbound
+  `resource` parameters before equality comparison (RFC 8707 §2).
+  """
+  @spec normalize_url(String.t()) :: String.t()
+  def normalize_url(url) when is_binary(url) do
     uri = URI.parse(url)
 
     %URI{
@@ -100,4 +107,6 @@ defmodule AshAi.Oauth.Config do
     |> URI.to_string()
     |> String.trim_trailing("/")
   end
+
+  def normalize_url(_), do: ""
 end

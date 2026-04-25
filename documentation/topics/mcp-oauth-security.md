@@ -97,6 +97,8 @@ Documented for transparency. Patches welcome.
 - **DPoP** sender-constrained tokens
 - **mTLS** client authentication
 - **Token introspection endpoint** (RFC 7662)
+- **Access-token early revocation by `jti`** — refresh tokens are revokable immediately; access tokens have a short TTL (1h default) and cannot be revoked early in v1
+- **`client_secret_basic` confidential clients** — public clients with PKCE only in v1
 - **Fine-grained per-tool scopes** — currently a single `mcp` scope covers everything
 - **Asymmetric (RS256/EdDSA) signing + JWKS endpoint** — HS256 only, since AS and RS are
   co-hosted and share the secret. The architecture supports swapping in RS256 with

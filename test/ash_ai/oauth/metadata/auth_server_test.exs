@@ -41,8 +41,7 @@ defmodule AshAi.Oauth.Metadata.AuthServerTest do
     assert body["response_types_supported"] == ["code"]
     assert body["grant_types_supported"] == ["authorization_code", "refresh_token"]
     assert body["code_challenge_methods_supported"] == ["S256"]
-    assert "none" in body["token_endpoint_auth_methods_supported"]
-    assert "client_secret_basic" in body["token_endpoint_auth_methods_supported"]
+    assert body["token_endpoint_auth_methods_supported"] == ["none"]
     assert body["scopes_supported"] == ["mcp"]
   end
 end

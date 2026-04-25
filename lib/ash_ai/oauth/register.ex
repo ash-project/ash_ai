@@ -17,7 +17,8 @@ if Code.ensure_loaded?(Plug) do
 
     @valid_grant_types ~w(authorization_code refresh_token)
     @valid_response_types ~w(code)
-    @valid_auth_methods ~w(none client_secret_basic)
+    # v1: public clients only (PKCE). client_secret_basic deferred to v2.
+    @valid_auth_methods ~w(none)
 
     @impl Plug
     def init(opts), do: Keyword.fetch!(opts, :otp_app)
