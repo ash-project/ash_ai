@@ -11,6 +11,24 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## Unreleased
+
+### Features:
+
+* OAuth 2.1 authorization for the MCP server, supporting ChatGPT Apps SDK and Claude.ai
+  custom connectors. The MCP server now plays both OAuth roles in a single process — bearer
+  token validation on `/mcp`, plus an authorization server with `/oauth/authorize`,
+  `/oauth/token`, `/oauth/register`, `/oauth/revoke`, and the corresponding well-known
+  metadata endpoints. See `documentation/topics/mcp-oauth.md`.
+* `AshAi.Mcp.BearerPlug` — bearer token validation with audience binding per RFC 8707, and
+  RFC 9728-conformant 401 challenges via `WWW-Authenticate`.
+* `AshAi.Oauth.Router` — single-mount router for the OAuth 2.1 endpoints + RFC 9728/8414
+  metadata.
+* `AshAi.Mcp.Metadata.ProtectedResource` — Protected Resource Metadata endpoint (RFC 9728).
+* PKCE S256 enforced; Dynamic Client Registration (RFC 7591) supported with a ChatGPT
+  compatibility toggle for the `client_secret` quirk; refresh token rotation with
+  reuse-detection per OAuth 2.1 §4.3.1.
+
 ## [v0.6.1](https://github.com/ash-project/ash_ai/compare/v0.6.0...v0.6.1) (2026-04-13)
 
 
