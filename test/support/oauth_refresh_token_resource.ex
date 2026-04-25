@@ -24,7 +24,7 @@ defmodule AshAi.Test.OAuthRefreshToken do
     defaults [:read, :destroy]
 
     create :issue do
-      accept [:id, :token_hash, :client_id, :user_id, :scope, :resource_uri, :expires_at]
+      accept [:token_hash, :client_id, :user_id, :scope, :resource_uri, :expires_at]
     end
 
     update :rotate do

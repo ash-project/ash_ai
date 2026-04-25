@@ -24,7 +24,7 @@ defmodule AshAi.Test.OAuthAuthorizationCode do
     defaults [:read, :destroy]
 
     create :create do
-      accept [:id, :client_id, :user_id, :redirect_uri, :code_challenge, :scope, :resource_uri, :expires_at]
+      accept [:client_id, :user_id, :redirect_uri, :code_challenge, :scope, :resource_uri, :expires_at]
     end
 
     update :consume do
