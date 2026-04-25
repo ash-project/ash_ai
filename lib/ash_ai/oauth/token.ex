@@ -67,6 +67,8 @@ if Code.ensure_loaded?(Plug) do
       end
     end
 
+    defp consume_code(_, _), do: {:error, :not_found}
+
     defp check_client_match(code, client_id) do
       if to_string(code.client_id) == to_string(client_id), do: :ok, else: {:error, :not_found}
     end
@@ -76,8 +78,6 @@ if Code.ensure_loaded?(Plug) do
         do: {:error, :expired},
         else: :ok
     end
-
-    defp consume_code(_, _), do: {:error, :not_found}
 
     defp check_pkce(code, %{"code_verifier" => verifier}),
       do: if(Pkce.verify(verifier, code.code_challenge) == :ok, do: :ok, else: {:error, :pkce})
