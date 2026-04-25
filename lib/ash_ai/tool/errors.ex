@@ -11,6 +11,8 @@ defmodule AshAi.Tool.Errors do
   the content array
   """
 
+  require Logger
+
   @doc """
   Formats an Ash error into a mcp protocol compatible structure for tool error responses.
   """
@@ -18,18 +20,27 @@ defmodule AshAi.Tool.Errors do
     error
     |> Ash.Error.to_error_class()
     |> Map.get(:errors, [])
-    |> Enum.map_join("\n", fn error ->
-      msg = Exception.message(%{error | bread_crumbs: []})
-
-      if Map.get(error, :field) do
-        "#{error.field}: #{msg}"
-      else
-        msg
-      end
-    end)
+    |> Enum.map_join("\n", &format_single_error/1)
     |> case do
       "" -> "Tool execution failed"
       text -> text
+    end
+  end
+
+  defp format_single_error(error) do
+    msg =
+      if AshAi.ToToolError.impl_for(error) do
+        AshAi.ToToolError.to_tool_error(error)
+      else
+        Logger.warning("AshAi.ToToolError not implemented for #{inspect(error.__struct__)}")
+
+        "unexpected error occurred"
+      end
+
+    if field = Map.get(error, :field) do
+      "#{field}: #{msg}"
+    else
+      msg
     end
   end
 end
