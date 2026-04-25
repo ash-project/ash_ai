@@ -144,7 +144,13 @@ defmodule AshAi.ToolLoop do
               |> normalize_tool_calls(chunk_tool_call_ids)
               |> unprocessed_tool_calls(messages)
 
-            messages = append_tool_call_turn(messages, classification.text, tool_calls)
+            messages =
+              append_tool_call_turn(
+                messages,
+                classification.text,
+                classification.thinking,
+                tool_calls
+              )
 
             {messages, tool_events} = run_tools_streaming(tool_calls, messages, registry, context)
 
@@ -161,7 +167,13 @@ defmodule AshAi.ToolLoop do
                tool_events ++
                [{:iteration, %IterationEvent{iteration: iteration + 1}}], new_state}
           else
-            messages = maybe_append_assistant_message(messages, classification.text, model)
+            messages =
+              maybe_append_assistant_message(
+                messages,
+                classification.text,
+                classification.thinking,
+                model
+              )
 
             result = %Result{
               messages: messages,
@@ -259,7 +271,14 @@ defmodule AshAi.ToolLoop do
               |> normalize_tool_calls(chunk_tool_call_ids)
               |> unprocessed_tool_calls(messages)
 
-            messages = append_tool_call_turn(messages, classification.text, tool_calls)
+            messages =
+              append_tool_call_turn(
+                messages,
+                classification.text,
+                classification.thinking,
+                tool_calls
+              )
+
             messages = run_tools(tool_calls, messages, registry, context)
 
             run_loop(
@@ -275,7 +294,13 @@ defmodule AshAi.ToolLoop do
               tool_calls_made ++ tool_calls
             )
           else
-            messages = maybe_append_assistant_message(messages, classification.text, model)
+            messages =
+              maybe_append_assistant_message(
+                messages,
+                classification.text,
+                classification.thinking,
+                model
+              )
 
             {:ok,
              %Result{
@@ -346,14 +371,26 @@ defmodule AshAi.ToolLoop do
   defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
   defp decode_tool_call_arguments(_), do: {:ok, %{}}
 
-  defp maybe_append_assistant_message(messages, _text, %{provider: :anthropic}), do: messages
+  defp maybe_append_assistant_message(messages, _text, _thinking, %{provider: :anthropic}),
+    do: messages
 
-  defp maybe_append_assistant_message(messages, text, _model)
+  defp maybe_append_assistant_message(messages, text, thinking, _model)
        when is_binary(text) and text != "" do
-    messages ++ [Context.assistant(text)]
+    content = build_assistant_content(text, thinking)
+    messages ++ [Context.assistant(content)]
   end
 
-  defp maybe_append_assistant_message(messages, _, _), do: messages
+  defp maybe_append_assistant_message(messages, _, _, _), do: messages
+
+  defp build_assistant_content(text, thinking) do
+    parts = []
+    parts = if text && text != "", do: parts ++ [ContentPart.text(text)], else: parts
+
+    parts =
+      if thinking && thinking != "", do: parts ++ [ContentPart.thinking(thinking)], else: parts
+
+    parts
+  end
 
   defp chunk_tool_call_ids(chunks) do
     chunks
@@ -432,19 +469,20 @@ defmodule AshAi.ToolLoop do
 
   defp normalize_tool_call_arguments(_), do: %{}
 
-  defp append_tool_call_turn(messages, _text, []), do: messages
+  defp append_tool_call_turn(messages, _text, _thinking, []), do: messages
 
-  defp append_tool_call_turn(messages, text, tool_calls) do
-    case merge_into_previous_tool_turn(messages, text, tool_calls) do
+  defp append_tool_call_turn(messages, text, thinking, tool_calls) do
+    case merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
       {:ok, merged_messages} ->
         merged_messages
 
       :no_merge ->
-        messages ++ [Context.assistant(text, tool_calls: tool_calls)]
+        content = build_assistant_content(text, thinking)
+        messages ++ [Context.assistant(content, tool_calls: tool_calls)]
     end
   end
 
-  defp merge_into_previous_tool_turn(messages, text, tool_calls) do
+  defp merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
     {trailing_tools_rev, rest_rev} =
       messages
       |> Enum.reverse()
@@ -467,7 +505,7 @@ defmodule AshAi.ToolLoop do
           merged_assistant = %{
             assistant
             | tool_calls: merged_tool_calls,
-              content: merge_assistant_content(assistant.content, text)
+              content: merge_assistant_content(assistant.content, text, thinking)
           }
 
           {:ok, prefix ++ [merged_assistant] ++ trailing_tools}
@@ -534,9 +572,11 @@ defmodule AshAi.ToolLoop do
     Context.assistant("", tool_calls: tool_calls).tool_calls || []
   end
 
-  defp merge_assistant_content(content, text) when text in [nil, ""], do: content
+  defp merge_assistant_content(content, _text, _thinking) when content == [], do: content
 
-  defp merge_assistant_content(content, text) do
+  defp merge_assistant_content(content, text, _thinking) when text in [nil, ""], do: content
+
+  defp merge_assistant_content(content, text, thinking) do
     existing_text = assistant_text(content)
 
     combined_text =
@@ -546,7 +586,25 @@ defmodule AshAi.ToolLoop do
         existing_text <> "\n" <> text
       end
 
-    [ContentPart.text(combined_text)]
+    # Preserve non-text content parts (e.g. thinking, images) unless
+    # new thinking is provided, in which case we replace old thinking.
+    other_parts =
+      Enum.reject(content, fn
+        %ContentPart{type: :text} -> true
+        %{type: :text} -> true
+        _ -> false
+      end)
+
+    parts = [ContentPart.text(combined_text)]
+
+    parts =
+      if thinking && thinking != "" do
+        parts ++ [ContentPart.thinking(thinking)]
+      else
+        parts ++ other_parts
+      end
+
+    parts
   end
 
   defp assistant_text(content_parts) when is_list(content_parts) do
