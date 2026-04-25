@@ -63,6 +63,48 @@ defmodule AshAi.Tool.ErrorsTest do
       assert result =~ "name"
     end
 
+    test "expands fields into multiple lines" do
+      error =
+        Ash.Error.Changes.InvalidChanges.exception(
+          fields: [:start_date, :end_date],
+          message: "must not overlap"
+        )
+
+      result = Errors.format(error)
+
+      assert result =~ "start_date: must not overlap"
+      assert result =~ "end_date: must not overlap"
+      assert result =~ "\n"
+    end
+
+    test "joins path with field using dot notation" do
+      error =
+        Ash.Error.Changes.Required.exception(
+          field: :city,
+          type: :attribute,
+          resource: SomeResource
+        )
+
+      error = %{error | path: [:address]}
+      result = Errors.format(error)
+
+      assert result =~ "address.city:"
+    end
+
+    test "joins nested path with field using dot notation" do
+      error =
+        Ash.Error.Changes.Required.exception(
+          field: :zip,
+          type: :attribute,
+          resource: SomeResource
+        )
+
+      error = %{error | path: [:user, :address]}
+      result = Errors.format(error)
+
+      assert result =~ "user.address.zip:"
+    end
+
     test "handles errors without a field" do
       error =
         Ash.Error.Query.NotFound.exception(primary_key: %{id: "abc"}, resource: SomeResource)

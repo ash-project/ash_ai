@@ -27,6 +27,12 @@ defmodule AshAi.Tool.Errors do
     end
   end
 
+  defp format_single_error(%{fields: fields} = error) when is_list(fields) and fields != [] do
+    Enum.map_join(fields, "\n", fn field ->
+      error |> Map.put(:fields, nil) |> Map.put(:field, field) |> format_single_error()
+    end)
+  end
+
   defp format_single_error(error) do
     msg =
       if AshAi.ToToolError.impl_for(error) do
@@ -37,10 +43,10 @@ defmodule AshAi.Tool.Errors do
         "unexpected error occurred"
       end
 
-    if field = Map.get(error, :field) do
-      "#{field}: #{msg}"
-    else
-      msg
+    case {Map.get(error, :path, []), Map.get(error, :field)} do
+      {_, nil} -> msg
+      {[], field} -> "#{field}: #{msg}"
+      {path, field} -> "#{Enum.join(path ++ [field], ".")}: #{msg}"
     end
   end
 end
