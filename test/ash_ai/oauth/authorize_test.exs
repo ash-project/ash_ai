@@ -186,7 +186,13 @@ defmodule AshAi.Oauth.AuthorizeTest do
     assert location =~ "https://chatgpt.com/cb?code="
     assert location =~ "state=abc"
 
-    consents = AshAi.Test.OAuthConsent |> Ash.read!(authorize?: false)
+    require Ash.Query
+
+    consents =
+      AshAi.Test.OAuthConsent
+      |> Ash.Query.filter(user_id == ^user.id and client_id == ^client.id)
+      |> Ash.read!(authorize?: false)
+
     assert length(consents) == 1
   end
 
