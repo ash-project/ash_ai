@@ -90,6 +90,27 @@ keys are present, that issuer/canonical URLs are well-formed `http(s)` URIs with
 and that all referenced resource modules compile. Misconfigured deployments fail fast at
 boot rather than at first request.
 
+## Operator caveats
+
+A few things v1 leans on the deploying app to handle:
+
+- **Authorization-code consume is not strictly atomic.** The `:consume` action
+  pre-checks `consumed_at` then updates. ETS makes the gap immaterial; on
+  Postgres, two perfectly concurrent code-exchange requests for the same
+  code could in principle both succeed. Mitigation if you're paranoid:
+  override the `:consume` action to use an atomic update with a
+  `where consumed_at IS NULL` filter at the data-layer level.
+- **`BearerPlug` loads users with `authorize?: false`.** The bearer token is
+  the auth signal; we look up the subject without running the user
+  resource's policies. If your app supports soft-delete or user
+  suspension, ensure the user resource has a global filter or a default
+  read action that rejects deleted users — otherwise tokens issued to
+  since-deleted users would still authenticate until natural expiry.
+- **`OAuthClient.last_used_at` cleanup is your job.** Populated on every
+  token issuance, but the `destroy_expired` job that prunes dormant
+  clients is left to your supervision tree (Oban example in the install
+  guide).
+
 ## What is *not* in v1
 
 Documented for transparency. Patches welcome.
