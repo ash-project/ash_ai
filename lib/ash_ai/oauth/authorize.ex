@@ -255,13 +255,23 @@ if Code.ensure_loaded?(Plug) do
 
     defp check_csrf(conn, params, false) do
       token = Map.get(params, "_csrf_token")
+      session_token = fetch_session_csrf(conn)
 
-      with t when is_binary(t) <- token,
-           true <- Plug.CSRFProtection.valid_state_and_csrf_token?(get_session(conn, "_csrf_token"), t) do
+      with t when is_binary(t) and t != "" <- token,
+           s when is_binary(s) and s != "" <- session_token,
+           true <- Plug.CSRFProtection.valid_state_and_csrf_token?(s, t) do
         :ok
       else
         _ -> {:error, :csrf}
       end
+    end
+
+    # Returns nil — not raising — when the conn has no session, so missing
+    # session middleware presents as a CSRF failure rather than a 500.
+    defp fetch_session_csrf(conn) do
+      get_session(conn, "_csrf_token")
+    rescue
+      _ -> nil
     end
 
     # ── Misc ─────────────────────────────────────────────────────────────
