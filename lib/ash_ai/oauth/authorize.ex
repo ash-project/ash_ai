@@ -234,13 +234,25 @@ if Code.ensure_loaded?(Plug) do
         csrf_token: get_csrf_token(conn)
       }
 
-      body = template.render(:consent, assigns) |> to_string()
+      case safe_render(template, assigns) do
+        {:ok, body} ->
+          conn
+          |> put_resp_header("content-type", "text/html; charset=utf-8")
+          |> put_resp_header("x-frame-options", "DENY")
+          |> send_resp(200, body)
+          |> halt()
 
-      conn
-      |> put_resp_header("content-type", "text/html; charset=utf-8")
-      |> put_resp_header("x-frame-options", "DENY")
-      |> send_resp(200, body)
-      |> halt()
+        {:error, reason} ->
+          require Logger
+          Logger.error("AshAi.Oauth consent_template render failed: #{reason}")
+          send_resp(conn, 500, "consent screen unavailable") |> halt()
+      end
+    end
+
+    defp safe_render(template, assigns) do
+      {:ok, template.render(:consent, assigns) |> to_string()}
+    rescue
+      e -> {:error, Exception.message(e)}
     end
 
     defp get_csrf_token(_conn) do

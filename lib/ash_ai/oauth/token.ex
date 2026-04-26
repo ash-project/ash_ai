@@ -16,6 +16,7 @@ if Code.ensure_loaded?(Plug) do
     @behaviour Plug
     import Plug.Conn
     require Ash.Query
+    require Logger
 
     alias AshAi.Oauth.{Config, Error, Jwt, Pkce}
 
@@ -58,17 +59,23 @@ if Code.ensure_loaded?(Plug) do
     defp consume_code(otp_app, %{"code" => code_id, "client_id" => client_id}) do
       with {:ok, code} <- Ash.get(Config.authorization_code_resource(otp_app), code_id, authorize?: false),
            :ok <- check_client_match(code, client_id),
+           :ok <- check_not_already_consumed(code),
            :ok <- check_not_expired(code),
            {:ok, code} <- code |> Ash.Changeset.for_update(:consume, %{}) |> Ash.update(authorize?: false),
            {:ok, client} <- Ash.get(Config.client_resource(otp_app), code.client_id, authorize?: false) do
         {:ok, code, client}
       else
-        {:error, %Ash.Error.Invalid{}} -> {:error, :reuse}
         {:error, _} = err -> err
       end
     end
 
     defp consume_code(_, _), do: {:error, :not_found}
+
+    # Pre-check `consumed_at` so we can return :reuse cleanly without
+    # having to disambiguate Ash.Error.Invalid shapes from the consume
+    # action's own failures.
+    defp check_not_already_consumed(%{consumed_at: nil}), do: :ok
+    defp check_not_already_consumed(_), do: {:error, :reuse}
 
     # Both sides are binary UUID strings — direct equality is fine and
     # consistent with the other id checks in this module.
@@ -235,10 +242,21 @@ if Code.ensure_loaded?(Plug) do
 
     # On reuse-detection, walk forward through `rotated_to_id` and revoke every
     # descendant of the offending refresh token. Per OAuth 2.1 §4.3.1.
+    #
+    # If the lookup fails transiently (e.g. data layer hiccup), log a warning
+    # so operators can investigate — silently no-op'ing here would leave the
+    # chain alive after a confirmed reuse signal.
     defp revoke_chain(otp_app, hash) do
       case find_refresh(otp_app, hash) do
-        {:ok, row} -> revoke_descendants(otp_app, row)
-        _ -> :noop
+        {:ok, row} ->
+          revoke_descendants(otp_app, row)
+
+        _ ->
+          Logger.warning(
+            "AshAi.Oauth: refresh-token reuse detected but could not load row for chain revocation"
+          )
+
+          :noop
       end
     end
 
