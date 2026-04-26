@@ -164,6 +164,7 @@ defmodule AshAi.MixProject do
       {:ash_authentication, "~> 4.8", optional: true},
       # dev/test deps
       {:phx_new, "~> 1.7", optional: true},
+      {:bandit, "~> 1.5", only: [:dev, :test]},
       {:ex_doc, "~> 0.37-rc", only: [:dev, :test], runtime: false},
       {:ex_check, "~> 0.12", only: [:dev, :test]},
       {:credo, ">= 0.0.0", only: [:dev, :test], runtime: false},
