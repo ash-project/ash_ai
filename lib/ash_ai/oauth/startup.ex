@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: MIT
 
-defmodule AshAi.Oauth.Application do
+defmodule AshAi.Oauth.Startup do
   @moduledoc """
   Optional supervisor child that validates `AshAi.Oauth` config at boot.
 
@@ -10,10 +10,11 @@ defmodule AshAi.Oauth.Application do
 
       children = [
         ...,
-        {AshAi.Oauth.Application, otp_app: :my_app}
+        {AshAi.Oauth.Startup, otp_app: :my_app}
       ]
 
-  Will raise on start if required config is missing or invalid.
+  Will raise on start if required config is missing or invalid. Catches
+  typos and missing env vars at boot rather than at first request.
   """
 
   use GenServer
@@ -49,8 +50,8 @@ defmodule AshAi.Oauth.Application do
       end
     end)
 
-    URI.parse(Keyword.fetch!(config, :issuer_url)) |> validate_uri(:issuer_url)
-    URI.parse(Keyword.fetch!(config, :canonical_mcp_url)) |> validate_uri(:canonical_mcp_url)
+    validate_url!(Keyword.fetch!(config, :issuer_url), :issuer_url)
+    validate_url!(Keyword.fetch!(config, :canonical_mcp_url), :canonical_mcp_url)
 
     Enum.each(
       [:user_resource, :client_resource, :authorization_code_resource, :refresh_token_resource, :consent_resource],
@@ -63,9 +64,15 @@ defmodule AshAi.Oauth.Application do
     {:ok, %{otp_app: otp_app}}
   end
 
-  defp validate_uri(%URI{scheme: scheme, host: host}, _key) when scheme in ["http", "https"] and is_binary(host),
-    do: :ok
+  # URI.new/1 actually returns {:error, _} for malformed input; URI.parse/1
+  # never errors and accepts e.g. "https:///foo" with an empty host.
+  defp validate_url!(url, key) do
+    case URI.new(url) do
+      {:ok, %URI{scheme: scheme, host: host}} when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        :ok
 
-  defp validate_uri(uri, key),
-    do: raise("AshAi.Oauth #{key} must be a valid http(s) URL with a host: got #{inspect(uri)}")
+      _ ->
+        raise "AshAi.Oauth #{key} must be a valid http(s) URL with a host: got #{inspect(url)}"
+    end
+  end
 end

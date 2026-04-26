@@ -44,9 +44,14 @@ if Code.ensure_loaded?(Plug) do
     defp validate_redirect_uris(%{"redirect_uris" => uris}) when is_list(uris) and uris != [] do
       Enum.reduce_while(uris, :ok, fn uri, _ ->
         case URI.new(uri) do
-          {:ok, %URI{scheme: "https"}} -> {:cont, :ok}
-          {:ok, %URI{scheme: "http", host: host}} when host in ["localhost", "127.0.0.1", "::1"] -> {:cont, :ok}
-          _ -> {:halt, {:error, "invalid_redirect_uri", "redirect URIs must use https or be localhost"}}
+          {:ok, %URI{scheme: "https", host: host, fragment: nil}} when is_binary(host) and host != "" ->
+            {:cont, :ok}
+
+          {:ok, %URI{scheme: "http", host: host, fragment: nil}} when host in ["localhost", "127.0.0.1", "::1"] ->
+            {:cont, :ok}
+
+          _ ->
+            {:halt, {:error, "invalid_redirect_uri", "redirect URIs must use https (or http localhost), have a host, and no fragment"}}
         end
       end)
     end

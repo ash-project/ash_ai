@@ -25,7 +25,8 @@ if Code.ensure_loaded?(Plug) do
           "resource" => Config.canonical_mcp_url(otp_app),
           "authorization_servers" => [Config.issuer_url(otp_app)],
           "scopes_supported" => Config.scopes(otp_app),
-          "bearer_methods_supported" => ["header"]
+          "bearer_methods_supported" => ["header"],
+          "resource_documentation" => "https://hexdocs.pm/ash_ai/mcp-oauth.html"
         })
 
       conn

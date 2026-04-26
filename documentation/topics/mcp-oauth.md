@@ -129,7 +129,7 @@ and passes everything else through, so mounting it at `/` is safe.
 def start(_type, _args) do
   children = [
     ...,
-    {AshAi.Oauth.Application, otp_app: :my_app}
+    {AshAi.Oauth.Startup, otp_app: :my_app}
   ]
   ...
 end

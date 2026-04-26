@@ -47,7 +47,7 @@ if Code.ensure_loaded?(Plug) do
         end
       else
         {:error, :no_user} -> sign_in_redirect(conn)
-        {:error, :bad_redirect} -> send_resp(conn, 400, "invalid redirect_uri") |> halt()
+        {:error, :bad_redirect} -> bad_redirect_html(conn)
         {:error, code, desc} -> bad_request(conn, code, desc)
       end
     end
@@ -74,7 +74,7 @@ if Code.ensure_loaded?(Plug) do
       else
         {:error, :no_user} -> sign_in_redirect(conn)
         {:error, :csrf} -> send_resp(conn, 403, "csrf failure") |> halt()
-        {:error, :bad_redirect} -> send_resp(conn, 400, "invalid redirect_uri") |> halt()
+        {:error, :bad_redirect} -> bad_redirect_html(conn)
         {:error, code, desc} -> bad_request(conn, code, desc)
       end
     end
@@ -280,6 +280,32 @@ if Code.ensure_loaded?(Plug) do
 
     defp bad_request(conn, code, desc) do
       AshAi.Oauth.Error.send_oauth_error(conn, 400, code, desc)
+    end
+
+    # Spec §6.5: bad redirect_uri is the one error that MUST NOT redirect to
+    # the offending URI. We render an HTML page so a browser-driven flow
+    # shows a coherent error rather than raw text.
+    defp bad_redirect_html(conn) do
+      body = """
+      <!DOCTYPE html>
+      <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <title>Invalid redirect URI</title>
+          <style>body { font-family: system-ui, sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem; }</style>
+        </head>
+        <body>
+          <h1>Invalid redirect URI</h1>
+          <p>The <code>redirect_uri</code> parameter does not match any registered redirect URI for this client.</p>
+          <p>For security reasons, we cannot redirect you back. Please contact the application that sent you here.</p>
+        </body>
+      </html>
+      """
+
+      conn
+      |> put_resp_header("content-type", "text/html; charset=utf-8")
+      |> send_resp(400, body)
+      |> halt()
     end
   end
 end

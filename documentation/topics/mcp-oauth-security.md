@@ -145,4 +145,4 @@ For a deployment review, verify each of these:
       (token-passthrough is forbidden — see the spec)
 - [ ] Refresh-token TTL matches your session expectations
 - [ ] Postgres migrations for the four OAuth resources have been deployed
-- [ ] `AshAi.Oauth.Application` is in your supervision tree (catches boot-time misconfig)
+- [ ] `AshAi.Oauth.Startup` is in your supervision tree (catches boot-time misconfig)

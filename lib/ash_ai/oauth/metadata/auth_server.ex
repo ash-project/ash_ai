@@ -34,7 +34,8 @@ if Code.ensure_loaded?(Plug) do
           "code_challenge_methods_supported" => ["S256"],
           # v1: public clients only (PKCE). client_secret_basic deferred to v2.
           "token_endpoint_auth_methods_supported" => ["none"],
-          "scopes_supported" => Config.scopes(otp_app)
+          "scopes_supported" => Config.scopes(otp_app),
+          "service_documentation" => "https://hexdocs.pm/ash_ai/mcp-oauth.html"
         })
 
       conn

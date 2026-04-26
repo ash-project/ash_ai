@@ -70,9 +70,13 @@ if Code.ensure_loaded?(Plug) do
 
     defp consume_code(_, _), do: {:error, :not_found}
 
-    defp check_client_match(code, client_id) do
-      if to_string(code.client_id) == to_string(client_id), do: :ok, else: {:error, :not_found}
+    # Both sides are binary UUID strings — direct equality is fine and
+    # consistent with the other id checks in this module.
+    defp check_client_match(%{client_id: code_client_id}, client_id) when is_binary(client_id) do
+      if code_client_id == client_id, do: :ok, else: {:error, :not_found}
     end
+
+    defp check_client_match(_, _), do: {:error, :not_found}
 
     defp check_not_expired(code) do
       if DateTime.compare(DateTime.utc_now(), code.expires_at) == :gt,
