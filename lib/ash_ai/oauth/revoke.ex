@@ -22,11 +22,16 @@ if Code.ensure_loaded?(Plug) do
 
     @impl Plug
     def call(%{method: "POST"} = conn, otp_app) do
-      case conn.params["token"] do
-        token when is_binary(token) -> revoke(otp_app, token)
-        _ -> :noop
+      params = conn.params || %{}
+      token = params["token"]
+      client_id = params["client_id"]
+
+      if is_binary(token) and is_binary(client_id) do
+        revoke(otp_app, token, client_id)
       end
 
+      # RFC 7009 §2.2: respond 200 regardless of whether the token was
+      # found, to avoid leaking which tokens are valid.
       conn
       |> put_resp_header("cache-control", "no-store")
       |> send_resp(200, "")
@@ -35,11 +40,14 @@ if Code.ensure_loaded?(Plug) do
 
     def call(conn, _), do: send_resp(conn, 405, "") |> halt()
 
-    defp revoke(otp_app, token) do
+    # Only revoke if the presented client_id matches the row's client_id.
+    # Public clients have no other auth credential; pairing the token with
+    # its issuing client is the minimum check RFC 7009 §2.1 requires.
+    defp revoke(otp_app, token, client_id) do
       hash = :crypto.hash(:sha256, token) |> Base.encode16(case: :lower)
 
       Config.refresh_token_resource(otp_app)
-      |> Ash.Query.filter(token_hash == ^hash)
+      |> Ash.Query.filter(token_hash == ^hash and client_id == ^client_id)
       |> Ash.read_one(authorize?: false)
       |> case do
         {:ok, %{} = row} ->

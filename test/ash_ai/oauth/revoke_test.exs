@@ -39,12 +39,7 @@ defmodule AshAi.Oauth.RevokeTest do
     |> Plug.Parsers.call(Plug.Parsers.init(parsers: [:urlencoded]))
   end
 
-  test "always returns 200" do
-    conn = Revoke.call(post_form(%{"token" => "doesnt-exist"}), Revoke.init(otp_app: :ash_ai))
-    assert conn.status == 200
-  end
-
-  test "revokes a refresh token by raw value" do
+  defp seed_refresh_token(client_id) do
     raw = :crypto.strong_rand_bytes(32) |> Base.url_encode64(padding: false)
     hash = :crypto.hash(:sha256, raw) |> Base.encode16(case: :lower)
 
@@ -52,7 +47,7 @@ defmodule AshAi.Oauth.RevokeTest do
       AshAi.Test.OAuthRefreshToken
       |> Ash.Changeset.for_create(:issue, %{
         token_hash: hash,
-        client_id: Ash.UUIDv7.generate(),
+        client_id: client_id,
         user_id: Ash.UUIDv7.generate(),
         scope: "mcp",
         resource_uri: "https://app.example.com/mcp",
@@ -60,10 +55,52 @@ defmodule AshAi.Oauth.RevokeTest do
       })
       |> Ash.create(authorize?: false)
 
-    conn = Revoke.call(post_form(%{"token" => raw}), Revoke.init(otp_app: :ash_ai))
+    {raw, row}
+  end
+
+  test "always returns 200, even for unknown token" do
+    client_id = Ash.UUIDv7.generate()
+
+    conn =
+      Revoke.call(
+        post_form(%{"token" => "doesnt-exist", "client_id" => client_id}),
+        Revoke.init(otp_app: :ash_ai)
+      )
+
+    assert conn.status == 200
+  end
+
+  test "revokes a refresh token when client_id matches" do
+    client_id = Ash.UUIDv7.generate()
+    {raw, row} = seed_refresh_token(client_id)
+
+    conn = Revoke.call(post_form(%{"token" => raw, "client_id" => client_id}), Revoke.init(otp_app: :ash_ai))
     assert conn.status == 200
 
     {:ok, reloaded} = Ash.get(AshAi.Test.OAuthRefreshToken, row.id, authorize?: false)
     assert reloaded.revoked_at
+  end
+
+  test "does NOT revoke when client_id mismatches the token's client" do
+    real_client = Ash.UUIDv7.generate()
+    other_client = Ash.UUIDv7.generate()
+    {raw, row} = seed_refresh_token(real_client)
+
+    conn = Revoke.call(post_form(%{"token" => raw, "client_id" => other_client}), Revoke.init(otp_app: :ash_ai))
+    # Spec requires 200 either way to avoid leaking validity
+    assert conn.status == 200
+
+    {:ok, reloaded} = Ash.get(AshAi.Test.OAuthRefreshToken, row.id, authorize?: false)
+    refute reloaded.revoked_at, "token should not have been revoked by a foreign client_id"
+  end
+
+  test "missing client_id is a no-op (200 returned)" do
+    {raw, row} = seed_refresh_token(Ash.UUIDv7.generate())
+
+    conn = Revoke.call(post_form(%{"token" => raw}), Revoke.init(otp_app: :ash_ai))
+    assert conn.status == 200
+
+    {:ok, reloaded} = Ash.get(AshAi.Test.OAuthRefreshToken, row.id, authorize?: false)
+    refute reloaded.revoked_at
   end
 end
