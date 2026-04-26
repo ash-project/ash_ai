@@ -6,9 +6,33 @@ defmodule AshAi.Oauth.Jwt do
   @moduledoc """
   Mint and verify OAuth 2.1 access tokens for the MCP server.
 
-  Uses HS256 with a shared secret. Audience is bound to the canonical MCP URL
-  per RFC 8707. We use Joken directly rather than `AshAuthentication.Jwt`
-  because we need explicit control over the audience claim.
+  Uses HS256 with a shared secret resolved through the same
+  `AshAuthentication.Secret` behaviour the rest of the AshAuthentication
+  ecosystem uses, so configuring `signing_secret: {MyApp.Secret, []}`
+  works identically here.
+
+  ## Why this exists alongside `AshAuthentication.Jwt`
+
+  Both modules wrap Joken. They are kept separate because:
+
+    * **Audience binding (RFC 8707)** — every minted token MUST carry an
+      `aud` matching the configured `canonical_mcp_url`, and `verify/2`
+      MUST reject tokens whose `aud` doesn't match. `AshAuthentication.Jwt`
+      accepts `extra_claims` at mint time but doesn't enforce audience at
+      verify time, so we'd still be reimplementing the validation.
+    * **Hot-path verify** — the resource server validates a token on every
+      MCP request. `AshAuthentication.Jwt.verify/4` returns
+      `{:ok, claims, user_resource}`, doing a user lookup as part of
+      verification. We want the bearer plug to control when (and whether)
+      the user record gets loaded, so verify here is signature + claims
+      only.
+    * **Decoupling from the user resource** — `token_for_user/4` requires
+      the user resource to declare `authentication.tokens.enabled? true`.
+      Our tokens reference users by id, not by AshAuthentication strategy,
+      so we don't take that dependency.
+
+  Joken (the underlying library) is the same; the secret resolution path is
+  the same; only the orchestration differs.
   """
 
   alias AshAi.Oauth.Config

@@ -202,6 +202,37 @@ custom session loader, make sure it sets the actor on the conn (AshAuthenticatio
 Run with `:debug`-level logging and inspect `AshAi.Oauth.Jwt.verify/2`'s return value. The
 specific error tells you whether it's signature, issuer, audience, or expiry.
 
+## Relationship with AshAuthentication
+
+ash_ai's OAuth layer is built on top of AshAuthentication, not as a replacement
+for it. Concretely:
+
+| Concern | Provider |
+|---|---|
+| User identity, sign-in, password reset, etc. | **AshAuthentication** (your existing User + strategies) |
+| Session loading on browser-driven flows (e.g. `/oauth/authorize`) | **AshAuthentication** (`load_from_session`) |
+| API-key auth on `/mcp` (simpler alternative) | **AshAuthentication.Strategy.ApiKey.Plug** |
+| Signing-key resolution (`signing_secret` config) | **`AshAuthentication.Secret`** behaviour |
+| OAuth 2.1 token mint/verify with audience binding | **`AshAi.Oauth.Jwt`** (purpose-built; see its module doc for why) |
+| OAuth 2.1 wire flow (`/oauth/*`, RFC 9728/8414 metadata, DCR, PKCE) | **ash_ai** |
+| Persisted OAuth artifacts (clients, codes, refresh tokens, consents) | **ash_ai** (Ash resources in your domain) |
+
+The two systems share:
+- The same Joken JWT library (transitive via AshAuthentication)
+- The same `AshAuthentication.Secret` pattern for runtime secret resolution
+- The same `Ash.PlugHelpers.set_actor`/`get_actor` convention
+
+They do **not** share:
+- A token table — `AshAuthentication.TokenResource` tracks JTIs of
+  AshAuthentication's own session tokens; our `OAuthRefreshToken` stores
+  hashed opaque refresh tokens (not JWTs). Future JTI revocation for
+  access tokens may share TokenResource — that's a v2 decision.
+- Token-issuing code — our access tokens carry an `aud` claim bound to the
+  MCP canonical URL per RFC 8707, which AshAuthentication doesn't enforce.
+
+If you have AshAuthentication wired up for sign-in already, the OAuth layer
+slots in alongside without duplicating any of it.
+
 ## Security posture
 
 See [mcp-oauth-security.md](./mcp-oauth-security.md) for the full security checklist.
