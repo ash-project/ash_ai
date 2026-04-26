@@ -58,6 +58,18 @@ defmodule AshAi.Oauth.Config do
   def dcr_always_return_client_secret?(otp_app),
     do: get(otp_app, :dcr_always_return_client_secret, false)
 
+  @doc """
+  Path users are redirected to when they hit `/oauth/authorize` without a
+  session. Defaults to `nil`, in which case the plug returns `401`. Set to
+  e.g. `"/sign-in"` to redirect to the AshAuthentication sign-in route.
+
+  The original authorization request (full query string) is appended as
+  `?return_to=...` so the sign-in flow can return the user to `/oauth/authorize`
+  after success.
+  """
+  @spec sign_in_path(atom()) :: String.t() | nil
+  def sign_in_path(otp_app), do: get(otp_app, :sign_in_path, nil)
+
   @spec all(atom()) :: keyword()
   def all(otp_app) do
     case Application.get_env(otp_app, AshAi.Oauth) do

@@ -39,5 +39,16 @@ defmodule AshAi.Test.OAuthAuthorizationCode do
         end
       end
     end
+
+    # Bulk destroy of rows past their TTL. Operators wire this into a
+    # periodic Oban (or similar) job — codes are short-lived and accumulate
+    # quickly. Example invocation:
+    #
+    #     OAuthAuthorizationCode
+    #     |> Ash.Query.filter(expires_at < ^DateTime.utc_now())
+    #     |> Ash.bulk_destroy!(:destroy_expired, %{})
+    destroy :destroy_expired do
+      require_atomic? false
+    end
   end
 end

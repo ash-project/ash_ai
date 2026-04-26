@@ -73,7 +73,8 @@ config :my_app, AshAi.Oauth,
   access_token_ttl: {1, :hour},
   refresh_token_ttl: {30, :days},
   authorization_code_ttl: {10, :minutes},
-  scopes: ["mcp"]
+  scopes: ["mcp"],
+  sign_in_path: "/sign-in"   # AshAuthentication sign-in route; receives ?return_to=...
 ```
 
 `canonical_mcp_url` is the audience the resource server will validate on every bearer token.

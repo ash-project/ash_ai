@@ -143,7 +143,7 @@ defmodule AshAi.Oauth.AuthorizeTest do
     assert conn.status == 400
   end
 
-  test "GET 401 redirects to login when no actor", %{client: client} do
+  test "GET 401 when no actor and no sign_in_path configured", %{client: client} do
     conn =
       authorize_conn(%{
         "response_type" => "code",
@@ -158,6 +158,33 @@ defmodule AshAi.Oauth.AuthorizeTest do
 
     conn = Authorize.call(conn, Authorize.init(otp_app: :ash_ai))
     assert conn.status == 401
+  end
+
+  test "GET redirects to sign_in_path with return_to when configured", %{client: client} do
+    Application.put_env(
+      :ash_ai,
+      AshAi.Oauth,
+      Application.get_env(:ash_ai, AshAi.Oauth) |> Keyword.put(:sign_in_path, "/sign-in")
+    )
+
+    conn =
+      authorize_conn(%{
+        "response_type" => "code",
+        "client_id" => client.id,
+        "redirect_uri" => "https://chatgpt.com/cb",
+        "code_challenge" => "x",
+        "code_challenge_method" => "S256",
+        "scope" => "mcp",
+        "state" => "abc",
+        "resource" => "https://app.example.com/mcp"
+      })
+
+    conn = Authorize.call(conn, Authorize.init(otp_app: :ash_ai))
+
+    assert conn.status == 302
+    [location] = get_resp_header(conn, "location")
+    assert location =~ ~r{^/sign-in\?return_to=}
+    assert location =~ "response_type%3Dcode"
   end
 
   test "POST approve issues code and redirects", %{user: user, client: client} do

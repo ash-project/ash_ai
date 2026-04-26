@@ -46,7 +46,7 @@ if Code.ensure_loaded?(Plug) do
           false -> render_consent(conn, otp_app, validated)
         end
       else
-        {:error, :no_user} -> sign_in_redirect(conn)
+        {:error, :no_user} -> sign_in_redirect(conn, otp_app)
         {:error, :bad_redirect} -> bad_redirect_html(conn)
         {:error, code, desc} -> bad_request(conn, code, desc)
       end
@@ -72,7 +72,7 @@ if Code.ensure_loaded?(Plug) do
             bad_request(conn, "invalid_request", "missing action")
         end
       else
-        {:error, :no_user} -> sign_in_redirect(conn)
+        {:error, :no_user} -> sign_in_redirect(conn, otp_app)
         {:error, :csrf} -> send_resp(conn, 403, "csrf failure") |> halt()
         {:error, :bad_redirect} -> bad_redirect_html(conn)
         {:error, code, desc} -> bad_request(conn, code, desc)
@@ -288,7 +288,26 @@ if Code.ensure_loaded?(Plug) do
 
     # ── Misc ─────────────────────────────────────────────────────────────
 
-    defp sign_in_redirect(conn), do: send_resp(conn, 401, "authentication required") |> halt()
+    # If the user configured a sign-in path, redirect there with the original
+    # authorize request preserved as `return_to` so the sign-in flow can come
+    # back here after success. Without configuration we 401 — there's no
+    # generic way to know where the user's login lives.
+    defp sign_in_redirect(conn, otp_app) do
+      case Config.sign_in_path(otp_app) do
+        path when is_binary(path) ->
+          query = if conn.query_string != "", do: "?" <> conn.query_string, else: ""
+          return_to = conn.request_path <> query
+          location = path <> "?" <> URI.encode_query(%{"return_to" => return_to})
+
+          conn
+          |> put_resp_header("location", location)
+          |> send_resp(302, "")
+          |> halt()
+
+        _ ->
+          send_resp(conn, 401, "authentication required") |> halt()
+      end
+    end
 
     defp bad_request(conn, code, desc) do
       AshAi.Oauth.Error.send_oauth_error(conn, 400, code, desc)

@@ -51,6 +51,15 @@ defmodule AshAi.Test.OAuthRefreshToken do
       accept []
       change set_attribute(:revoked_at, &DateTime.utc_now/0)
     end
+
+    # Bulk destroy of expired/revoked rows. Wire into a periodic job:
+    #
+    #     OAuthRefreshToken
+    #     |> Ash.Query.filter(expires_at < ^DateTime.utc_now() or not is_nil(revoked_at))
+    #     |> Ash.bulk_destroy!(:destroy_expired, %{})
+    destroy :destroy_expired do
+      require_atomic? false
+    end
   end
 
   identities do
