@@ -49,11 +49,26 @@ defmodule AshAi.Mcp.BearerPlugTest do
     refute conn.halted
   end
 
-  test "401 on bad signature" do
+  test "401 on bad signature, with error=invalid_token in WWW-Authenticate" do
     conn = conn(:post, "/mcp", "{}") |> put_req_header("authorization", "Bearer not-a-real-jwt")
     conn = BearerPlug.call(conn, BearerPlug.init(otp_app: :ash_ai, required?: true))
 
     assert conn.status == 401
+    [auth] = get_resp_header(conn, "www-authenticate")
+    assert auth =~ ~s(error="invalid_token")
+  end
+
+  test "accepts case-insensitive Bearer scheme", %{user: user} do
+    {:ok, token, _} = Jwt.mint(:ash_ai, sub: user.id, client_id: "c", scope: "mcp")
+
+    for prefix <- ["Bearer", "bearer", "BEARER", "BeArEr"] do
+      conn =
+        conn(:post, "/mcp", "{}")
+        |> put_req_header("authorization", "#{prefix} #{token}")
+
+      conn = BearerPlug.call(conn, BearerPlug.init(otp_app: :ash_ai, required?: true))
+      refute conn.halted, "expected #{prefix} prefix to be accepted"
+    end
   end
 
   test "401 on audience mismatch", %{user: user} do

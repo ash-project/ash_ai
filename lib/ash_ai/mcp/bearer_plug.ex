@@ -37,15 +37,18 @@ if Code.ensure_loaded?(Plug) do
     @impl Plug
     def call(conn, %{otp_app: otp_app, required?: required?}) do
       case extract_token(conn) do
-        nil when required? -> challenge(conn, otp_app)
+        nil when required? -> challenge(conn, otp_app, :missing)
         nil -> conn
         token -> verify_and_assign(conn, otp_app, token)
       end
     end
 
+    # RFC 6750 §2.1 / RFC 7235 §2.1: scheme matching is case-insensitive.
     defp extract_token(conn) do
-      case get_req_header(conn, "authorization") do
-        ["Bearer " <> token | _] -> String.trim(token)
+      with [header | _] <- get_req_header(conn, "authorization"),
+           [_, token] <- Regex.run(~r/^Bearer\s+(.+)$/i, header) do
+        String.trim(token)
+      else
         _ -> nil
       end
     end
@@ -57,7 +60,7 @@ if Code.ensure_loaded?(Plug) do
         |> Ash.PlugHelpers.set_actor(user)
         |> assign(:oauth_claims, claims)
       else
-        _ -> challenge(conn, otp_app)
+        _ -> challenge(conn, otp_app, :invalid_token)
       end
     end
 
@@ -72,11 +75,20 @@ if Code.ensure_loaded?(Plug) do
 
     defp load_user(_, _), do: :error
 
-    defp challenge(conn, otp_app) do
+    # RFC 6750 §3 — include `error="invalid_token"` when a token was presented
+    # but failed verification, so clients can distinguish missing-vs-bad and
+    # restart auth from scratch instead of silently retrying.
+    defp challenge(conn, otp_app, reason) do
       prm_url = Config.issuer_url(otp_app) <> "/.well-known/oauth-protected-resource"
 
+      header =
+        case reason do
+          :invalid_token -> ~s(Bearer resource_metadata="#{prm_url}", error="invalid_token")
+          _ -> ~s(Bearer resource_metadata="#{prm_url}")
+        end
+
       conn
-      |> put_resp_header("www-authenticate", ~s(Bearer resource_metadata="#{prm_url}"))
+      |> put_resp_header("www-authenticate", header)
       |> send_resp(401, "")
       |> halt()
     end
