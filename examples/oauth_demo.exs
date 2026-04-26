@@ -366,15 +366,21 @@ end
 
 # ── Boot ────────────────────────────────────────────────────────────
 
-# Configure AshAi.Oauth at runtime
+# Configure AshAi.Oauth at runtime. Override via env vars when you're behind
+# a tunnel (e.g. cloudflared) — the canonical URL must match the URL the
+# OAuth client (ChatGPT, mcpjam, etc.) actually uses, because access tokens
+# are audience-bound to it (RFC 8707).
+issuer_url = System.get_env("ISSUER_URL", "http://localhost:4000")
+mcp_url = System.get_env("MCP_URL", issuer_url <> "/mcp")
+
 Application.put_env(:ash_ai, AshAi.Oauth,
   user_resource: OAuthDemo.User,
   client_resource: OAuthDemo.OAuthClient,
   authorization_code_resource: OAuthDemo.OAuthAuthorizationCode,
   refresh_token_resource: OAuthDemo.OAuthRefreshToken,
   consent_resource: OAuthDemo.OAuthConsent,
-  issuer_url: "http://localhost:4000",
-  canonical_mcp_url: "http://localhost:4000/mcp",
+  issuer_url: issuer_url,
+  canonical_mcp_url: mcp_url,
   signing_secret: String.duplicate("d", 64),
   access_token_ttl: {1, :hour},
   refresh_token_ttl: {30, :days},
@@ -391,15 +397,16 @@ Application.put_env(:ash_ai, AshAi.Oauth,
 IO.puts("\n" <> String.duplicate("─", 60))
 IO.puts("AshAi OAuth 2.1 MCP demo")
 IO.puts(String.duplicate("─", 60))
-IO.puts("Server:    http://localhost:4000")
-IO.puts("MCP URL:   http://localhost:4000/mcp")
-IO.puts("Demo user: demo@example.com (id #{user.id})")
+IO.puts("Listening:    http://localhost:4000")
+IO.puts("Issuer URL:   #{issuer_url}")
+IO.puts("MCP URL:      #{mcp_url}")
+IO.puts("Demo user:    demo@example.com (id #{user.id})")
 IO.puts("")
 IO.puts("Try:")
-IO.puts("  curl -i http://localhost:4000/mcp -X POST -d '{}'")
-IO.puts("  curl http://localhost:4000/.well-known/oauth-protected-resource | jq")
+IO.puts("  curl -i #{mcp_url} -X POST -d '{}'")
+IO.puts("  curl #{issuer_url}/.well-known/oauth-protected-resource | jq")
 IO.puts("")
-IO.puts("Or run: bash examples/test-oauth.sh")
+IO.puts("Or run: BASE=#{issuer_url} bash examples/test-oauth.sh")
 IO.puts(String.duplicate("─", 60) <> "\n")
 
 {:ok, _} = Bandit.start_link(plug: OAuthDemo.Router, port: 4000)
