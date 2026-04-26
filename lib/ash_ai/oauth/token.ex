@@ -43,6 +43,7 @@ if Code.ensure_loaded?(Plug) do
            :ok <- check_resource_match(otp_app, params, code),
            :ok <- check_redirect_match(params, code),
            {:ok, access, refresh} <- mint_tokens(otp_app, client, code) do
+        touch_client(client)
         respond_with_tokens(conn, otp_app, access, refresh, code.scope)
       else
         {:error, :reuse} -> Error.send_oauth_error(conn, 400, "invalid_grant", "code already used")
@@ -151,6 +152,7 @@ if Code.ensure_loaded?(Plug) do
       with {:ok, row} <- find_refresh(otp_app, hash),
            :ok <- check_refresh_validity(row, client_id, otp_app, res),
            {:ok, access, new_refresh} <- rotate_refresh(otp_app, row) do
+        touch_client_by_id(otp_app, row.client_id)
         respond_with_tokens(conn, otp_app, access, new_refresh, row.scope)
       else
         {:error, :reuse} ->
@@ -206,6 +208,24 @@ if Code.ensure_loaded?(Plug) do
            {:ok, access, _} <-
              Jwt.mint(otp_app, sub: row.user_id, client_id: row.client_id, scope: row.scope) do
         {:ok, access, raw}
+      end
+    end
+
+    # Best-effort: bump `last_used_at` on the issuing OAuthClient so operators
+    # can prune dormant DCR-registered clients. Failure is silent — touch is
+    # bookkeeping, not a security control.
+    defp touch_client(client) do
+      client
+      |> Ash.Changeset.for_update(:touch, %{})
+      |> Ash.update(authorize?: false)
+    rescue
+      _ -> :noop
+    end
+
+    defp touch_client_by_id(otp_app, client_id) do
+      case Ash.get(Config.client_resource(otp_app), client_id, authorize?: false) do
+        {:ok, client} -> touch_client(client)
+        _ -> :noop
       end
     end
 

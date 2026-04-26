@@ -88,6 +88,10 @@ defmodule AshAi.Oauth.TokenTest do
     assert is_binary(body["refresh_token"])
     assert body["scope"] == "mcp"
     assert get_resp_header(conn, "cache-control") == ["no-store"]
+
+    # last_used_at on the client was touched
+    {:ok, reloaded} = Ash.get(AshAi.Test.OAuthClient, client.id, authorize?: false)
+    assert reloaded.last_used_at
   end
 
   test "rejects reused authorization code", %{client: client, code: code, verifier: verifier} do
