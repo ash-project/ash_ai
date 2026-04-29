@@ -22,8 +22,15 @@ defmodule AshAi.ToolLoop do
   defmodule Result do
     @moduledoc """
     Result returned from a completed tool loop.
+
+    `:usage` is the token-usage totals summed across every `stream_text/3`
+    call made during the loop (one per iteration). Keys mirror what the
+    underlying ReqLLM provider reports — typically `:input_tokens`,
+    `:output_tokens`, and any cost/cache fields. Numeric fields are summed;
+    non-numeric fields fall through to the most recent value. Empty `%{}`
+    when no provider reported usage.
     """
-    defstruct [:messages, :final_text, :iterations, :tool_calls_made]
+    defstruct [:messages, :final_text, :iterations, :tool_calls_made, usage: %{}]
   end
 
   @doc """
@@ -45,7 +52,8 @@ defmodule AshAi.ToolLoop do
       context,
       1,
       opts.max_iterations,
-      []
+      [],
+      %{}
     )
   end
 
@@ -85,6 +93,7 @@ defmodule AshAi.ToolLoop do
       iteration: 1,
       max_iterations: opts.max_iterations,
       tool_calls_made: [],
+      usage_acc: %{},
       state: :running
     }
   end
@@ -114,7 +123,8 @@ defmodule AshAi.ToolLoop do
       context: context,
       iteration: iteration,
       max_iterations: max_iterations,
-      tool_calls_made: tool_calls_made
+      tool_calls_made: tool_calls_made,
+      usage_acc: usage_acc
     } = state
 
     if max_iterations_reached?(iteration, max_iterations) do
@@ -122,7 +132,8 @@ defmodule AshAi.ToolLoop do
         messages: messages,
         final_text: "",
         iterations: iteration - 1,
-        tool_calls_made: tool_calls_made
+        tool_calls_made: tool_calls_made,
+        usage: usage_acc
       }
 
       {:done, [{:error, :max_iterations_reached}], result}
@@ -132,6 +143,7 @@ defmodule AshAi.ToolLoop do
           chunks = Enum.to_list(stream_response.stream)
           content_events = content_events(chunks)
           chunk_tool_call_ids = chunk_tool_call_ids(chunks)
+          usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
 
           classification =
             stream_response
@@ -158,7 +170,8 @@ defmodule AshAi.ToolLoop do
               state
               | messages: messages,
                 iteration: iteration + 1,
-                tool_calls_made: tool_calls_made ++ tool_calls
+                tool_calls_made: tool_calls_made ++ tool_calls,
+                usage_acc: usage_acc
             }
 
             {:continue,
@@ -179,7 +192,8 @@ defmodule AshAi.ToolLoop do
               messages: messages,
               final_text: classification.text,
               iterations: iteration,
-              tool_calls_made: tool_calls_made
+              tool_calls_made: tool_calls_made,
+              usage: usage_acc
             }
 
             {:done, content_events, result}
@@ -190,7 +204,8 @@ defmodule AshAi.ToolLoop do
             messages: messages,
             final_text: "",
             iterations: iteration - 1,
-            tool_calls_made: tool_calls_made
+            tool_calls_made: tool_calls_made,
+            usage: usage_acc
           }
 
           {:done, [{:error, reason}], result}
@@ -203,6 +218,33 @@ defmodule AshAi.ToolLoop do
     |> Enum.filter(&(&1.type == :content))
     |> Enum.map(fn chunk -> {:content, chunk.text || ""} end)
   end
+
+  # Sums per-iteration usage maps into a running accumulator. Numeric
+  # fields (input_tokens, output_tokens, cached_tokens, *_cost, ...) are
+  # summed so the final `Result.usage` reflects everything billed across
+  # the entire tool loop. Non-numeric fields fall through to the most
+  # recent iteration's value, since they're typically per-call metadata
+  # like `:provider_meta` or `:model`.
+  defp accumulate_usage(acc, nil), do: acc
+  defp accumulate_usage(acc, usage) when usage == %{}, do: acc
+
+  defp accumulate_usage(acc, usage) when is_map(usage) do
+    Map.merge(acc, usage, fn
+      _key, a, b when is_number(a) and is_number(b) -> a + b
+      _key, _a, b -> b
+    end)
+  end
+
+  defp accumulate_usage(acc, _), do: acc
+
+  # ReqLLM.StreamResponse.usage/1 awaits a metadata-handle pid; test
+  # fixtures stub the field with non-pid values like `:ignored`, so we
+  # guard against that here rather than failing the whole loop.
+  defp safe_stream_usage(%{metadata_handle: handle} = stream_response) when is_pid(handle) do
+    ReqLLM.StreamResponse.usage(stream_response)
+  end
+
+  defp safe_stream_usage(_), do: nil
 
   defp run_tools_streaming(tool_calls, messages, registry, ctx) do
     Enum.reduce(tool_calls, {messages, []}, fn tool_call, {msgs, events} ->
@@ -250,7 +292,8 @@ defmodule AshAi.ToolLoop do
          context,
          iteration,
          max_iterations,
-         tool_calls_made
+         tool_calls_made,
+         usage_acc
        ) do
     if max_iterations_reached?(iteration, max_iterations) do
       {:error, :max_iterations_reached}
@@ -259,6 +302,7 @@ defmodule AshAi.ToolLoop do
         {:ok, stream_response} ->
           chunks = Enum.to_list(stream_response.stream)
           chunk_tool_call_ids = chunk_tool_call_ids(chunks)
+          usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
 
           classification =
             stream_response
@@ -291,7 +335,8 @@ defmodule AshAi.ToolLoop do
               context,
               iteration + 1,
               max_iterations,
-              tool_calls_made ++ tool_calls
+              tool_calls_made ++ tool_calls,
+              usage_acc
             )
           else
             messages =
@@ -307,7 +352,8 @@ defmodule AshAi.ToolLoop do
                messages: messages,
                final_text: classification.text,
                iterations: iteration,
-               tool_calls_made: tool_calls_made
+               tool_calls_made: tool_calls_made,
+               usage: usage_acc
              }}
           end
 

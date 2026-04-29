@@ -341,6 +341,55 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMUsageReporter do
+    @moduledoc """
+    Returns a stream_response per call with a real `MetadataHandle` pid
+    that resolves to the per-call usage map. The first call simulates a
+    tool-call iteration (input 100 / output 20); the second simulates the
+    final-answer iteration (input 130 / output 40). `ToolLoop.run` should
+    surface the sum on `Result.usage`.
+    """
+
+    def stream_text(_model, _messages, _opts \\ []) do
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      {handle, body} =
+        case count do
+          0 ->
+            {usage_handle(%{input_tokens: 100, output_tokens: 20, total_cost: 0.05}),
+             [
+               ReqLLM.StreamChunk.tool_call("echo_tool", %{"input" => %{"message" => "hi"}}, %{
+                 id: "call_usage_1",
+                 index: 0
+               }),
+               ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+             ]}
+
+          _ ->
+            {usage_handle(%{input_tokens: 130, output_tokens: 40, total_cost: 0.07}),
+             [
+               ReqLLM.StreamChunk.text("done"),
+               ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+             ]}
+        end
+
+      {:ok,
+       %ReqLLM.StreamResponse{
+         stream: body,
+         metadata_handle: handle,
+         cancel: fn -> :ok end,
+         model: "openai:gpt-4o",
+         context: ReqLLM.Context.new([])
+       }}
+    end
+
+    defp usage_handle(usage) do
+      {:ok, pid} = ReqLLM.StreamResponse.MetadataHandle.start_link(fn -> %{usage: usage} end)
+      pid
+    end
+  end
+
   defmodule FakeReqLLMStreamOptsCapture do
     def stream_text(_model, _messages, opts \\ []) do
       send(self(), {:tool_loop_stream_opts, opts})
@@ -531,6 +580,53 @@ defmodule AshAi.ToolLoopTest do
 
     assert tool_result_ids == ["call_1", "call_2"]
     assert match?({:done, %ToolLoop.Result{final_text: "done"}}, List.last(events))
+  end
+
+  test "run/2 surfaces summed token usage across iterations on Result.usage" do
+    Process.delete({FakeReqLLMUsageReporter, :call_count})
+    messages = [Context.user("hi")]
+
+    assert {:ok, %ToolLoop.Result{usage: usage}} =
+             ToolLoop.run(messages,
+               actions: [{TestResource, :*}],
+               model: "openai:gpt-4o",
+               req_llm: FakeReqLLMUsageReporter
+             )
+
+    assert usage.input_tokens == 230
+    assert usage.output_tokens == 60
+    assert_in_delta usage.total_cost, 0.12, 0.0001
+  end
+
+  test "stream/2 surfaces summed token usage across iterations on Result.usage" do
+    Process.delete({FakeReqLLMUsageReporter, :call_count})
+    messages = [Context.user("hi")]
+
+    {:done, %ToolLoop.Result{usage: usage}} =
+      messages
+      |> ToolLoop.stream(
+        actions: [{TestResource, :*}],
+        model: "openai:gpt-4o",
+        req_llm: FakeReqLLMUsageReporter
+      )
+      |> Enum.to_list()
+      |> List.last()
+
+    assert usage.input_tokens == 230
+    assert usage.output_tokens == 60
+    assert_in_delta usage.total_cost, 0.12, 0.0001
+  end
+
+  test "run/2 returns empty usage map when provider reports nothing" do
+    Process.delete({FakeReqLLMStreamOptsCapture, :call_count})
+    messages = [Context.user("hello")]
+
+    assert {:ok, %ToolLoop.Result{usage: %{}}} =
+             ToolLoop.run(messages,
+               actions: [{TestResource, :*}],
+               model: "openai:gpt-4o",
+               req_llm: FakeReqLLMStreamOptsCapture
+             )
   end
 
   test "run/2 executes extra tools without AshAi-discovered tools" do
