@@ -346,7 +346,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> Ash.Resource.Info.primary_key()
     |> Enum.reduce(nil, fn key, expr ->
-      value = Map.get(arguments, to_string(key))
+      value = argument_value(arguments, key)
 
       if expr do
         Ash.Expr.expr(^expr and ^Ash.Expr.ref(key) == ^value)
@@ -362,8 +362,23 @@ defmodule AshAi.Tool.Execution do
     |> Enum.find(&(&1.name == identity))
     |> Map.get(:keys)
     |> Enum.map(fn key ->
-      {key, Map.get(arguments, to_string(key))}
+      {key, argument_value(arguments, key)}
     end)
+  end
+
+  defp argument_value(arguments, key) do
+    key = to_string(key)
+
+    cond do
+      is_map(arguments["input"]) && Map.has_key?(arguments["input"], key) ->
+        arguments["input"][key]
+
+      Map.has_key?(arguments, key) ->
+        arguments[key]
+
+      true ->
+        nil
+    end
   end
 
   defp validate_inputs!(resource, client_input, action, tool_arguments) do

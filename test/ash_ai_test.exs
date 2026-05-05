@@ -160,6 +160,16 @@ defmodule AshAiTest do
       assert updated_raw.name == "Updated"
       assert is_binary(updated_json)
 
+      {:ok, nested_updated_json, nested_updated_raw} =
+        registry["update_artist"].(
+          %{"input" => %{"id" => artist.id, "name" => "Nested Updated"}},
+          context
+        )
+
+      assert nested_updated_raw.id == artist.id
+      assert nested_updated_raw.name == "Nested Updated"
+      assert is_binary(nested_updated_json)
+
       {:ok, read_json, read_raw} =
         registry["list_artists"].(%{"filter" => %{"id" => %{"eq" => artist.id}}}, context)
 
