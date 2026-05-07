@@ -235,8 +235,6 @@ defmodule AshAi.ToolLoop do
     end)
   end
 
-  defp accumulate_usage(acc, _), do: acc
-
   # ReqLLM.StreamResponse.usage/1 awaits a metadata-handle pid; test
   # fixtures stub the field with non-pid values like `:ignored`, so we
   # guard against that here rather than failing the whole loop.
