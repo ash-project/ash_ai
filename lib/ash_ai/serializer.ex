@@ -17,6 +17,30 @@ defmodule AshAi.Serializer do
     Decimal.to_string(value)
   end
 
+  def serialize_value(%Ash.Union{type: union_type, value: inner}, type, constraints, domain, opts) do
+    {type, constraints} = flatten_new_type(type, constraints || [])
+
+    type_config =
+      if type == Ash.Type.Union do
+        Keyword.get(constraints[:types] || [], union_type)
+      end
+
+    if type_config do
+      inner_type = type_config[:type]
+      inner_constraints = type_config[:constraints] || []
+
+      serialized = serialize_value(inner, inner_type, inner_constraints, domain, opts)
+
+      if is_map(serialized) do
+        Map.put(serialized, :type, union_type)
+      else
+        %{type: union_type, value: serialized}
+      end
+    else
+      %{type: union_type, value: inner}
+    end
+  end
+
   def serialize_value(value, type, constraints, domain, opts) do
     {type, constraints} = flatten_new_type(type, constraints || [])
     opts = [skip_only_primary_key?: false, top_level?: false] |> Keyword.merge(opts)
