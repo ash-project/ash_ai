@@ -444,12 +444,6 @@ if Code.ensure_loaded?(Igniter) do
       end)
       |> Igniter.Project.Config.configure(
         "config.exs",
-        :mdex_native,
-        [:syntax_highlighter],
-        :lumis
-      )
-      |> Igniter.Project.Config.configure(
-        "config.exs",
         otp_app,
         [Oban, :queues, :chat_responses, :limit],
         10
@@ -459,6 +453,12 @@ if Code.ensure_loaded?(Igniter) do
         otp_app,
         [Oban, :queues, :conversations, :limit],
         10
+      )
+      |> Igniter.Project.Config.configure(
+        "config.exs",
+        :mdex_native,
+        [:syntax_highlighter],
+        :lumis
       )
     end
 
