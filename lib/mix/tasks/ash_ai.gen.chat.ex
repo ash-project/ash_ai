@@ -102,6 +102,7 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     * `ash_phoenix` - for forms and code interfaces
     * `ash_oban` - for background job processing
     * `mdex` - for Markdown rendering in the UI
+    * `lumis` - for syntax highlighting in rendered Markdown code blocks
 
     ### Domain Module (`YourApp.Chat`)
 
@@ -181,7 +182,7 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     The generator adds to your app config:
 
     * `config/runtime.exs` - ReqLLM API key for the selected provider
-    * `config/config.exs` - Oban queue configuration (`chat_responses` and `conversations`, limit 10 each)
+    * `config/config.exs` - Oban queue configuration (`chat_responses` and `conversations`, limit 10 each) and MDEx native syntax highlighting via Lumis
 
     ### Provider Models
 
@@ -406,9 +407,16 @@ if Code.ensure_loaded?(Igniter) do
           {Igniter.Project.Deps.add_dep(igniter, {:mdex, "~> 0.7"}), true}
         end
 
+      {igniter, install_lumis?} =
+        if Igniter.Project.Deps.has_dep?(igniter, :lumis) do
+          {igniter, false}
+        else
+          {Igniter.Project.Deps.add_dep(igniter, {:lumis, "~> 0.1"}), true}
+        end
+
       igniter
       |> then(fn igniter ->
-        if install_ash_phoenix? || install_ash_oban? || install_mdex? do
+        if install_ash_phoenix? || install_ash_oban? || install_mdex? || install_lumis? do
           if igniter.assigns[:test_mode?] do
             igniter
           else
@@ -434,6 +442,12 @@ if Code.ensure_loaded?(Igniter) do
           igniter
         end
       end)
+      |> Igniter.Project.Config.configure(
+        "config.exs",
+        :mdex_native,
+        [:syntax_highlighter],
+        :lumis
+      )
       |> Igniter.Project.Config.configure(
         "config.exs",
         otp_app,
