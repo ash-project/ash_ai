@@ -237,4 +237,21 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     refute component_content =~ "defp normalize_tool_call_arguments("
     refute component_content =~ "defp tool_result_preview("
   end
+
+  test "generated UI includes Lumis and MDEx native config", %{argv: argv} do
+    argv = argv ++ ["--live", "--live-component"]
+
+    phx_test_project()
+    |> Igniter.compose_task("ash_ai.gen.chat", argv)
+    |> assert_has_patch("mix.exs", """
+    + |{:mdex, "~> 0.7"}
+    """)
+    |> assert_has_patch("mix.exs", """
+    + |{:lumis, "~> 0.1"}
+    """)
+    |> assert_has_patch("config/config.exs", """
+    + |config :mdex_native, syntax_highlighter: :lumis
+    """)
+    |> apply_igniter!()
+  end
 end
