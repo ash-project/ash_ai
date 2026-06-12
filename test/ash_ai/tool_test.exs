@@ -36,6 +36,8 @@ defmodule AshAi.ToolTest do
     tools do
       tool :read_test_resources, TestResource, :read, load: [:internal_status]
 
+      tool :read_test_resources_full_filter, TestResource, :read, full_filter_schema?: true
+
       tool :read_test_resources_with_meta,
            TestResource,
            :read,
@@ -200,9 +202,26 @@ defmodule AshAi.ToolTest do
   end
 
   describe "tool parameter schema visibility" do
-    test "filter parameters only include public attributes" do
+    test "compact filter description only includes public attributes" do
       tool = get_test_tool(strict: false)
-      filter_properties = tool.parameter_schema["properties"]["filter"]["properties"]
+      filter = tool.parameter_schema["properties"]["filter"]
+
+      assert filter["type"] == "object"
+      assert filter["description"] =~ "public_name"
+      assert filter["description"] =~ "public_email"
+
+      refute filter["description"] =~ "private_notes"
+      refute filter["description"] =~ "internal_status"
+    end
+
+    test "full filter schema only includes public attributes" do
+      tool =
+        [actions: [{TestResource, [:read]}], tools: [:read_test_resources_full_filter]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      filter_properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["filter"]["properties"]
 
       assert Map.has_key?(filter_properties, "id")
       assert Map.has_key?(filter_properties, "public_name")

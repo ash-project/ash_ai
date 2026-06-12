@@ -115,16 +115,53 @@ defmodule AshAiTest do
       assert Map.has_key?(schema["properties"], "sort")
     end
 
-    test "strict mode changes read filter schema shape" do
+    test "filter schema defaults to a compact described object in both modes" do
       strict_tools = AshAi.list_tools(actions: [{Artist, [:read]}], strict: true)
       relaxed_tools = AshAi.list_tools(actions: [{Artist, [:read]}], strict: false)
 
       strict_filter = hd(strict_tools).parameter_schema["properties"]["filter"]
       relaxed_filter = hd(relaxed_tools).parameter_schema["properties"]["filter"]
 
-      assert is_list(strict_filter["anyOf"])
-      assert Enum.any?(strict_filter["anyOf"], &(&1["type"] == "array"))
+      # strict mode makes the optional filter nullable
+      assert strict_filter["type"] == ["object", "null"]
+      assert strict_filter["description"] =~ ~s({"and": [...]})
+      refute Map.has_key?(strict_filter, "properties")
+
       assert relaxed_filter["type"] == "object"
+      assert relaxed_filter["description"] =~ "Operators:"
+    end
+
+    test "action_parameters can restrict result types" do
+      tool =
+        [actions: [{Artist, [:read]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+        |> struct(action_parameters: [:filter, :limit, result_type: [:count]])
+
+      schema = AshAi.Tools.parameter_schema(tool, strict: true)
+
+      # strict mode makes the optional result_type nullable, including in the enum
+      result_type = schema["properties"]["result_type"]
+      assert result_type["type"] == ["string", "null"]
+      assert result_type["enum"] == ["run_query", "count", nil]
+      refute Map.has_key?(schema["properties"], "sort")
+      refute Map.has_key?(schema["properties"], "offset")
+      assert Map.has_key?(schema["properties"], "filter")
+      assert Map.has_key?(schema["properties"], "limit")
+    end
+
+    test "full_filter_schema? generates the full strict filter schema" do
+      tool =
+        [actions: [{Artist, [:read]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+        |> struct(full_filter_schema?: true)
+
+      filter = AshAi.Tools.parameter_schema(tool, strict: true)["properties"]["filter"]
+
+      assert filter["type"] == ["array", "null"]
+      condition = Enum.find(filter["items"]["anyOf"], & &1["properties"]["field"])
+      assert condition["properties"]["operator"]["enum"] != []
     end
   end
 
@@ -175,6 +212,43 @@ defmodule AshAiTest do
       {:ok, deleted_json, deleted_raw} = registry["delete_artist"].(%{"id" => artist.id}, context)
       assert deleted_raw.id == artist.id
       assert is_binary(deleted_json)
+    end
+
+    test "filters with condition objects and nested and/or groups", %{artist: artist} do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(actions: [{Artist, [:read]}], strict: false)
+
+      context = %{actor: nil, tenant: nil, context: %{}, tool_callbacks: %{}}
+
+      condition = %{"field" => "name", "operator" => "eq", "value" => artist.name}
+
+      {:ok, _json, found} = registry["list_artists"].(%{"filter" => condition}, context)
+      assert Enum.any?(found, &(&1.id == artist.id))
+
+      grouped = %{
+        "and" => [
+          %{
+            "or" => [
+              condition,
+              %{"field" => "name", "operator" => "eq", "value" => "nonexistent"}
+            ]
+          },
+          %{"field" => "id", "operator" => "eq", "value" => artist.id}
+        ]
+      }
+
+      {:ok, _json, found} = registry["list_artists"].(%{"filter" => grouped}, context)
+      assert Enum.any?(found, &(&1.id == artist.id))
+
+      excluded = %{
+        "or" => [
+          %{"field" => "name", "operator" => "eq", "value" => "nonexistent"},
+          %{"field" => "name", "operator" => "eq", "value" => "also nonexistent"}
+        ]
+      }
+
+      {:ok, _json, found} = registry["list_artists"].(%{"filter" => excluded}, context)
+      refute Enum.any?(found, &(&1.id == artist.id))
     end
 
     test "passes source context to action execution" do

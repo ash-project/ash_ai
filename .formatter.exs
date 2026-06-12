@@ -18,6 +18,7 @@ spark_locals_without_parens = [
   description: 1,
   domain: 1,
   embedding_model: 1,
+  full_filter_schema?: 1,
   full_text: 0,
   full_text: 1,
   html_path: 1,

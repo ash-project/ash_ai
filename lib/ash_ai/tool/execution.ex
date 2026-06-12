@@ -135,34 +135,30 @@ defmodule AshAi.Tool.Execution do
 
   defp apply_filter(query, nil), do: query
   defp apply_filter(query, []), do: query
+  defp apply_filter(query, filter) when is_map(filter) and map_size(filter) == 0, do: query
 
   defp apply_filter(query, conditions) when is_list(conditions) do
-    Enum.reduce(conditions, query, fn
-      %{"field" => field, "operator" => op, "value" => value}, query ->
-        Ash.Query.filter_input(query, %{field => %{op => value}})
-
-      %{"or" => sub_conditions}, query when is_list(sub_conditions) ->
-        or_filters =
-          Enum.flat_map(sub_conditions, fn
-            %{"field" => field, "operator" => op, "value" => value} ->
-              [%{field => %{op => value}}]
-
-            _ ->
-              []
-          end)
-
-        Ash.Query.filter_input(query, %{"or" => or_filters})
-
-      _, query ->
-        query
-    end)
+    Enum.reduce(conditions, query, &apply_filter(&2, &1))
   end
 
-  defp apply_filter(query, filter) when is_map(filter) and map_size(filter) > 0 do
-    Ash.Query.filter_input(query, filter)
+  defp apply_filter(query, filter) when is_map(filter) do
+    Ash.Query.filter_input(query, normalize_condition(filter))
   end
 
-  defp apply_filter(query, _), do: query
+  defp apply_filter(query, input) do
+    Ash.Query.add_error(query, "Invalid filter condition: #{Jason.encode!(input)}")
+  end
+
+  defp normalize_condition(%{"field" => field, "operator" => op, "value" => value}),
+    do: %{field => %{op => value}}
+
+  defp normalize_condition(%{"and" => conditions}) when is_list(conditions),
+    do: %{"and" => Enum.map(conditions, &normalize_condition/1)}
+
+  defp normalize_condition(%{"or" => conditions}) when is_list(conditions),
+    do: %{"or" => Enum.map(conditions, &normalize_condition/1)}
+
+  defp normalize_condition(other), do: other
 
   defp execute_read(query, action, "run_query", ctx) do
     query

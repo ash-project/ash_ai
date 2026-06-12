@@ -38,6 +38,7 @@ defmodule AshAi do
       :arguments,
       :_meta,
       :ui,
+      full_filter_schema?: false,
       __spark_metadata__: nil
     ]
 

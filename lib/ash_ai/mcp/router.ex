@@ -14,6 +14,10 @@ if Code.ensure_loaded?(Plug) do
     ```elixir
     forward "/mcp", AshAi.Mcp.Router, tools: [:tool1, :tool2], otp_app: :my_app
     ```
+
+    Tool schemas are generated without the OpenAI strict-mode transformation by
+    default — MCP clients don't constrain sampling with the schema, so the
+    honest form is smaller and clearer. Pass `strict: true` to restore it.
     """
 
     use Plug.Router, copy_opts_to_assign: :router_opts

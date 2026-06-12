@@ -48,10 +48,26 @@ defmodule AshAi.Dsl do
     resource: [type: {:spark, Ash.Resource}, required: false],
     action: [type: :atom, required: true],
     action_parameters: [
-      type: {:list, :atom},
+      type:
+        {:list,
+         {:or,
+          [
+            :atom,
+            {:tuple,
+             [
+               {:literal, :result_type},
+               {:list, {:in, [:run_query, :count, :exists, :aggregate]}}
+             ]}
+          ]}},
       required: false,
       doc:
-        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`"
+        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included."
+    ],
+    full_filter_schema?: [
+      type: :boolean,
+      default: false,
+      doc:
+        "Whether to generate the full JSON schema for the `filter` parameter of read actions. When `false` (the default), the filter is a free-form object whose shape is explained in the parameter description, keeping the tool definition much smaller. Set to `true` when you need a fully-specified schema, e.g. for strict/grammar-constrained tool calling."
     ],
     load: [
       type: :any,
