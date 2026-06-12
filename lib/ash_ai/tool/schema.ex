@@ -413,7 +413,7 @@ defmodule AshAi.Tool.Schema do
     })
     |> then(fn map ->
       if action_parameters do
-        Map.take(map, action_parameters)
+        Map.take(map, action_parameters ++ [:input])
       else
         map
       end
