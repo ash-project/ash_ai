@@ -11,6 +11,25 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.7.2](https://github.com/ash-project/ash_ai/compare/v0.7.1...v0.7.2) (2026-06-12)
+
+
+
+
+### Bug Fixes:
+
+* always take input from action parameters by [@zachdaniel](https://github.com/zachdaniel)
+
+* honor the `identity:` tool option in update/destroy schemas (#204) by Nick Dichev [(#204)](https://github.com/ash-project/ash_ai/pull/204)
+
+* serialize Union values before JSON encoding in Tools.execute (#202) by [@Munksgaard](https://github.com/Munksgaard) [(#202)](https://github.com/ash-project/ash_ai/pull/202)
+
+### Improvements:
+
+* trim down tool definitions by ~50% by [@zachdaniel](https://github.com/zachdaniel)
+
+* update mdex (#205) by [@leandrocp](https://github.com/leandrocp) [(#205)](https://github.com/ash-project/ash_ai/pull/205)
+
 ## [v0.7.1](https://github.com/ash-project/ash_ai/compare/v0.7.0...v0.7.1) (2026-06-01)
 
 
