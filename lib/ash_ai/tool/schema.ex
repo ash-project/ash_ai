@@ -21,7 +21,8 @@ defmodule AshAi.Tool.Schema do
           action: action,
           action_parameters: action_parameters,
           arguments: tool_arguments,
-          identity: identity
+          identity: identity,
+          get_by: get_by
         } = tool,
         opts \\ []
       ) do
@@ -30,6 +31,7 @@ defmodule AshAi.Tool.Schema do
     for_action(domain, resource, action, action_parameters, tool_arguments,
       strict?: strict?,
       identity: identity,
+      get_by: get_by,
       full_filter_schema?: Map.get(tool, :full_filter_schema?, false)
     )
   end
@@ -47,6 +49,12 @@ defmodule AshAi.Tool.Schema do
       ) do
     strict? = Keyword.get(opts, :strict?, true)
     identity = Keyword.get(opts, :identity, nil)
+    get_by = Keyword.get(opts, :get_by, nil)
+
+    get_by_fields =
+      if get_by && action.type == :read do
+        AshAi.Tool.get_by_fields(resource, get_by)
+      end
 
     attributes =
       if action.type in [:action, :read] do
@@ -121,9 +129,10 @@ defmodule AshAi.Tool.Schema do
         add_action_specific_properties(props_with_input, resource, action, action_parameters,
           strict?: strict?,
           identity: identity,
+          get_by_fields: get_by_fields,
           full_filter_schema?: Keyword.get(opts, :full_filter_schema?, false)
         ),
-      required: Map.keys(props_with_input),
+      required: Map.keys(props_with_input) ++ Enum.map(get_by_fields || [], & &1.name),
       additionalProperties: false
     }
     |> Jason.encode!()
@@ -246,9 +255,69 @@ defmodule AshAi.Tool.Schema do
          action_parameters,
          opts
        ) do
-    strict? = Keyword.get(opts, :strict?, true)
-    {allowed_result_types, action_parameters} = extract_result_types(action_parameters)
+    case Keyword.get(opts, :get_by_fields) do
+      nil ->
+        strict? = Keyword.get(opts, :strict?, true)
+        {allowed_result_types, action_parameters} = extract_result_types(action_parameters)
 
+        read_query_properties(
+          properties,
+          resource,
+          pagination,
+          action_parameters,
+          strict?,
+          allowed_result_types,
+          opts
+        )
+
+      get_by_fields ->
+        get_by_properties =
+          Map.new(get_by_fields, fn field ->
+            {field.name, AshAi.OpenApi.resource_write_attribute_type(field, resource, :create)}
+          end)
+
+        Map.merge(properties, get_by_properties)
+    end
+  end
+
+  defp add_action_specific_properties(
+         properties,
+         resource,
+         %{type: type},
+         _action_parameters,
+         opts
+       )
+       when type in [:update, :destroy] do
+    identity = Keyword.get(opts, :identity, nil)
+
+    # Mirror `AshAi.Tool.Execution.identity_filter/3`: address records by the
+    # configured identity (or the primary key by default, or nothing when `false`).
+    identity_properties =
+      resource
+      |> AshAi.Tool.identity_keys(identity)
+      |> Map.new(fn key ->
+        value =
+          Ash.Resource.Info.attribute(resource, key)
+          |> AshAi.OpenApi.resource_write_attribute_type(resource, type)
+
+        {key, value}
+      end)
+
+    Map.merge(properties, identity_properties)
+  end
+
+  defp add_action_specific_properties(properties, _resource, _action, _action_parameters, _opts),
+    do: properties
+
+  defp read_query_properties(
+         properties,
+         resource,
+         pagination,
+         action_parameters,
+         strict?,
+         allowed_result_types,
+         opts
+       ) do
     aggregate_fields =
       Ash.Resource.Info.fields(resource, [
         :attributes,
@@ -484,35 +553,6 @@ defmodule AshAi.Tool.Schema do
       end
     end)
   end
-
-  defp add_action_specific_properties(
-         properties,
-         resource,
-         %{type: type},
-         _action_parameters,
-         opts
-       )
-       when type in [:update, :destroy] do
-    identity = Keyword.get(opts, :identity, nil)
-
-    # Mirror `AshAi.Tool.Execution.identity_filter/3`: address records by the
-    # configured identity (or the primary key by default, or nothing when `false`).
-    identity_properties =
-      resource
-      |> AshAi.Tool.identity_keys(identity)
-      |> Map.new(fn key ->
-        value =
-          Ash.Resource.Info.attribute(resource, key)
-          |> AshAi.OpenApi.resource_write_attribute_type(resource, type)
-
-        {key, value}
-      end)
-
-    Map.merge(properties, identity_properties)
-  end
-
-  defp add_action_specific_properties(properties, _resource, _action, _action_parameters, _opts),
-    do: properties
 
   defp add_input_for_fields(sort_obj, resource) do
     resource

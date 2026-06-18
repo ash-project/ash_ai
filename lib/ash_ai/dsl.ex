@@ -96,6 +96,11 @@ defmodule AshAi.Dsl do
       doc:
         "The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely."
     ],
+    get_by: [
+      type: {:or, [:atom, {:list, :atom}]},
+      doc:
+        "For read actions, a field or list of fields used to fetch a single record. The fields must be public and filterable."
+    ],
     _meta: [
       type: :any,
       default: %{},
@@ -217,6 +222,7 @@ defmodule AshAi.Dsl do
     """,
     examples: [
       ~s(tool :list_artists, Artist, :read),
+      ~s(tool :get_artist_by_id, Artist, :read, get_by: :id),
       ~s(tool :create_artist, Artist, :create, description: "Create a new artist"),
       ~s(tool :update_artist, Artist, :update, identity: :id, load: [:albums]),
       ~s|tool :get_board, Board, :read, _meta: %{"openai/outputTemplate" => "ui://widget/kanban-board.html", "openai/toolInvocation/invoking" => "Preparing the board…", "openai/toolInvocation/invoked" => "Board ready."}|,

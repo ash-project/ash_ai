@@ -32,6 +32,7 @@ defmodule AshAi.Tool.Execution do
           action: action,
           load: load,
           identity: identity,
+          get_by: get_by,
           arguments: tool_arguments
         },
         client_arguments,
@@ -62,7 +63,7 @@ defmodule AshAi.Tool.Execution do
       input = Map.take(client_input, valid_action_inputs(resource, action))
 
       case action.type do
-        :read -> run_read(resource, action, arguments, input, opts, exec_ctx)
+        :read -> run_read(resource, action, arguments, input, opts, get_by, exec_ctx)
         :create -> run_create(resource, action, input, opts, exec_ctx)
         :update -> run_update(resource, action, arguments, input, opts, identity, exec_ctx)
         :destroy -> run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
@@ -86,7 +87,7 @@ defmodule AshAi.Tool.Execution do
     ]
   end
 
-  defp run_read(resource, action, arguments, input, opts, ctx) do
+  defp run_read(resource, action, arguments, input, opts, nil, ctx) do
     sort = build_sort(arguments["sort"])
     limit = build_limit(arguments["limit"], action.pagination)
 
@@ -99,6 +100,14 @@ defmodule AshAi.Tool.Execution do
       |> Ash.Query.for_read(action.name, input, opts)
 
     execute_read(query, action, arguments["result_type"] || "run_query", ctx)
+  end
+
+  defp run_read(resource, action, arguments, input, opts, get_by, ctx) do
+    resource
+    |> Ash.Query.for_read(action.name, input, opts)
+    |> Ash.Query.do_filter(get_by_filter(get_by, arguments))
+    |> Ash.read_one!(Keyword.merge(opts, load: ctx.load, not_found_error?: true))
+    |> serialize_record(resource, ctx)
   end
 
   defp build_sort(sort) when is_list(sort) do
@@ -252,12 +261,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
     |> Ash.create!(load: ctx.load)
-    |> then(fn result ->
-      result
-      |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
-      |> Jason.encode!()
-      |> then(&{:ok, &1, result})
-    end)
+    |> serialize_record(resource, ctx)
   end
 
   defp run_update(resource, action, arguments, input, opts, identity, ctx) do
@@ -280,10 +284,7 @@ defmodule AshAi.Tool.Execution do
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
-        result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
-        |> Jason.encode!()
-        |> then(&{:ok, &1, result})
+        serialize_record(result, resource, ctx)
 
       %Ash.BulkResult{status: :success, records: []} ->
         raise Ash.Error.to_error_class(Ash.Error.Query.NotFound.exception(primary_key: filter))
@@ -310,14 +311,18 @@ defmodule AshAi.Tool.Execution do
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
-        result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
-        |> Jason.encode!()
-        |> then(&{:ok, &1, result})
+        serialize_record(result, resource, ctx)
 
       %Ash.BulkResult{status: :success, records: []} ->
         raise Ash.Error.to_error_class(Ash.Error.Query.NotFound.exception(primary_key: filter))
     end
+  end
+
+  defp serialize_record(result, resource, ctx) do
+    result
+    |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
+    |> Jason.encode!()
+    |> then(&{:ok, &1, result})
   end
 
   defp run_generic(resource, action, input, opts, ctx) do
@@ -362,6 +367,19 @@ defmodule AshAi.Tool.Execution do
     |> AshAi.Tool.identity_keys(identity)
     |> Enum.map(fn key ->
       {key, Map.get(arguments, to_string(key))}
+    end)
+  end
+
+  # The get_by fields were already validated at compile time and schema build,
+  # so only their names are needed here.
+  defp get_by_filter(get_by, arguments) do
+    get_by
+    |> List.wrap()
+    |> Map.new(fn field_name ->
+      case Map.get(arguments, to_string(field_name)) do
+        nil -> throw({:tool_error, "Missing required get_by argument: #{field_name}"})
+        value -> {field_name, value}
+      end
     end)
   end
 

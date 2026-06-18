@@ -40,6 +40,10 @@ tool :list_artists, Artist, :read
 ```
 
 ```
+tool :get_artist_by_id, Artist, :read, get_by: :id
+```
+
+```
 tool :create_artist, Artist, :create, description: "Create a new artist"
 ```
 
@@ -74,6 +78,7 @@ tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 | [`async`](#tools-tool-async){: #tools-tool-async } | `boolean` | `true` |  |
 | [`description`](#tools-tool-description){: #tools-tool-description } | `String.t` |  | A description for the tool. Defaults to the action's description. |
 | [`identity`](#tools-tool-identity){: #tools-tool-identity } | `atom` |  | The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely. |
+| [`get_by`](#tools-tool-get_by){: #tools-tool-get_by } | `atom \| list(atom)` |  | For read actions, a field or list of fields used to fetch a single record. The fields must be public and filterable. |
 | [`_meta`](#tools-tool-_meta){: #tools-tool-_meta } | `any` | `%{}` | Optional metadata map for tool integrations. Supports provider-specific extensions like OpenAI metadata. Keys and values should be strings to comply with JSON-RPC serialization. |
 | [`ui`](#tools-tool-ui){: #tools-tool-ui } | `atom \| String.t` |  | The `mcp_ui_resource` name (atom) or a `ui://` URI string for MCP Apps. Shortcut for setting `_meta.ui.resourceUri`. When an atom is given, the URI is resolved from the matching `mcp_ui_resource` declaration. |
 

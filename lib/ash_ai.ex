@@ -33,6 +33,7 @@ defmodule AshAi do
       :async,
       :domain,
       :identity,
+      :get_by,
       :description,
       :action_parameters,
       :arguments,
@@ -87,6 +88,45 @@ defmodule AshAi do
 
         identity ->
           identity.keys
+      end
+    end
+
+    @doc """
+    Resolves the fields used to address a single record for read tools.
+    """
+    def get_by_fields(_resource, nil), do: []
+
+    def get_by_fields(resource, get_by) do
+      get_by
+      |> List.wrap()
+      |> Enum.map(fn field_name ->
+        field = Ash.Resource.Info.field(resource, field_name)
+
+        case validate_get_by_field(field, field_name, resource) do
+          :ok -> field
+          {:error, message} -> raise ArgumentError, message
+        end
+      end)
+    end
+
+    @doc """
+    Checks that a field resolved for `get_by` exists and is public and filterable.
+    """
+    def validate_get_by_field(nil, field_name, resource) do
+      {:error,
+       "`#{inspect(field_name)}` is not a valid attribute, calculation or aggregate on #{inspect(resource)}"}
+    end
+
+    def validate_get_by_field(field, field_name, _resource) do
+      cond do
+        !Map.get(field, :public?, false) ->
+          {:error, "`#{inspect(field_name)}` is not public, so it cannot be used in `get_by`"}
+
+        !Map.get(field, :filterable?, false) ->
+          {:error, "`#{inspect(field_name)}` is not filterable, so it cannot be used in `get_by`"}
+
+        true ->
+          :ok
       end
     end
   end
