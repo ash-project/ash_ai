@@ -77,14 +77,68 @@ However, as of the writing of this guide, it requires setting a previous protoco
 
 #### Roadmap
 
-- Implement OAuth2 flow with AshAuthentication (long term)
 - Implement sessions, and provide a session id context to tools (this code is just commented out, and can be uncommented, just needs timeout logic for inactive sesions)
 
 #### Installation
 
 ##### Authentication
 
-We don't currently support the OAuth2 flow out of the box with AshAi, but the goal is to eventually support this with AshAuthentication. You can always implement that yourself, but the quickest way to value is to use the new `api_key` strategy.
+You have two options for authenticating requests to the MCP server. Pick based
+on who your clients are:
+
+- **OAuth 2.1** — the right choice for "remote" MCP clients that self-register
+  and run the standard OAuth flow (Claude.ai connectors, ChatGPT Apps SDK, IDEs
+  with OAuth support, etc.). Use [`ash_authentication_oauth2_server`](https://hexdocs.pm/ash_authentication_oauth2_server),
+  which provides a full OAuth 2.1 authorization server (PKCE, dynamic client
+  registration, discovery metadata) designed specifically to host MCP servers.
+- **API keys** — the quickest way to value when your clients are configured by
+  hand with a static credential (local IDE setups, scripts, internal tools).
+
+###### Option 1: OAuth 2.1 (recommended for remote MCP clients)
+
+Install the OAuth server:
+
+```bash
+mix igniter.install ash_authentication_oauth2_server
+```
+
+This scaffolds the OAuth resources, wires them into your `Accounts` domain, and
+generates an `Oauth2Server` config module. Follow the post-install notice to
+mount the OAuth routes (`oauth2_server_consent_routes` and
+`oauth2_server_protocol_routes`) in your router.
+
+> #### Dynamic client registration {: .tip}
+>
+> Remote MCP clients (Claude.ai, ChatGPT, etc.) self-register, so they need
+> dynamic client registration. This is the default when using the installer,
+> but if you install it manually, make sure to set `dcr_enabled?: true` on 
+> your `Oauth2Server` config module — see the `ash_authentication_oauth2_server` 
+> docs.
+
+Then create a pipeline for `:mcp` that validates bearer tokens with the
+`BearerPlug`:
+
+```elixir
+pipeline :mcp do
+  plug AshAuthentication.Phoenix.Oauth2Server.BearerPlug,
+    oauth2_server: YourApp.Oauth2Server,
+    # Use `required?: false` to allow unauthenticated
+    # users to connect, for example if some tools
+    # are publicly accessible.
+    required?: true
+end
+```
+
+The plug loads the user from the token's `sub` claim and sets it as the conn's
+actor, so your tools run with the authenticated user just like any other Ash
+request. The verified JWT claims (including granted scopes) are available on
+`conn.assigns.oauth_claims` if you want to gate tools on scopes — see the
+`AshAuthentication.Phoenix.Oauth2Server.BearerPlug` docs for the patterns.
+
+###### Option 2: API keys
+
+If your clients are configured by hand with a static credential, the `api_key`
+strategy is the quickest way to value.
 
 If you haven't installed `AshAuthentication` yet, install it like so: `mix igniter.install ash_authentication --auth-strategy api_key`.
 If its already been installed, and you haven't set up API keys, use `mix ash_authentication.add_strategy api_key`.
