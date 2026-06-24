@@ -243,6 +243,10 @@ defmodule AshAi.Serializer do
             match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
           acc
 
+        match?(%Ash.Resource.Attribute{}, field) &&
+            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
+          acc
+
         true ->
           new_load =
             load
