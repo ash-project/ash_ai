@@ -219,32 +219,7 @@ defmodule AshAi.Serializer do
         !field ->
           acc
 
-        match?(%Ash.Resource.Relationships.HasMany{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Relationships.HasOne{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Relationships.BelongsTo{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Relationships.ManyToMany{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Calculation{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Aggregate{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
-          acc
-
-        match?(%Ash.Resource.Attribute{}, field) &&
-            match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
+        match?(%Ash.NotLoaded{}, Map.get(record, field.name)) ->
           acc
 
         true ->
