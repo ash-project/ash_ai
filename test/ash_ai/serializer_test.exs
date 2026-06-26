@@ -42,15 +42,38 @@ defmodule AshAi.SerializerTest do
     end
   end
 
+  defmodule PartialSelectResource do
+    use Ash.Resource,
+      domain: AshAi.SerializerTest.TestDomain,
+      data_layer: Ash.DataLayer.Ets
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+      attribute :name, :string, public?: true
+      attribute :amount, :decimal, public?: true
+    end
+
+    actions do
+      defaults [:create]
+      default_accept [:name, :amount]
+
+      read :read_name_only do
+        prepare build(select: [:name])
+      end
+    end
+  end
+
   defmodule TestDomain do
     use Ash.Domain, extensions: [AshAi]
 
     resources do
       resource UnionResource
+      resource PartialSelectResource
     end
 
     tools do
       tool :read_union_resources, UnionResource, :read
+      tool :read_partial_select, PartialSelectResource, :read_name_only
     end
   end
 
@@ -77,6 +100,27 @@ defmodule AshAi.SerializerTest do
       assert item["data"]["type"] == "embedded"
       assert item["data"]["label"] == "hello"
       assert item["name"] == "test"
+    end
+  end
+
+  describe "Tools.execute with partial select" do
+    test "skips NotLoaded attributes when prepare build(select: ...) is used" do
+      PartialSelectResource
+      |> Ash.Changeset.for_create(:create, %{
+        name: "widget",
+        amount: Decimal.new("12.50")
+      })
+      |> Ash.create!()
+
+      [tool] =
+        AshAi.exposed_tools(actions: [{PartialSelectResource, [:read_name_only]}])
+
+      assert {:ok, json, _result} = AshAi.Tools.execute(tool, %{}, %{})
+
+      decoded = Jason.decode!(json)
+      [item] = decoded
+      assert item["name"] == "widget"
+      refute Map.has_key?(item, "amount")
     end
   end
 end
