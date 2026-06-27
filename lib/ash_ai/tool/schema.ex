@@ -108,6 +108,8 @@ defmodule AshAi.Tool.Schema do
         %{
           input: %{
             type: :object,
+            description:
+              "Action arguments. All values for this tool's parameters must be nested under this `input` object — do not pass them at the top level.",
             properties: properties,
             additionalProperties: false,
             required: Enum.uniq(required_action_arguments ++ required_tool_arguments)

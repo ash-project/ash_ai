@@ -32,13 +32,14 @@ defmodule AshAi.Tool.Builder do
     name = to_string(tool_def.name)
     strict? = Keyword.get(opts, :strict, true)
 
-    description =
+    base_description =
       String.trim(
         tool_def.description || tool_def.action.description ||
           "Call the #{tool_def.action.name} tool"
       )
 
     parameter_schema = Schema.for_tool(tool_def, strict?: strict?)
+    description = append_input_shape_hint(base_description, parameter_schema)
 
     callback_fn = build_callback(tool_def)
 
@@ -52,6 +53,27 @@ defmodule AshAi.Tool.Builder do
 
     {tool, callback_fn}
   end
+
+  # Append a one-line reminder of the call shape so models that occasionally
+  # drop the `input` wrapper see it spelled out alongside the description.
+  defp append_input_shape_hint(description, %{"properties" => %{"input" => input}})
+       when is_map(input) do
+    case Map.get(input, "properties") do
+      props when is_map(props) and map_size(props) > 0 ->
+        keys = props |> Map.keys() |> Enum.sort()
+        param_list = keys |> Enum.map(&"`#{&1}`") |> Enum.join(", ")
+        first = hd(keys)
+
+        description <>
+          "\n\nCall shape: nest all parameters (#{param_list}) under an `input` object — " <>
+          "e.g. `{\"input\": {\"#{first}\": ...}}`. Do not pass parameters at the top level."
+
+      _ ->
+        description
+    end
+  end
+
+  defp append_input_shape_hint(description, _schema), do: description
 
   defp build_callback(tool_def) do
     fn arguments, context ->

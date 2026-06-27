@@ -100,131 +100,295 @@ defmodule AshAi.ToolLoop do
 
   defp next_stream_chunk(%{state: :done} = state), do: {:halt, state}
 
-  defp next_stream_chunk(state) do
-    case stream_iteration(state) do
-      {:continue, events, new_state} ->
-        {events, new_state}
+  # Mid-iteration: tool calls have already been announced. Run tools one at a
+  # time, yielding a `:tool_result` event after each so the UI can render
+  # tool-call rows as in-flight before their results land.
+  defp next_stream_chunk(%{state: {:running_tools, [tc | rest], iteration}} = state) do
+    {result, content} = run_single_tool(tc, state.registry, state.context)
 
-      {:done, events, result} ->
-        {events ++ [{:done, result}], %{state | state: :done}}
+    new_messages = state.messages ++ [Context.tool_result(tc.id, content)]
+    result_event = {:tool_result, %{id: tc.id, result: result}}
+
+    if rest == [] do
+      iter_event = {:iteration, %IterationEvent{iteration: iteration + 1}}
+
+      new_state = %{
+        state
+        | messages: new_messages,
+          iteration: iteration + 1,
+          state: :running
+      }
+
+      {[result_event, iter_event], new_state}
+    else
+      new_state = %{
+        state
+        | messages: new_messages,
+          state: {:running_tools, rest, iteration}
+      }
+
+      {[result_event], new_state}
     end
   end
 
-  defp cleanup_stream(_state), do: :ok
+  # Mid-LLM-stream: pull one chunk at a time from the underlying ReqLLM
+  # stream. Yield `:content` events as text deltas arrive so the consumer
+  # (and the UI) sees text appear in real time. When the stream finishes,
+  # transition either to `:running_tools` or to `:done`.
+  defp next_stream_chunk(%{state: {:streaming_llm, cont, accum}} = state) do
+    case advance_llm_stream(cont) do
+      {:next, chunk, new_cont} ->
+        {events, new_accum} = process_llm_chunk(chunk, accum)
+        {events, %{state | state: {:streaming_llm, new_cont, new_accum}}}
 
-  defp stream_iteration(state) do
+      :exhausted ->
+        finalize_llm_stream(state, accum)
+    end
+  end
+
+  defp next_stream_chunk(%{state: :running} = state) do
     %{
       req_llm: req_llm,
       model: model,
       messages: messages,
       tools: tools,
-      registry: registry,
       req_llm_opts: req_llm_opts,
-      context: context,
       iteration: iteration,
       max_iterations: max_iterations,
-      tool_calls_made: tool_calls_made,
-      usage_acc: usage_acc
+      tool_calls_made: tool_calls_made
     } = state
 
-    if max_iterations_reached?(iteration, max_iterations) do
+    cond do
+      max_iterations_reached?(iteration, max_iterations) ->
+        result = %Result{
+          messages: messages,
+          final_text: "",
+          iterations: iteration - 1,
+          tool_calls_made: tool_calls_made,
+          usage: state.usage_acc
+        }
+
+        {[{:error, :max_iterations_reached}, {:done, result}], %{state | state: :done}}
+
+      true ->
+        case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
+          {:ok, stream_response} ->
+            cont = start_llm_stream(stream_response.stream)
+
+            new_state = %{
+              state
+              | state: {:streaming_llm, cont, fresh_llm_accum(stream_response)}
+            }
+
+            {[], new_state}
+
+          {:error, reason} ->
+            result = %Result{
+              messages: messages,
+              final_text: "",
+              iterations: iteration - 1,
+              tool_calls_made: tool_calls_made,
+              usage: state.usage_acc
+            }
+
+            {[{:error, reason}, {:done, result}], %{state | state: :done}}
+        end
+    end
+  end
+
+  defp cleanup_stream(%{state: {:streaming_llm, {:suspended, _, cont}, _}}) do
+    _ = cont.({:halt, nil})
+    :ok
+  end
+
+  defp cleanup_stream(_state), do: :ok
+
+  # Returns either {:next, chunk, new_state} or :exhausted. `state` is the
+  # tuple returned by Enumerable.reduce on each step.
+  defp advance_llm_stream({:suspended, chunk, cont}) do
+    {:next, chunk, cont.({:cont, nil})}
+  end
+
+  defp advance_llm_stream({:done, _}), do: :exhausted
+  defp advance_llm_stream({:halted, _}), do: :exhausted
+
+  # Produces the initial Enumerable.reduce return value. We use `:suspend` to
+  # pause after every element, so each subsequent `cont.({:cont, nil})` yields
+  # the next element of the underlying lazy stream.
+  defp start_llm_stream(stream) do
+    Enumerable.reduce(stream, {:cont, nil}, fn elem, _ -> {:suspend, elem} end)
+  end
+
+  defp fresh_llm_accum(stream_response) do
+    %{
+      stream_response: stream_response,
+      text_chunks: [],
+      thinking_chunks: [],
+      tool_call_starts: [],
+      arg_fragments: %{},
+      finish_reason: nil,
+      chunk_tool_call_ids: [],
+      usage: nil
+    }
+  end
+
+  # Single-chunk processing. Returns {events, updated_accum}.
+  defp process_llm_chunk(chunk, accum) do
+    case chunk.type do
+      :content ->
+        text = chunk.text || ""
+        events = if text == "", do: [], else: [{:content, text}]
+        {events, %{accum | text_chunks: [text | accum.text_chunks]}}
+
+      :thinking ->
+        text = chunk.text || ""
+        {[], %{accum | thinking_chunks: [text | accum.thinking_chunks]}}
+
+      :tool_call ->
+        metadata = chunk.metadata || %{}
+        id = metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
+        index = metadata_field(metadata, :index) || 0
+
+        partial = %{
+          id: id,
+          name: chunk.name,
+          arguments: chunk.arguments || %{},
+          index: index
+        }
+
+        accum = %{
+          accum
+          | tool_call_starts: [partial | accum.tool_call_starts],
+            chunk_tool_call_ids: accum.chunk_tool_call_ids ++ [id]
+        }
+
+        {[], accum}
+
+      :meta ->
+        meta = chunk.metadata || %{}
+        accum = handle_meta(meta, accum)
+        {[], accum}
+
+      _ ->
+        {[], accum}
+    end
+  end
+
+  defp handle_meta(%{tool_call_args: %{index: index, fragment: fragment}}, accum) do
+    existing = Map.get(accum.arg_fragments, index, "")
+    %{accum | arg_fragments: Map.put(accum.arg_fragments, index, existing <> fragment)}
+  end
+
+  defp handle_meta(%{finish_reason: reason}, accum) when not is_nil(reason) do
+    %{accum | finish_reason: reason}
+  end
+
+  defp handle_meta(%{usage: usage}, accum) when is_map(usage) do
+    merged = merge_usage(accum.usage, usage)
+    %{accum | usage: merged}
+  end
+
+  defp handle_meta(_meta, accum), do: accum
+
+  defp merge_usage(nil, b), do: b
+
+  defp merge_usage(a, b) do
+    Map.merge(a, b, fn _k, va, vb ->
+      cond do
+        is_number(va) and is_number(vb) -> max(va, vb)
+        true -> vb
+      end
+    end)
+  end
+
+  # Stream is finished: build classification, emit assistant_message and
+  # tool_calls, transition to next phase.
+  defp finalize_llm_stream(state, accum) do
+    %{
+      messages: messages,
+      iteration: iteration,
+      tool_calls_made: tool_calls_made,
+      usage_acc: usage_acc,
+      model: model
+    } = state
+
+    classification = classify_accum(accum)
+
+    usage_acc =
+      usage_acc
+      |> accumulate_usage(accum.usage)
+      |> accumulate_usage(safe_stream_usage(accum.stream_response))
+
+    usage_events =
+      case accum.usage do
+        nil -> []
+        usage -> [{:usage, usage}]
+      end
+
+    if classification.type == :tool_calls do
+      tool_calls =
+        classification.tool_calls
+        |> normalize_tool_calls(accum.chunk_tool_call_ids)
+        |> unprocessed_tool_calls(messages)
+
+      new_messages =
+        append_tool_call_turn(
+          messages,
+          classification.text,
+          classification.thinking,
+          tool_calls
+        )
+
+      assistant_events =
+        if classification.text && classification.text != "",
+          do: [{:assistant_message, classification.text}],
+          else: []
+
+      tool_call_events = Enum.map(tool_calls, &{:tool_call, &1})
+
+      events = usage_events ++ assistant_events ++ tool_call_events
+
+      new_state = %{
+        state
+        | messages: new_messages,
+          tool_calls_made: tool_calls_made ++ tool_calls,
+          usage_acc: usage_acc,
+          state: {:running_tools, tool_calls, iteration}
+      }
+
+      {events, new_state}
+    else
+      new_messages =
+        maybe_append_assistant_message(
+          messages,
+          classification.text,
+          classification.thinking,
+          model
+        )
+
       result = %Result{
-        messages: messages,
-        final_text: "",
-        iterations: iteration - 1,
+        messages: new_messages,
+        final_text: classification.text,
+        iterations: iteration,
         tool_calls_made: tool_calls_made,
         usage: usage_acc
       }
 
-      {:done, [{:error, :max_iterations_reached}], result}
-    else
-      case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
-        {:ok, stream_response} ->
-          chunks = Enum.to_list(stream_response.stream)
-          content_events = content_events(chunks)
-          chunk_tool_call_ids = chunk_tool_call_ids(chunks)
-          usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
+      assistant_events =
+        if classification.text && classification.text != "",
+          do: [{:assistant_message, classification.text}],
+          else: []
 
-          classification =
-            stream_response
-            |> Map.put(:stream, chunks)
-            |> ReqLLM.StreamResponse.classify()
-
-          if classification.type == :tool_calls do
-            tool_calls =
-              classification.tool_calls
-              |> normalize_tool_calls(chunk_tool_call_ids)
-              |> unprocessed_tool_calls(messages)
-
-            messages =
-              append_tool_call_turn(
-                messages,
-                classification.text,
-                classification.thinking,
-                tool_calls
-              )
-
-            {messages, tool_events} = run_tools_streaming(tool_calls, messages, registry, context)
-
-            new_state = %{
-              state
-              | messages: messages,
-                iteration: iteration + 1,
-                tool_calls_made: tool_calls_made ++ tool_calls,
-                usage_acc: usage_acc
-            }
-
-            {:continue,
-             content_events ++
-               Enum.map(tool_calls, &{:tool_call, &1}) ++
-               tool_events ++
-               [{:iteration, %IterationEvent{iteration: iteration + 1}}], new_state}
-          else
-            messages =
-              maybe_append_assistant_message(
-                messages,
-                classification.text,
-                classification.thinking,
-                model
-              )
-
-            result = %Result{
-              messages: messages,
-              final_text: classification.text,
-              iterations: iteration,
-              tool_calls_made: tool_calls_made,
-              usage: usage_acc
-            }
-
-            {:done, content_events, result}
-          end
-
-        {:error, reason} ->
-          result = %Result{
-            messages: messages,
-            final_text: "",
-            iterations: iteration - 1,
-            tool_calls_made: tool_calls_made,
-            usage: usage_acc
-          }
-
-          {:done, [{:error, reason}], result}
-      end
+      {usage_events ++ assistant_events ++ [{:done, result}],
+       %{state | usage_acc: usage_acc, state: :done}}
     end
-  end
-
-  defp content_events(chunks) do
-    chunks
-    |> Enum.filter(&(&1.type == :content))
-    |> Enum.map(fn chunk -> {:content, chunk.text || ""} end)
   end
 
   # Sums per-iteration usage maps into a running accumulator. Numeric
   # fields (input_tokens, output_tokens, cached_tokens, *_cost, ...) are
   # summed so the final `Result.usage` reflects everything billed across
   # the entire tool loop. Non-numeric fields fall through to the most
-  # recent iteration's value, since they're typically per-call metadata
-  # like `:provider_meta` or `:model`.
+  # recent iteration's value.
   defp accumulate_usage(acc, nil), do: acc
   defp accumulate_usage(acc, usage) when usage == %{}, do: acc
 
@@ -235,26 +399,61 @@ defmodule AshAi.ToolLoop do
     end)
   end
 
-  # ReqLLM.StreamResponse.usage/1 awaits a metadata-handle pid; test
-  # fixtures stub the field with non-pid values like `:ignored`, so we
-  # guard against that here rather than failing the whole loop.
-  defp safe_stream_usage(%{metadata_handle: handle} = stream_response) when is_pid(handle) do
-    ReqLLM.StreamResponse.usage(stream_response)
+  defp classify_accum(accum) do
+    text =
+      accum.text_chunks
+      |> Enum.reverse()
+      |> Enum.join()
+
+    thinking =
+      accum.thinking_chunks
+      |> Enum.reverse()
+      |> Enum.join()
+
+    tool_calls = reconstruct_tool_calls(accum)
+    finish_reason = normalize_finish_reason(accum.finish_reason)
+
+    type =
+      cond do
+        tool_calls != [] -> :tool_calls
+        finish_reason == :tool_calls -> :tool_calls
+        true -> :final_answer
+      end
+
+    %{type: type, text: text, thinking: thinking, tool_calls: tool_calls, finish_reason: finish_reason}
   end
 
-  defp safe_stream_usage(_), do: nil
+  defp reconstruct_tool_calls(%{tool_call_starts: []}), do: []
 
-  defp run_tools_streaming(tool_calls, messages, registry, ctx) do
-    Enum.reduce(tool_calls, {messages, []}, fn tool_call, {msgs, events} ->
-      case run_single_tool(tool_call, registry, ctx) do
-        {result, content} ->
-          {
-            msgs ++ [Context.tool_result(tool_call.id, content)],
-            events ++ [{:tool_result, %{id: tool_call.id, result: result}}]
-          }
+  defp reconstruct_tool_calls(accum) do
+    accum.tool_call_starts
+    |> Enum.reverse()
+    |> Enum.map(fn partial ->
+      case Map.get(accum.arg_fragments, partial.index) do
+        nil ->
+          partial |> Map.delete(:index)
+
+        json_str ->
+          case Jason.decode(json_str) do
+            {:ok, args} ->
+              partial |> Map.put(:arguments, args) |> Map.delete(:index)
+
+            {:error, _} ->
+              partial |> Map.delete(:index)
+          end
       end
     end)
   end
+
+  defp normalize_finish_reason(nil), do: nil
+  defp normalize_finish_reason(reason) when is_atom(reason), do: reason
+  defp normalize_finish_reason("stop"), do: :stop
+  defp normalize_finish_reason("end_turn"), do: :stop
+  defp normalize_finish_reason("tool_calls"), do: :tool_calls
+  defp normalize_finish_reason("tool_use"), do: :tool_calls
+  defp normalize_finish_reason("length"), do: :length
+  defp normalize_finish_reason("max_tokens"), do: :length
+  defp normalize_finish_reason(_), do: :unknown
 
   defp build_context(opts) do
     %{
@@ -299,8 +498,19 @@ defmodule AshAi.ToolLoop do
       case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
         {:ok, stream_response} ->
           chunks = Enum.to_list(stream_response.stream)
-          chunk_tool_call_ids = chunk_tool_call_ids(chunks)
-          usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
+
+          chunk_tool_call_ids =
+            chunks
+            |> Enum.filter(&(&1.type == :tool_call))
+            |> Enum.map(fn chunk ->
+              metadata = chunk.metadata || %{}
+              metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
+            end)
+
+          usage_acc =
+            usage_acc
+            |> accumulate_usage(usage_from_chunks(chunks))
+            |> accumulate_usage(safe_stream_usage(stream_response))
 
           classification =
             stream_response
@@ -360,6 +570,29 @@ defmodule AshAi.ToolLoop do
       end
     end
   end
+
+  defp usage_from_chunks(chunks) do
+    chunks
+    |> Enum.filter(&(&1.type == :meta))
+    |> Enum.reduce(nil, fn chunk, acc ->
+      meta = chunk.metadata || %{}
+
+      case Map.get(meta, :usage) || Map.get(meta, "usage") do
+        nil -> acc
+        usage when is_map(usage) -> merge_usage(acc, usage)
+        _ -> acc
+      end
+    end)
+  end
+
+  # Some providers expose final usage via `stream_response.metadata_handle`
+  # (a pid resolved by `ReqLLM.StreamResponse.usage/1`) rather than meta
+  # chunks. Test fixtures may stub the field with non-pid values, so guard.
+  defp safe_stream_usage(%{metadata_handle: handle} = stream_response) when is_pid(handle) do
+    ReqLLM.StreamResponse.usage(stream_response)
+  end
+
+  defp safe_stream_usage(_), do: nil
 
   defp run_tools(tool_calls, messages, registry, ctx) do
     Enum.reduce(tool_calls, messages, fn tool_call, msgs ->
@@ -436,15 +669,6 @@ defmodule AshAi.ToolLoop do
     parts
   end
 
-  defp chunk_tool_call_ids(chunks) do
-    chunks
-    |> Enum.filter(&(&1.type == :tool_call))
-    |> Enum.map(fn chunk ->
-      metadata = chunk.metadata || %{}
-      metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
-    end)
-  end
-
   defp normalize_tool_calls(tool_calls, chunk_tool_call_ids) do
     tool_calls
     |> List.wrap()
@@ -516,50 +740,8 @@ defmodule AshAi.ToolLoop do
   defp append_tool_call_turn(messages, _text, _thinking, []), do: messages
 
   defp append_tool_call_turn(messages, text, thinking, tool_calls) do
-    case merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
-      {:ok, merged_messages} ->
-        merged_messages
-
-      :no_merge ->
-        content = build_assistant_content(text, thinking)
-        messages ++ [Context.assistant(content, tool_calls: tool_calls)]
-    end
-  end
-
-  defp merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
-    {trailing_tools_rev, rest_rev} =
-      messages
-      |> Enum.reverse()
-      |> Enum.split_while(fn message -> Map.get(message, :role) == :tool end)
-
-    trailing_tools = Enum.reverse(trailing_tools_rev)
-    rest = Enum.reverse(rest_rev)
-
-    case List.last(rest) do
-      %{role: :assistant} = assistant ->
-        if has_tool_calls?(assistant.tool_calls) do
-          prefix = Enum.drop(rest, -1)
-
-          merged_tool_calls =
-            merge_tool_call_lists(
-              assistant.tool_calls || [],
-              normalize_context_tool_calls(tool_calls)
-            )
-
-          merged_assistant = %{
-            assistant
-            | tool_calls: merged_tool_calls,
-              content: merge_assistant_content(assistant.content, text, thinking)
-          }
-
-          {:ok, prefix ++ [merged_assistant] ++ trailing_tools}
-        else
-          :no_merge
-        end
-
-      _ ->
-        :no_merge
-    end
+    content = build_assistant_content(text, thinking)
+    messages ++ [Context.assistant(content, tool_calls: tool_calls)]
   end
 
   defp unprocessed_tool_calls(tool_calls, messages) do
@@ -578,26 +760,6 @@ defmodule AshAi.ToolLoop do
     end)
   end
 
-  defp merge_tool_call_lists(existing, new_calls) do
-    {merged, _seen_ids} =
-      Enum.reduce(List.wrap(existing) ++ List.wrap(new_calls), {[], MapSet.new()}, fn call,
-                                                                                      {acc, seen} ->
-        case tool_call_id(call) do
-          id when is_binary(id) ->
-            if MapSet.member?(seen, id) do
-              {acc, seen}
-            else
-              {acc ++ [call], MapSet.put(seen, id)}
-            end
-
-          _ ->
-            {acc ++ [call], seen}
-        end
-      end)
-
-    merged
-  end
-
   defp tool_call_id(%ReqLLM.ToolCall{} = tool_call), do: tool_call.id
 
   defp tool_call_id(tool_call) when is_map(tool_call) do
@@ -608,60 +770,6 @@ defmodule AshAi.ToolLoop do
   end
 
   defp tool_call_id(_), do: nil
-
-  defp has_tool_calls?(tool_calls) when is_list(tool_calls), do: tool_calls != []
-  defp has_tool_calls?(_), do: false
-
-  defp normalize_context_tool_calls(tool_calls) do
-    Context.assistant("", tool_calls: tool_calls).tool_calls || []
-  end
-
-  defp merge_assistant_content(content, _text, _thinking) when content == [], do: content
-
-  defp merge_assistant_content(content, text, _thinking) when text in [nil, ""], do: content
-
-  defp merge_assistant_content(content, text, thinking) do
-    existing_text = assistant_text(content)
-
-    combined_text =
-      if existing_text == "" do
-        text
-      else
-        existing_text <> "\n" <> text
-      end
-
-    # Preserve non-text content parts (e.g. thinking, images) unless
-    # new thinking is provided, in which case we replace old thinking.
-    other_parts =
-      Enum.reject(content, fn
-        %ContentPart{type: :text} -> true
-        %{type: :text} -> true
-        _ -> false
-      end)
-
-    parts = [ContentPart.text(combined_text)]
-
-    parts =
-      if thinking != "" do
-        parts ++ [ContentPart.thinking(thinking)]
-      else
-        parts ++ other_parts
-      end
-
-    parts
-  end
-
-  defp assistant_text(content_parts) when is_list(content_parts) do
-    content_parts
-    |> Enum.map_join(fn
-      %ContentPart{type: :text, text: text} when is_binary(text) -> text
-      %{type: :text, text: text} when is_binary(text) -> text
-      _ -> ""
-    end)
-    |> String.trim()
-  end
-
-  defp assistant_text(_), do: ""
 
   defp metadata_field(metadata, key) when is_map(metadata) do
     Map.get(metadata, key) || Map.get(metadata, to_string(key))

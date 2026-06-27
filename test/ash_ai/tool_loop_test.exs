@@ -533,7 +533,7 @@ defmodule AshAi.ToolLoopTest do
     assert match?({:done, %ToolLoop.Result{final_text: "done"}}, List.last(events))
   end
 
-  test "run/2 merges sequential tool-call assistant turns into a single pending group" do
+  test "run/2 keeps sequential tool-call iterations as separate assistant turns" do
     Process.delete({FakeReqLLMSequentialToolCalls, :call_count})
     messages = [Context.user("trigger tools")]
 
@@ -547,9 +547,11 @@ defmodule AshAi.ToolLoopTest do
     assistant_tool_turns =
       Enum.filter(final_messages, &tool_call?/1)
 
-    assert length(assistant_tool_turns) == 1
+    assert length(assistant_tool_turns) == 2
 
-    assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+    assert Enum.flat_map(assistant_tool_turns, fn turn ->
+             Enum.map(turn.tool_calls, & &1.id)
+           end) == ["call_1", "call_2"]
 
     tool_result_turns =
       Enum.filter(final_messages, fn message ->
@@ -705,7 +707,7 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
-  test "run/2 merges tool-call turns even when each turn includes assistant text" do
+  test "run/2 keeps each tool-call iteration's text on its own assistant turn" do
     Process.delete({FakeReqLLMToolCallsWithInterleavedText, :call_count})
     messages = [Context.user("trigger tools")]
 
@@ -718,20 +720,25 @@ defmodule AshAi.ToolLoopTest do
 
     assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
-    assert length(assistant_tool_turns) == 1
+    assert length(assistant_tool_turns) == 2
 
-    assistant_text =
-      assistant_tool_turns
-      |> hd()
-      |> Map.get(:content, [])
-      |> Enum.map_join(fn
-        %{type: :text, text: text} when is_binary(text) -> text
-        _ -> ""
-      end)
+    [first_turn, second_turn] = assistant_tool_turns
 
-    assert assistant_text =~ "First tool pass."
-    assert assistant_text =~ "Second tool pass."
-    assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+    assert assistant_turn_text(first_turn) =~ "First tool pass."
+    assert assistant_turn_text(second_turn) =~ "Second tool pass."
+
+    assert Enum.flat_map(assistant_tool_turns, fn turn ->
+             Enum.map(turn.tool_calls, & &1.id)
+           end) == ["call_1", "call_2"]
+  end
+
+  defp assistant_turn_text(turn) do
+    turn
+    |> Map.get(:content, [])
+    |> Enum.map_join(fn
+      %{type: :text, text: text} when is_binary(text) -> text
+      _ -> ""
+    end)
   end
 
   describe "trailing assistant message handling" do
@@ -872,19 +879,12 @@ defmodule AshAi.ToolLoopTest do
 
       assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
-      assert length(assistant_tool_turns) == 1
+      assert length(assistant_tool_turns) == 2
 
-      assistant_text =
-        assistant_tool_turns
-        |> hd()
-        |> Map.get(:content, [])
-        |> Enum.map_join(fn
-          %{type: :text, text: text} when is_binary(text) -> text
-          _ -> ""
-        end)
+      [first_turn, second_turn] = assistant_tool_turns
 
-      assert assistant_text =~ "First tool pass."
-      assert assistant_text =~ "Second tool pass."
+      assert assistant_turn_text(first_turn) =~ "First tool pass."
+      assert assistant_turn_text(second_turn) =~ "Second tool pass."
 
       assert_tool_results_after_tool_calls(final_messages)
     end

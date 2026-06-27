@@ -224,7 +224,7 @@ defmodule AshAi.Dsl do
     ],
     target: AshAi.Tool,
     schema: @tool_schema,
-    args: [:name, {:optional, :resource}, :action],
+    args: [:name, {:optional, :resource, nil}, :action],
     entities: [
       arguments: [@tool_argument]
     ]

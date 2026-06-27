@@ -152,6 +152,9 @@ defmodule AshAi.MixProject do
   defp deps do
     [
       {:ash, ash_version("~> 3.0 and >= 3.7.1")},
+      {:spark, "~> 2.7"},
+      {:durable_server, "~> 0.1"},
+      {:ekv, "~> 0.4"},
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
       {:req_llm, "~> 1.7"},
