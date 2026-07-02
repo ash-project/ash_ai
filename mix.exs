@@ -28,8 +28,13 @@ defmodule AshAi.MixProject do
       dialyzer: [plt_add_apps: [:ash, :mix]],
       description: @description,
       source_url: @source_url,
-      homepage_url: @source_url,
-      preferred_cli_env: [
+      homepage_url: @source_url
+    ]
+  end
+
+  def cli do
+    [
+      preferred_envs: [
         "test.create": :test,
         "test.migrate": :test,
         "test.rollback": :test,

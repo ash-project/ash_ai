@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2024 ash_ai contributors <https://github.com/ash-project/ash_ai/graphs/contributors>
+#
+# SPDX-License-Identifier: MIT
+
 defmodule AshAi.TestRepo.Migrations.RunCodegenExtensions1 do
   @moduledoc """
   Installs any extensions that are mentioned in the repo's `installed_extensions/0` callback

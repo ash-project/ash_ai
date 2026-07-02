@@ -272,7 +272,7 @@ When discovering tools with `AshAi.exposed_tools/1` and `actions: [{Resource, ..
 - tools defined on the domain for that resource
 - tools defined directly on the resource
 
-For migration guidance around `extra_tools`, `req_llm_opts`, and legacy adapter mapping, see [LangChain to ReqLLM Migration Guide](/documentation/topics/langchain-to-reqllm-migration.md).
+For migration guidance around `extra_tools`, `req_llm_opts`, and legacy adapter mapping, see [LangChain to ReqLLM Migration Guide](https://github.com/ash-project/ash_ai/blob/main/documentation/topics/langchain-to-reqllm-migration.md).
 
 ## Expose content as MCP resources
 
@@ -429,7 +429,7 @@ config :req_llm, google_api_key: System.fetch_env!("GOOGLE_API_KEY")
 
 For AshAi-specific model notes:
 - [Google Gemini 2.5](/documentation/models/gemini.md)
-- [LangChain to ReqLLM Migration Guide](/documentation/topics/langchain-to-reqllm-migration.md)
+- [LangChain to ReqLLM Migration Guide](https://github.com/ash-project/ash_ai/blob/main/documentation/topics/langchain-to-reqllm-migration.md)
 
 ## Vectorization
 

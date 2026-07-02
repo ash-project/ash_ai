@@ -5,7 +5,6 @@
 defmodule AshAi.Test.EmbeddingModel do
   @moduledoc false
   use AshAi.EmbeddingModel
-  require Logger
 
   @impl true
   def dimensions(_opts), do: 1536
