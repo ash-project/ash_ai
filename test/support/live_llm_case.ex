@@ -99,12 +99,12 @@ defmodule AshAi.LiveLLMCase do
     quote do
       case unquote(provider) do
         :openai ->
-          unless AshAi.LiveLLMCase.openai_configured?() do
+          if !AshAi.LiveLLMCase.openai_configured?() do
             flunk("OPENAI_API_KEY environment variable not set - cannot run live LLM test")
           end
 
         :anthropic ->
-          unless AshAi.LiveLLMCase.anthropic_configured?() do
+          if !AshAi.LiveLLMCase.anthropic_configured?() do
             flunk("ANTHROPIC_API_KEY environment variable not set - cannot run live LLM test")
           end
       end

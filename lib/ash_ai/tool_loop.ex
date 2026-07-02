@@ -542,7 +542,7 @@ defmodule AshAi.ToolLoop do
 
           merged_tool_calls =
             merge_tool_call_lists(
-              assistant.tool_calls || [],
+              assistant.tool_calls,
               normalize_context_tool_calls(tool_calls)
             )
 
