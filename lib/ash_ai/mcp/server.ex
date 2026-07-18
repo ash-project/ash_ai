@@ -107,9 +107,11 @@ defmodule AshAi.Mcp.Server do
       "data: #{data}\n\n"
     ]
 
-    Enum.reduce(chunks, conn, fn chunk, conn ->
-      {:ok, conn} = Plug.Conn.chunk(conn, chunk)
-      conn
+    Enum.reduce_while(chunks, conn, fn chunk, conn ->
+      case Plug.Conn.chunk(conn, chunk) do
+        {:ok, conn} -> {:cont, conn}
+        {:error, _} -> {:halt, conn}
+      end
     end)
   end
 
