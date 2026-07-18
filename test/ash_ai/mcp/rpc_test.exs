@@ -7,7 +7,15 @@ defmodule AshAi.Mcp.ServerTest do
   import Plug.{Conn, Test}
 
   alias AshAi.Mcp.Router
+  alias AshAi.Mcp.Server
   alias AshAi.Test.Music
+
+  defmodule ClosedAdapter do
+    @moduledoc false
+    # Minimal adapter that reports the connection as closed, mirroring what a
+    # real adapter returns from `chunk/2` when the SSE client has disconnected.
+    def chunk(_state, _body), do: {:error, :closed}
+  end
 
   @opts [tools: [:list_artists], otp_app: :ash_ai]
 
@@ -97,6 +105,25 @@ defmodule AshAi.Mcp.ServerTest do
       # Check that our test artist is in the results
       artists = Jason.decode!(text)
       assert Enum.any?(artists, fn a -> a["name"] == "Test Artist" end)
+    end
+  end
+
+  describe "send_sse_event/4" do
+    test "writes the event chunks to an open connection" do
+      conn =
+        conn(:get, "/")
+        |> send_chunked(200)
+        |> Server.send_sse_event("message", "hello", "1")
+
+      assert conn.resp_body =~ "id: 1\n"
+      assert conn.resp_body =~ "event: message\n"
+      assert conn.resp_body =~ "data: hello\n\n"
+    end
+
+    test "returns the conn without raising when the client has disconnected" do
+      conn = %{conn(:get, "/") | adapter: {ClosedAdapter, :closed}, state: :chunked}
+
+      assert %Plug.Conn{} = Server.send_sse_event(conn, "message", "hello", "1")
     end
   end
 end
