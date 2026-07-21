@@ -11,6 +11,19 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.7.3](https://github.com/ash-project/ash_ai/compare/v0.7.2...v0.7.3) (2026-07-21)
+
+
+
+
+### Bug Fixes:
+
+* don't make union types filterable by [@zachdaniel](https://github.com/zachdaniel)
+
+* tolerate closed connection in MCP send_sse_event/4 by [@SAY-5](https://github.com/SAY-5) [(#214)](https://github.com/ash-project/ash_ai/pull/214)
+
+* adding placeholder pattern match for Attribute{} (#208) by RhettPoole [(#208)](https://github.com/ash-project/ash_ai/pull/208)
+
 ## [v0.7.2](https://github.com/ash-project/ash_ai/compare/v0.7.1...v0.7.2) (2026-06-12)
 
 
