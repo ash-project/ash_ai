@@ -787,6 +787,26 @@ defmodule AshAi.OpenApi do
     end
   end
 
+  @doc """
+  Whether a field's type can appear in generated filter schemas.
+
+  Union types — including NewType unions and arrays of them — are excluded,
+  matching AshJsonApi: there is no meaningful operator schema for a union.
+  """
+  def filterable_field?(%{type: type}, _resource), do: !union_type?(type)
+  def filterable_field?(_field, _resource), do: true
+
+  defp union_type?({:array, type}), do: union_type?(type)
+  defp union_type?(Ash.Type.Union), do: true
+
+  defp union_type?(type) do
+    if Ash.Type.NewType.new_type?(type) do
+      union_type?(Ash.Type.NewType.subtype_of(type))
+    else
+      false
+    end
+  end
+
   def raw_filter_type(%Ash.Resource.Calculation{} = calculation, resource) do
     {type, _constraints} = field_type(calculation, resource)
 

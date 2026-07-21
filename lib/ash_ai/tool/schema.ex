@@ -324,7 +324,9 @@ defmodule AshAi.Tool.Schema do
 
     {filterable_fields, available_operators} =
       Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
-      |> Enum.filter(&(&1.public? && &1.filterable?))
+      |> Enum.filter(
+        &(&1.public? && &1.filterable? && AshAi.OpenApi.filterable_field?(&1, resource))
+      )
       |> Enum.reduce({[], MapSet.new()}, fn field, {fields, ops} ->
         case AshAi.OpenApi.raw_filter_type(field, resource) do
           nil ->
@@ -420,7 +422,9 @@ defmodule AshAi.Tool.Schema do
             description: "Filter results",
             properties:
               Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
-              |> Enum.filter(&(&1.public? && &1.filterable?))
+              |> Enum.filter(
+                &(&1.public? && &1.filterable? && AshAi.OpenApi.filterable_field?(&1, resource))
+              )
               |> Map.new(fn field ->
                 {field.name, AshAi.OpenApi.raw_filter_type(field, resource)}
               end)

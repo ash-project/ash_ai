@@ -83,13 +83,56 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule FlexibleValue do
+    use Ash.Type.NewType,
+      subtype_of: :union,
+      constraints: [
+        types: [
+          text: [type: :string],
+          number: [type: :integer]
+        ]
+      ]
+  end
+
+  defmodule Widget do
+    use Ash.Resource,
+      domain: Music,
+      data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id, writable?: true
+      attribute :name, :string, public?: true
+      attribute :payload, FlexibleValue, public?: true
+
+      attribute :raw_payload, :union,
+        public?: true,
+        constraints: [types: [text: [type: :string], number: [type: :integer]]]
+
+      attribute :payloads, {:array, FlexibleValue}, public?: true
+    end
+
+    actions do
+      default_accept [:*]
+      defaults [:create, :read]
+    end
+  end
+
   defmodule Music do
     use Ash.Domain,
       extensions: [AshAi]
 
+    tools do
+      tool :list_widgets, Widget, :read
+    end
+
     resources do
       resource Artist
       resource Album
+      resource Widget
     end
   end
 
@@ -336,6 +379,30 @@ defmodule AshAi.OpenApiTest do
       assert actual.id.additionalProperties == false
       assert actual.id.properties.eq == %{type: :string, format: :uuid}
       assert actual.id.properties.in == %{type: :array, items: %{type: :string, format: :uuid}}
+    end
+  end
+
+  describe "union attributes in filter schemas" do
+    test "unions are excluded from generated filters instead of crashing" do
+      tool =
+        [actions: [{Widget, [:read]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      relaxed = AshAi.Tools.parameter_schema(tool, strict: false)
+      assert relaxed["properties"]["filter"]["description"] =~ "name"
+      refute relaxed["properties"]["filter"]["description"] =~ "payload"
+
+      full =
+        tool
+        |> struct(full_filter_schema?: true)
+        |> AshAi.Tools.parameter_schema(strict: false)
+
+      properties = full["properties"]["filter"]["properties"]
+      assert Map.has_key?(properties, "name")
+      refute Map.has_key?(properties, "payload")
+      refute Map.has_key?(properties, "raw_payload")
+      refute Map.has_key?(properties, "payloads")
     end
   end
 
