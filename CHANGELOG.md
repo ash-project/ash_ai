@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.8.1](https://github.com/ash-project/ash_ai/compare/v0.8.0...v0.8.1) (2026-07-29)
+
+
+
+
+### Bug Fixes:
+
+* detect more backwards compat scenarios by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.8.0](https://github.com/ash-project/ash_ai/compare/v0.7.3...v0.8.0) (2026-07-29)
 
 
