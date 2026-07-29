@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.8.0](https://github.com/ash-project/ash_ai/compare/v0.7.3...v0.8.0) (2026-07-29)
+
+
+
+
+### Features:
+
+* support protocol version 2026_07_28 by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v0.7.3](https://github.com/ash-project/ash_ai/compare/v0.7.2...v0.7.3) (2026-07-21)
 
 
