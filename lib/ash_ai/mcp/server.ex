@@ -9,14 +9,47 @@ defmodule AshAi.Mcp.Server do
   This module handles HTTP requests and responses according to the MCP specification,
   supporting both synchronous and streaming communication patterns.
   It also handles the core JSON-RPC message processing for the protocol.
+
+  ## Protocol versions
+
+  The server supports multiple protocol revisions in tandem on the same
+  endpoint:
+
+  * `2026-07-28`, which carries the protocol version, client identity, and
+    capabilities in each request's `_meta` and never performs an
+    `initialize` handshake, and
+  * the initialize-based revisions (`2025-06-18` and `2025-03-26`), which
+    negotiate via `initialize` and may use the `Mcp-Session-Id` header.
+
+  The revision is selected per request: an `initialize` request (or a
+  request carrying an initialize-based/absent `MCP-Protocol-Version` header
+  and no per-request version `_meta`) is served with initialize-based
+  semantics; a request declaring its protocol version in `_meta` (or in the
+  `MCP-Protocol-Version` header) is served statelessly per the `2026-07-28`
+  revision.
   """
 
   alias AshAi.Tool
 
+  # Protocol revisions that declare their version on every request
+  @per_request_versions ["2026-07-28"]
+  # Protocol revisions that negotiate their version via `initialize`
+  @initialize_based_versions ["2025-06-18", "2025-03-26"]
+  @supported_protocol_versions @per_request_versions ++ @initialize_based_versions
+
+  @meta_protocol_version "io.modelcontextprotocol/protocolVersion"
+  @meta_client_capabilities "io.modelcontextprotocol/clientCapabilities"
+  @meta_server_info "io.modelcontextprotocol/serverInfo"
+  @meta_subscription_id "io.modelcontextprotocol/subscriptionId"
+
+  @doc """
+  The protocol versions this server supports, newest first.
+  """
+  def supported_protocol_versions, do: @supported_protocol_versions
+
   @doc """
   Process an HTTP POST request containing JSON-RPC messages
   """
-  # sobelow_skip ["XSS.SendResp"]
   def handle_post(conn, body, session_id, opts \\ []) do
     accept_header = Plug.Conn.get_req_header(conn, "accept")
     _accept_sse = Enum.any?(accept_header, &String.contains?(&1, "text/event-stream"))
@@ -33,6 +66,17 @@ defmodule AshAi.Mcp.Server do
       ]
       |> Keyword.merge(opts)
 
+    body = unwrap_json_params(body)
+
+    if per_request_version?(body, req_header(conn, "mcp-protocol-version")) do
+      handle_post_2026_07_28(conn, body, opts)
+    else
+      handle_initialize_based_post(conn, body, session_id, opts)
+    end
+  end
+
+  # sobelow_skip ["XSS.SendResp"]
+  defp handle_initialize_based_post(conn, body, session_id, opts) do
     case process_request(body, session_id, opts) do
       {:initialize_response, response, new_session_id} ->
         # Return the initialize response with a session ID header
@@ -60,28 +104,390 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
+  # Plug.Parsers wraps JSON array bodies (2025-03-26 batch requests) in a "_json" key
+  defp unwrap_json_params(%{"_json" => list}) when is_list(list), do: list
+  defp unwrap_json_params(body), do: body
+
+  # Era selection per the 2026-07-28 versioning spec: `initialize` without
+  # per-request `_meta` selects initialize-based semantics; with a `_meta`
+  # protocol version it is a removed method under 2026-07-28 (404 below).
+  # Otherwise a `_meta` protocol version or an `MCP-Protocol-Version` header
+  # naming a non-initialize-based revision selects per-request semantics.
+  defp per_request_version?(%{"method" => "initialize"} = body, _header_version),
+    do: is_binary(request_meta_version(body))
+
+  defp per_request_version?(body, header_version) when is_map(body) do
+    cond do
+      is_binary(request_meta_version(body)) -> true
+      is_nil(header_version) -> false
+      header_version in @initialize_based_versions -> false
+      true -> true
+    end
+  end
+
+  # Batches are only defined for initialize-based protocol versions
+  defp per_request_version?(_body, _header_version), do: false
+
+  defp request_meta_version(%{"params" => %{"_meta" => %{@meta_protocol_version => version}}}),
+    do: version
+
+  defp request_meta_version(_body), do: nil
+
+  defp handle_post_2026_07_28(conn, %{"method" => method, "id" => id} = message, opts) do
+    cond do
+      # Structurally invalid `_meta` is Invalid Params, before any version or
+      # header comparison (SEP-2575)
+      error = validate_request_meta(message) ->
+        error_response_2026_07_28(conn, 400, id, -32_602, error)
+
+      # Header/body consistency comes before version support: a request whose
+      # header disagrees with its `_meta` is a HeaderMismatch even when one
+      # of the two names an unsupported version
+      error = validate_headers_2026_07_28(conn, message) ->
+        error_response_2026_07_28(conn, 400, id, -32_020, error)
+
+      (requested = request_meta_version(message)) not in @per_request_versions ->
+        error_response_2026_07_28(conn, 400, id, -32_022, "Unsupported protocol version", %{
+          "supported" => @supported_protocol_versions,
+          "requested" => requested
+        })
+
+      true ->
+        dispatch_2026_07_28(conn, method, id, message["params"] || %{}, opts)
+    end
+  end
+
+  # Notifications: the core 2026-07-28 protocol defines no client-to-server
+  # notifications over Streamable HTTP, and defines no header requirements
+  # for notification POSTs. Accept and ignore.
+  defp handle_post_2026_07_28(conn, %{"method" => _method}, _opts) do
+    Plug.Conn.send_resp(conn, 202, "")
+  end
+
+  defp handle_post_2026_07_28(conn, other, _opts) do
+    error_response_2026_07_28(conn, 400, nil, -32_600, "Invalid Request Got: #{inspect(other)}")
+  end
+
+  # Every request must carry `_meta` with the protocol version and client
+  # capabilities. `clientInfo` is a SHOULD and MUST NOT be required.
+  defp validate_request_meta(message) do
+    meta = get_in(message, ["params", "_meta"])
+
+    cond do
+      not is_map(meta) ->
+        "Invalid params: missing required _meta"
+
+      not is_binary(meta[@meta_protocol_version]) ->
+        "Invalid params: _meta is missing #{@meta_protocol_version}"
+
+      not is_map(meta[@meta_client_capabilities]) ->
+        "Invalid params: _meta is missing #{@meta_client_capabilities}"
+
+      true ->
+        nil
+    end
+  end
+
+  defp validate_headers_2026_07_28(conn, %{"method" => method} = message) do
+    header_version = req_header(conn, "mcp-protocol-version")
+    meta_version = request_meta_version(message)
+    mcp_method = req_header(conn, "mcp-method")
+
+    cond do
+      is_nil(header_version) ->
+        "Missing required MCP-Protocol-Version header"
+
+      header_version != meta_version ->
+        "MCP-Protocol-Version header value #{inspect(header_version)} does not match body _meta value #{inspect(meta_version)}"
+
+      is_nil(mcp_method) ->
+        "Missing required Mcp-Method header"
+
+      mcp_method != method ->
+        "Mcp-Method header value #{inspect(mcp_method)} does not match body value #{inspect(method)}"
+
+      method in ["tools/call", "resources/read", "prompts/get"] ->
+        validate_mcp_name_header(conn, message)
+
+      true ->
+        nil
+    end
+  end
+
+  defp validate_mcp_name_header(conn, %{"method" => method} = message) do
+    expected =
+      case method do
+        "resources/read" -> get_in(message, ["params", "uri"])
+        _ -> get_in(message, ["params", "name"])
+      end
+
+    case req_header(conn, "mcp-name") do
+      nil ->
+        "Missing required Mcp-Name header"
+
+      value ->
+        case decode_header_value(value) do
+          {:ok, ^expected} ->
+            nil
+
+          {:ok, decoded} ->
+            "Mcp-Name header value #{inspect(decoded)} does not match body value #{inspect(expected)}"
+
+          :error ->
+            "Mcp-Name header value is not valid Base64 sentinel encoding"
+        end
+    end
+  end
+
+  # Values that cannot be represented as plain ASCII header values are carried
+  # Base64-encoded as `=?base64?{encoded}?=`
+  defp decode_header_value("=?base64?" <> rest) do
+    with true <- String.ends_with?(rest, "?="),
+         encoded = binary_part(rest, 0, byte_size(rest) - 2),
+         {:ok, decoded} <- Base.decode64(encoded) do
+      {:ok, decoded}
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode_header_value(value), do: {:ok, value}
+
+  defp dispatch_2026_07_28(conn, "server/discover", id, _params, opts) do
+    result =
+      %{
+        "supportedVersions" => @supported_protocol_versions,
+        "capabilities" => opts |> mcp_resources() |> capabilities()
+      }
+      |> maybe_put("instructions", get_instructions(opts))
+      |> cacheable_result(opts, :list)
+      |> result_2026_07_28(opts)
+
+    response_2026_07_28(conn, 200, id, result)
+  end
+
+  defp dispatch_2026_07_28(conn, "tools/list", id, _params, opts) do
+    result =
+      %{"tools" => tool_definitions(opts)}
+      |> cacheable_result(opts, :list)
+      |> result_2026_07_28(opts)
+
+    response_2026_07_28(conn, 200, id, result)
+  end
+
+  defp dispatch_2026_07_28(conn, "tools/call", id, params, opts) do
+    case execute_tool_call(params, nil, opts) do
+      {:ok, result} ->
+        response_2026_07_28(conn, 200, id, result_2026_07_28(result, opts))
+
+      {:error, :tool_not_found} ->
+        error_response_2026_07_28(conn, 200, id, -32_602, "Tool not found: #{params["name"]}")
+    end
+  end
+
+  defp dispatch_2026_07_28(conn, "resources/list", id, _params, opts) do
+    result =
+      %{"resources" => resource_definitions(opts)}
+      |> cacheable_result(opts, :list)
+      |> result_2026_07_28(opts)
+
+    response_2026_07_28(conn, 200, id, result)
+  end
+
+  defp dispatch_2026_07_28(conn, "resources/read", id, %{"uri" => uri} = params, opts) do
+    case read_resource_content(uri, params, nil, opts) do
+      {:ok, content} ->
+        result =
+          %{"contents" => [content]}
+          |> cacheable_result(opts, :read)
+          |> result_2026_07_28(opts)
+
+        response_2026_07_28(conn, 200, id, result)
+
+      {:error, :not_found} ->
+        # 2026-07-28 aligns resource-not-found with JSON-RPC Invalid Params
+        error_response_2026_07_28(conn, 200, id, -32_602, "Resource not found", %{"uri" => uri})
+
+      {:error, error} ->
+        error_response_2026_07_28(conn, 200, id, -32_603, "Resource read failed", %{
+          "uri" => uri,
+          "error" => error
+        })
+    end
+  end
+
+  defp dispatch_2026_07_28(conn, "resources/read", id, _params, _opts) do
+    error_response_2026_07_28(conn, 200, id, -32_602, "Missing required parameter: uri")
+  end
+
+  # This server's tool and resource lists are derived from compile-time DSL
+  # configuration and never change at runtime, so no notification types are
+  # honored: acknowledge with an empty filter and close the stream gracefully.
+  defp dispatch_2026_07_28(conn, "subscriptions/listen", id, _params, opts) do
+    ack = %{
+      "jsonrpc" => "2.0",
+      "method" => "notifications/subscriptions/acknowledged",
+      "params" => %{
+        "_meta" => %{@meta_subscription_id => id},
+        "notifications" => %{}
+      }
+    }
+
+    close = %{
+      "jsonrpc" => "2.0",
+      "id" => id,
+      "result" => result_2026_07_28(%{"_meta" => %{@meta_subscription_id => id}}, opts)
+    }
+
+    conn
+    |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
+    |> Plug.Conn.put_resp_header("cache-control", "no-cache")
+    |> Plug.Conn.put_resp_header("x-accel-buffering", "no")
+    |> Plug.Conn.send_chunked(200)
+    |> send_sse_event("message", Jason.encode!(ack))
+    |> send_sse_event("message", Jason.encode!(close))
+  end
+
+  defp dispatch_2026_07_28(conn, "initialize", id, _params, _opts) do
+    # Removed in 2026-07-28. Name the supported versions in the error —
+    # initialize-based clients have no fall-forward mechanism, so this may
+    # be the only diagnostic they can surface.
+    error_response_2026_07_28(
+      conn,
+      404,
+      id,
+      -32_601,
+      "Method not found: initialize was removed in 2026-07-28. " <>
+        "Supported protocol versions: #{Enum.join(@supported_protocol_versions, ", ")}"
+    )
+  end
+
+  defp dispatch_2026_07_28(conn, method, id, _params, _opts) do
+    # Unknown methods return HTTP 404 so clients probing for 2026-07-28
+    # support can distinguish this endpoint from a deprecated HTTP+SSE server
+    error_response_2026_07_28(conn, 404, id, -32_601, "Method not found: #{method}")
+  end
+
+  defp result_2026_07_28(result, opts) do
+    server_info = %{
+      "name" => get_server_name(opts),
+      "version" => get_server_version(opts)
+    }
+
+    result
+    |> Map.put("resultType", "complete")
+    |> Map.update(
+      "_meta",
+      %{@meta_server_info => server_info},
+      &Map.put(&1, @meta_server_info, server_info)
+    )
+  end
+
+  defp cacheable_result(result, opts, kind) do
+    ttl_ms =
+      case kind do
+        :list -> Keyword.get(opts, :list_ttl_ms, 60_000)
+        :read -> Keyword.get(opts, :read_ttl_ms, 0)
+      end
+
+    result
+    |> Map.put("ttlMs", ttl_ms)
+    |> Map.put("cacheScope", Keyword.get(opts, :cache_scope, "private"))
+  end
+
+  defp response_2026_07_28(conn, status, id, result) do
+    send_json(conn, status, %{"jsonrpc" => "2.0", "id" => id, "result" => result})
+  end
+
+  defp error_response_2026_07_28(conn, status, id, code, message, data \\ nil) do
+    error =
+      %{"code" => code, "message" => message}
+      |> maybe_put("data", data)
+
+    send_json(conn, status, %{"jsonrpc" => "2.0", "id" => id, "error" => error})
+  end
+
+  # sobelow_skip ["XSS.SendResp"]
+  defp send_json(conn, status, payload) do
+    conn
+    |> Plug.Conn.put_resp_header("content-type", "application/json")
+    |> Plug.Conn.send_resp(status, Jason.encode!(payload))
+  end
+
+  defp req_header(conn, name) do
+    case Plug.Conn.get_req_header(conn, name) do
+      # Optional whitespace around an HTTP field value is not part of the
+      # value (RFC 9110 §5.5); values that genuinely need surrounding
+      # whitespace arrive Base64-sentinel-encoded instead
+      [value | _] -> trim_ows(value)
+      [] -> nil
+    end
+  end
+
+  defp trim_ows(value), do: String.replace(value, ~r/^[ \t]+|[ \t]+$/, "")
+
   @doc """
-  Process an HTTP GET request to open an SSE stream
+  Validate the `Origin` header of a request per the Streamable HTTP
+  transport's DNS-rebinding protection requirement.
+
+  Returns `:ok` when the request carries no `Origin` header (non-browser
+  clients), when the origin's host is a localhost value, when the origin
+  matches the request host over HTTPS, or when it is explicitly allowed by
+  the `:allowed_origins` option (a list of origin strings, or a 1-arity
+  predicate function). Returns `:forbidden` otherwise — respond with HTTP
+  403.
+  """
+  def check_origin(conn, opts) do
+    case Plug.Conn.get_req_header(conn, "origin") do
+      [] ->
+        :ok
+
+      [origin | _] ->
+        if origin_allowed?(trim_ows(origin), conn, opts[:allowed_origins]) do
+          :ok
+        else
+          :forbidden
+        end
+    end
+  end
+
+  defp origin_allowed?(origin, conn, nil) do
+    uri = URI.parse(origin)
+
+    localhost_host?(uri.host) or
+      (uri.host == conn.host and forwarded_scheme(conn) == "https")
+  end
+
+  defp origin_allowed?(origin, _conn, allowed) when is_list(allowed), do: origin in allowed
+
+  defp origin_allowed?(origin, _conn, allowed) when is_function(allowed, 1),
+    do: allowed.(origin)
+
+  defp localhost_host?(host), do: host in ["localhost", "127.0.0.1", "::1", "[::1]"]
+
+  defp forwarded_scheme(conn) do
+    case Plug.Conn.get_req_header(conn, "x-forwarded-proto") do
+      [proto | _] -> proto
+      [] -> to_string(conn.scheme)
+    end
+  end
+
+  @doc """
+  Process an HTTP GET request.
+
+  Responds `405 Method Not Allowed`, which Streamable HTTP (2025-03-26
+  onward) permits for servers that never send unsolicited server-to-client
+  messages — this server has none to send (2026-07-28 clients use
+  `subscriptions/listen` over POST instead). The previous behavior of
+  opening an SSE stream and emitting an `endpoint` event was the wire
+  signature of the deprecated 2024-11-05 HTTP+SSE transport, which caused
+  dual-transport clients to switch to it and wait forever for responses on
+  the GET stream.
   """
   def handle_get(conn, _session_id) do
-    accept_header = Plug.Conn.get_req_header(conn, "accept")
-
-    if Enum.any?(accept_header, &String.contains?(&1, "text/event-stream")) do
-      post_url = server_url(conn)
-
-      # Set up SSE stream
-      conn
-      |> Plug.Conn.put_resp_header("content-type", "text/event-stream")
-      |> Plug.Conn.put_resp_header("cache-control", "no-cache")
-      # Send the post_url in an endpoint event according to MCP specification
-      |> Plug.Conn.send_chunked(200)
-      |> send_sse_event("endpoint", Jason.encode!(%{"url" => post_url}))
-      |> keep_alive()
-    else
-      # Client doesn't support SSE
-      conn
-      |> Plug.Conn.send_resp(400, "Client must accept text/event-stream")
-    end
+    conn
+    |> Plug.Conn.put_resp_header("allow", "POST, DELETE")
+    |> Plug.Conn.send_resp(405, "")
   end
 
   @doc """
@@ -167,17 +573,6 @@ defmodule AshAi.Mcp.Server do
   defp maybe_put(map, _key, ""), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
-  defp keep_alive(conn) do
-    receive do
-    after
-      30_000 ->
-        case Plug.Conn.chunk(conn, ": ping\n\n") do
-          {:ok, conn} -> keep_alive(conn)
-          {:error, _} -> conn
-        end
-    end
-  end
-
   defp process_request(request, session_id, opts) do
     case parse_json_rpc(request) do
       {:ok, message} when is_map(message) ->
@@ -214,11 +609,18 @@ defmodule AshAi.Mcp.Server do
   """
   def process_message(message, session_id, opts) do
     case message do
-      %{"method" => "initialize", "id" => id, "params" => _params} ->
-        # Handle initialize request
+      %{"method" => "initialize", "id" => id, "params" => params} ->
+        # Handle initialize request (initialize-based revisions only; from
+        # 2026-07-28 on, clients carry their protocol version on every
+        # request instead)
         new_session_id = session_id || Ash.UUIDv7.generate()
 
-        protocol_version_statement = opts[:protocol_version_statement] || "2025-03-26"
+        requested_version = params["protocolVersion"]
+
+        protocol_version_statement =
+          opts[:protocol_version_statement] ||
+            if(requested_version in @initialize_based_versions, do: requested_version) ||
+            "2025-03-26"
 
         capabilities =
           opts
@@ -240,6 +642,11 @@ defmodule AshAi.Mcp.Server do
 
         {:initialize_response, Jason.encode!(response), new_session_id}
 
+      # Removed in 2026-07-28; initialize-based revisions require a pong
+      %{"method" => "ping", "id" => id} ->
+        response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{}}
+        {:json_response, Jason.encode!(response), session_id}
+
       %{"method" => "shutdown", "id" => id, "params" => _params} ->
         # Return success
         response = %{
@@ -256,66 +663,29 @@ defmodule AshAi.Mcp.Server do
 
       # TODO: this can support paginaton via params later
       %{"method" => "resources/list", "id" => id} ->
-        action_resources =
-          opts
-          |> mcp_action_resources()
-          |> Enum.map(&action_resource_to_map/1)
-
-        ui_resources =
-          opts
-          |> mcp_ui_resources()
-          |> Enum.map(&ui_resource_to_map(&1, opts))
-
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
           "result" => %{
-            "resources" => action_resources ++ ui_resources
+            "resources" => resource_definitions(opts)
           }
         }
 
         {:json_response, Jason.encode!(response), session_id}
 
       %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri} = params} ->
-        opts =
-          opts
-          |> Keyword.update(
-            :context,
-            %{mcp_session_id: session_id},
-            &Map.put(&1, :mcp_session_id, session_id)
-          )
-
-        with {:ok, resource} <- find_mcp_resource_by_uri(uri, opts),
-             {:ok, text} <- read_mcp_resource(resource, params, opts) do
-          mime_type =
-            case resource do
-              %AshAi.McpUiResource{} -> AshAi.McpUiResource.mime_type()
-              %AshAi.McpResource{mime_type: mt} -> mt
-            end
-
-          content =
-            %{"uri" => uri, "mimeType" => mime_type, "text" => text}
-            |> then(fn content ->
-              case resource do
-                %AshAi.McpUiResource{} = mcp_ui_resource ->
-                  ui_meta = build_ui_meta(mcp_ui_resource, opts)
-                  put_if(content, "_meta", if(ui_meta != %{}, do: %{"ui" => ui_meta}))
-
-                _ ->
-                  content
-              end
-            end)
-
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "result" => %{
-              "contents" => [content]
+        case read_resource_content(uri, params, session_id, opts) do
+          {:ok, content} ->
+            response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => %{
+                "contents" => [content]
+              }
             }
-          }
 
-          {:json_response, Jason.encode!(response), session_id}
-        else
+            {:json_response, Jason.encode!(response), session_id}
+
           {:error, :not_found} ->
             response = %{
               "jsonrpc" => "2.0",
@@ -344,93 +714,35 @@ defmodule AshAi.Mcp.Server do
         end
 
       %{"method" => "tools/list", "id" => id} ->
-        tools =
-          opts
-          |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions])
-          |> Keyword.update(
-            :context,
-            %{otp_app: opts[:otp_app]},
-            &Map.put(&1, :otp_app, opts[:otp_app])
-          )
-          |> tools()
-          |> Enum.map(fn %Tool{} = tool ->
-            # MCP schemas are advisory (no grammar-constrained sampling), so the
-            # OpenAI strict transformation defaults off here.
-            {req_tool, _callback} =
-              AshAi.Tools.build(tool, strict: Keyword.get(opts, :strict, false))
-
-            result = %{
-              "name" => req_tool.name,
-              "description" => req_tool.description,
-              "inputSchema" => req_tool.parameter_schema
-            }
-
-            if Tool.has_meta?(tool) do
-              Map.put(result, "_meta", tool._meta)
-            else
-              result
-            end
-          end)
-
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
           "result" => %{
-            "tools" => tools
+            "tools" => tool_definitions(opts)
           }
         }
 
         {:json_response, Jason.encode!(response), session_id}
 
       %{"method" => "tools/call", "id" => id, "params" => params} ->
-        tool_name = params["name"]
-        tool_args = params["arguments"] || %{}
+        case execute_tool_call(params, session_id, opts) do
+          {:ok, result} ->
+            response = %{
+              "jsonrpc" => "2.0",
+              "id" => id,
+              "result" => result
+            }
 
-        with %Tool{} = tool <- find_tool_by_name(tool_name, session_id, opts),
-             context = tool_context(opts),
-             {:ok, result, _} <- AshAi.Tools.execute(tool, tool_args, context) do
-          result = %{
-            "isError" => false,
-            "content" => [%{"type" => "text", "text" => result}]
-          }
+            {:json_response, Jason.encode!(response), session_id}
 
-          result =
-            if Tool.has_meta?(tool) do
-              Map.put(result, "_meta", tool._meta)
-            else
-              result
-            end
-
-          response = %{
-            "jsonrpc" => "2.0",
-            "id" => id,
-            "result" => result
-          }
-
-          {:json_response, Jason.encode!(response), session_id}
-        else
-          nil ->
+          {:error, :tool_not_found} ->
             response = %{
               "jsonrpc" => "2.0",
               "id" => id,
               "error" => %{
                 "code" => -32_602,
-                "message" => "Tool not found: #{tool_name}"
+                "message" => "Tool not found: #{params["name"]}"
               }
-            }
-
-            {:json_response, Jason.encode!(response), session_id}
-
-          {:error, error_text} ->
-            result = %{
-              "isError" => true,
-              "content" => [%{"type" => "text", "text" => error_text}]
-            }
-
-            response = %{
-              "jsonrpc" => "2.0",
-              "id" => id,
-              "result" => result
             }
 
             {:json_response, Jason.encode!(response), session_id}
@@ -510,6 +822,120 @@ defmodule AshAi.Mcp.Server do
       &Map.put(&1, :otp_app, opts[:otp_app])
     )
     |> AshAi.exposed_mcp_ui_resources()
+  end
+
+  # Deterministic ordering per 2026-07-28 (enables client caching and
+  # improves upstream LLM prompt-cache hit rates); harmless for older revisions.
+  defp tool_definitions(opts) do
+    opts
+    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions])
+    |> Keyword.update(
+      :context,
+      %{otp_app: opts[:otp_app]},
+      &Map.put(&1, :otp_app, opts[:otp_app])
+    )
+    |> tools()
+    |> Enum.map(fn %Tool{} = tool ->
+      # MCP schemas are advisory (no grammar-constrained sampling), so the
+      # OpenAI strict transformation defaults off here.
+      {req_tool, _callback} =
+        AshAi.Tools.build(tool, strict: Keyword.get(opts, :strict, false))
+
+      result = %{
+        "name" => req_tool.name,
+        "description" => req_tool.description,
+        "inputSchema" => req_tool.parameter_schema
+      }
+
+      if Tool.has_meta?(tool) do
+        Map.put(result, "_meta", tool._meta)
+      else
+        result
+      end
+    end)
+    |> Enum.sort_by(& &1["name"])
+  end
+
+  defp resource_definitions(opts) do
+    action_resources =
+      opts
+      |> mcp_action_resources()
+      |> Enum.map(&action_resource_to_map/1)
+
+    ui_resources =
+      opts
+      |> mcp_ui_resources()
+      |> Enum.map(&ui_resource_to_map(&1, opts))
+
+    Enum.sort_by(action_resources ++ ui_resources, & &1["uri"])
+  end
+
+  defp execute_tool_call(params, session_id, opts) do
+    tool_name = params["name"]
+    tool_args = params["arguments"] || %{}
+
+    case find_tool_by_name(tool_name, session_id, opts) do
+      %Tool{} = tool ->
+        context = tool_context(opts)
+
+        case AshAi.Tools.execute(tool, tool_args, context) do
+          {:ok, result, _} ->
+            result = %{
+              "isError" => false,
+              "content" => [%{"type" => "text", "text" => result}]
+            }
+
+            if Tool.has_meta?(tool) do
+              {:ok, Map.put(result, "_meta", tool._meta)}
+            else
+              {:ok, result}
+            end
+
+          {:error, error_text} ->
+            {:ok,
+             %{
+               "isError" => true,
+               "content" => [%{"type" => "text", "text" => error_text}]
+             }}
+        end
+
+      nil ->
+        {:error, :tool_not_found}
+    end
+  end
+
+  defp read_resource_content(uri, params, session_id, opts) do
+    opts =
+      opts
+      |> Keyword.update(
+        :context,
+        %{mcp_session_id: session_id},
+        &Map.put(&1, :mcp_session_id, session_id)
+      )
+
+    with {:ok, resource} <- find_mcp_resource_by_uri(uri, opts),
+         {:ok, text} <- read_mcp_resource(resource, params, opts) do
+      mime_type =
+        case resource do
+          %AshAi.McpUiResource{} -> AshAi.McpUiResource.mime_type()
+          %AshAi.McpResource{mime_type: mt} -> mt
+        end
+
+      content =
+        %{"uri" => uri, "mimeType" => mime_type, "text" => text}
+        |> then(fn content ->
+          case resource do
+            %AshAi.McpUiResource{} = mcp_ui_resource ->
+              ui_meta = build_ui_meta(mcp_ui_resource, opts)
+              put_if(content, "_meta", if(ui_meta != %{}, do: %{"ui" => ui_meta}))
+
+            _ ->
+              content
+          end
+        end)
+
+      {:ok, content}
+    end
   end
 
   defp find_mcp_resource_by_uri(uri, opts) do

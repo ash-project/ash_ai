@@ -24,6 +24,13 @@ if Code.ensure_loaded?(Plug) do
 
     alias AshAi.Mcp.Server
 
+    # DNS-rebinding protection: the transport requires Origin validation on
+    # all incoming connections. Configure with `allowed_origins` (a list of
+    # origin strings or a 1-arity predicate); by default localhost origins
+    # and same-host HTTPS origins are accepted, and requests without an
+    # Origin header (non-browser MCP clients) always pass.
+    plug(:validate_origin)
+
     # Parse the request body for JSON
     plug(Plug.Parsers,
       parsers: [:json],
@@ -55,6 +62,28 @@ if Code.ensure_loaded?(Plug) do
     # Default route
     match _ do
       send_resp(conn, 404, "Not found")
+    end
+
+    # sobelow_skip ["XSS.SendResp"]
+    # The 403 body is a static JSON literal; no user input is reflected.
+    defp validate_origin(conn, _opts) do
+      case Server.check_origin(conn, conn.assigns[:router_opts] || []) do
+        :ok ->
+          conn
+
+        :forbidden ->
+          conn
+          |> put_resp_header("content-type", "application/json")
+          |> send_resp(
+            403,
+            Jason.encode!(%{
+              "jsonrpc" => "2.0",
+              "id" => nil,
+              "error" => %{"code" => -32_600, "message" => "Origin not allowed"}
+            })
+          )
+          |> halt()
+      end
     end
 
     # Helper to extract the session ID from headers

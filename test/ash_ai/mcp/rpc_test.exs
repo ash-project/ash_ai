@@ -108,6 +108,29 @@ defmodule AshAi.Mcp.ServerTest do
     end
   end
 
+  describe "GET" do
+    test "responds 405: no unsolicited server-to-client messages are offered" do
+      conn = conn(:get, "/") |> put_req_header("accept", "text/event-stream")
+
+      response = Router.call(conn, @opts)
+      assert response.status == 405
+      assert get_resp_header(response, "allow") == ["POST, DELETE"]
+    end
+  end
+
+  describe "ping" do
+    test "responds with an empty result" do
+      conn = conn(:post, "/", %{method: "ping", id: "9"})
+
+      response = Router.call(conn, @opts)
+      assert response.status == 200
+
+      resp = Jason.decode!(response.resp_body)
+      assert resp["id"] == "9"
+      assert resp["result"] == %{}
+    end
+  end
+
   describe "send_sse_event/4" do
     test "writes the event chunks to an open connection" do
       conn =
