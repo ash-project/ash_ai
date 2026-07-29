@@ -274,6 +274,24 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert @protocol_version in error["data"]["supported"]
     end
 
+    test "initialize-based revisions this server doesn't advertise still route to initialize-based semantics" do
+      # e.g. claude.ai sends `MCP-Protocol-Version: 2025-11-25` on requests
+      # without per-request _meta; every dated revision before 2026-07-28
+      # negotiates via initialize and must not be asked for _meta.
+      for version <- ["2025-11-25", "2024-11-05"] do
+        conn =
+          conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})
+          |> put_req_header("mcp-protocol-version", version)
+
+        response = Router.call(conn, @tool_opts)
+        assert response.status == 200
+
+        result = Jason.decode!(response.resp_body)["result"]
+        assert is_list(result["tools"])
+        refute Map.has_key?(result, "resultType")
+      end
+    end
+
     test "initialize-based header versions still get initialize-based semantics" do
       conn =
         conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})

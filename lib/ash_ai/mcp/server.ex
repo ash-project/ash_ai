@@ -118,10 +118,23 @@ defmodule AshAi.Mcp.Server do
 
   defp per_request_version?(body, header_version) when is_map(body) do
     cond do
-      is_binary(request_meta_version(body)) -> true
-      is_nil(header_version) -> false
-      header_version in @initialize_based_versions -> false
-      true -> true
+      is_binary(request_meta_version(body)) ->
+        true
+
+      is_nil(header_version) ->
+        false
+
+      # Every dated revision before 2026-07-28 negotiates via `initialize` —
+      # including ones this server doesn't itself advertise (e.g. a client
+      # sending `2025-11-25` before initialize downgrades it). Route them all
+      # to initialize-based semantics rather than demanding per-request
+      # `_meta` they cannot know about. Revision dates are ISO-8601, so
+      # string comparison orders them correctly.
+      header_version < hd(@per_request_versions) ->
+        false
+
+      true ->
+        true
     end
   end
 
