@@ -38,6 +38,7 @@ defmodule AshAi.Mcp.Server do
   @supported_protocol_versions @per_request_versions ++ @initialize_based_versions
 
   @meta_protocol_version "io.modelcontextprotocol/protocolVersion"
+  @meta_client_info "io.modelcontextprotocol/clientInfo"
   @meta_client_capabilities "io.modelcontextprotocol/clientCapabilities"
   @meta_server_info "io.modelcontextprotocol/serverInfo"
   @meta_subscription_id "io.modelcontextprotocol/subscriptionId"
@@ -138,7 +139,13 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  # Batches are only defined for initialize-based protocol versions
+  # Batches are only defined for initialize-based protocol versions. A batch
+  # carrying a current/future per-request version must still enter the current
+  # handler so it can return one bounded Invalid Request response rather than
+  # accidentally using the initialize-era batch path.
+  defp per_request_version?(body, header_version) when is_list(body),
+    do: is_binary(header_version) and header_version >= hd(@per_request_versions)
+
   defp per_request_version?(_body, _header_version), do: false
 
   defp request_meta_version(%{"params" => %{"_meta" => %{@meta_protocol_version => version}}}),
@@ -177,6 +184,16 @@ defmodule AshAi.Mcp.Server do
     Plug.Conn.send_resp(conn, 202, "")
   end
 
+  defp handle_post_2026_07_28(conn, batch, _opts) when is_list(batch) do
+    error_response_2026_07_28(
+      conn,
+      400,
+      nil,
+      -32_600,
+      "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
+    )
+  end
+
   defp handle_post_2026_07_28(conn, other, _opts) do
     error_response_2026_07_28(conn, 400, nil, -32_600, "Invalid Request Got: #{inspect(other)}")
   end
@@ -196,10 +213,20 @@ defmodule AshAi.Mcp.Server do
       not is_map(meta[@meta_client_capabilities]) ->
         "Invalid params: _meta is missing #{@meta_client_capabilities}"
 
+      Map.has_key?(meta, @meta_client_info) and
+          not valid_implementation?(meta[@meta_client_info]) ->
+        "Invalid params: #{@meta_client_info} must include string name and version fields"
+
       true ->
         nil
     end
   end
+
+  defp valid_implementation?(%{"name" => name, "version" => version})
+       when is_binary(name) and is_binary(version),
+       do: true
+
+  defp valid_implementation?(_client_info), do: false
 
   defp validate_headers_2026_07_28(conn, %{"method" => method} = message) do
     header_version = req_header(conn, "mcp-protocol-version")
@@ -207,6 +234,9 @@ defmodule AshAi.Mcp.Server do
     mcp_method = req_header(conn, "mcp-method")
 
     cond do
+      duplicate_req_header?(conn, "mcp-protocol-version") ->
+        "MCP-Protocol-Version header must appear exactly once"
+
       is_nil(header_version) ->
         "Missing required MCP-Protocol-Version header"
 
@@ -215,6 +245,9 @@ defmodule AshAi.Mcp.Server do
 
       is_nil(mcp_method) ->
         "Missing required Mcp-Method header"
+
+      duplicate_req_header?(conn, "mcp-method") ->
+        "Mcp-Method header must appear exactly once"
 
       mcp_method != method ->
         "Mcp-Method header value #{inspect(mcp_method)} does not match body value #{inspect(method)}"
@@ -234,11 +267,14 @@ defmodule AshAi.Mcp.Server do
         _ -> get_in(message, ["params", "name"])
       end
 
-    case req_header(conn, "mcp-name") do
-      nil ->
+    case {req_header(conn, "mcp-name"), duplicate_req_header?(conn, "mcp-name")} do
+      {_value, true} ->
+        "Mcp-Name header must appear exactly once"
+
+      {nil, false} ->
         "Missing required Mcp-Name header"
 
-      value ->
+      {value, false} ->
         case decode_header_value(value) do
           {:ok, ^expected} ->
             nil
@@ -437,6 +473,14 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
+  defp duplicate_req_header?(conn, name) do
+    case Plug.Conn.get_req_header(conn, name) do
+      [_value] -> false
+      [] -> false
+      [_value | _duplicates] -> true
+    end
+  end
+
   defp trim_ows(value), do: String.replace(value, ~r/^[ \t]+|[ \t]+$/, "")
 
   @doc """
@@ -455,12 +499,15 @@ defmodule AshAi.Mcp.Server do
       [] ->
         :ok
 
-      [origin | _] ->
+      [origin] ->
         if origin_allowed?(trim_ows(origin), conn, opts[:allowed_origins]) do
           :ok
         else
           :forbidden
         end
+
+      [_origin | _duplicates] ->
+        :forbidden
     end
   end
 
@@ -507,12 +554,20 @@ defmodule AshAi.Mcp.Server do
   Handle HTTP DELETE request for session termination
   """
   def handle_delete(conn, session_id) do
-    if session_id do
-      conn
-      |> Plug.Conn.send_resp(200, "")
-    else
-      conn
-      |> Plug.Conn.send_resp(400, "")
+    case req_header(conn, "mcp-protocol-version") do
+      version when version in @per_request_versions ->
+        conn
+        |> Plug.Conn.put_resp_header("allow", "POST")
+        |> Plug.Conn.send_resp(405, "")
+
+      _initialize_based_or_absent ->
+        if session_id do
+          conn
+          |> Plug.Conn.send_resp(200, "")
+        else
+          conn
+          |> Plug.Conn.send_resp(400, "")
+        end
     end
   end
 
@@ -891,30 +946,67 @@ defmodule AshAi.Mcp.Server do
       %Tool{} = tool ->
         context = tool_context(opts)
 
-        case AshAi.Tools.execute(tool, tool_args, context) do
-          {:ok, result, _} ->
-            result = %{
-              "isError" => false,
-              "content" => [%{"type" => "text", "text" => result}]
-            }
-
-            if Tool.has_meta?(tool) do
-              {:ok, Map.put(result, "_meta", tool._meta)}
-            else
-              {:ok, result}
-            end
+        case transform_tool_arguments(tool, tool_args, context, opts) do
+          {:ok, transformed_args} ->
+            execute_resolved_tool(tool, transformed_args, context)
 
           {:error, error_text} ->
-            {:ok,
-             %{
-               "isError" => true,
-               "content" => [%{"type" => "text", "text" => error_text}]
-             }}
+            {:ok, tool_error_result(error_text)}
         end
 
       nil ->
         {:error, :tool_not_found}
     end
+  end
+
+  defp transform_tool_arguments(tool, arguments, context, opts) do
+    case opts[:tool_argument_transformer] do
+      nil ->
+        {:ok, arguments}
+
+      transformer when is_function(transformer, 3) ->
+        case transformer.(tool, arguments, context) do
+          {:ok, transformed_args} when is_map(transformed_args) ->
+            {:ok, transformed_args}
+
+          {:error, error_text} when is_binary(error_text) ->
+            {:error, error_text}
+
+          other ->
+            raise ArgumentError,
+                  "tool_argument_transformer must return {:ok, map} or {:error, string}, got: #{inspect(other)}"
+        end
+
+      other ->
+        raise ArgumentError,
+              "tool_argument_transformer must be a three-arity function, got: #{inspect(other)}"
+    end
+  end
+
+  defp execute_resolved_tool(tool, arguments, context) do
+    case AshAi.Tools.execute(tool, arguments, context) do
+      {:ok, result, _} ->
+        result = %{
+          "isError" => false,
+          "content" => [%{"type" => "text", "text" => result}]
+        }
+
+        if Tool.has_meta?(tool) do
+          {:ok, Map.put(result, "_meta", tool._meta)}
+        else
+          {:ok, result}
+        end
+
+      {:error, error_text} ->
+        {:ok, tool_error_result(error_text)}
+    end
+  end
+
+  defp tool_error_result(error_text) do
+    %{
+      "isError" => true,
+      "content" => [%{"type" => "text", "text" => error_text}]
+    }
   end
 
   defp read_resource_content(uri, params, session_id, opts) do

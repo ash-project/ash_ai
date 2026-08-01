@@ -118,6 +118,18 @@ defmodule AshAi.Mcp.ServerTest do
     end
   end
 
+  describe "DELETE" do
+    test "initialize-era session termination remains supported" do
+      response =
+        conn(:delete, "/")
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> put_req_header("mcp-session-id", "initialize-era-session")
+        |> Router.call(@opts)
+
+      assert response.status == 200
+    end
+  end
+
   describe "ping" do
     test "responds with an empty result" do
       conn = conn(:post, "/", %{method: "ping", id: "9"})
@@ -128,6 +140,33 @@ defmodule AshAi.Mcp.ServerTest do
       resp = Jason.decode!(response.resp_body)
       assert resp["id"] == "9"
       assert resp["result"] == %{}
+    end
+  end
+
+  describe "tool argument transformer" do
+    test "rejections use the initialize-era tool-result envelope" do
+      transformer = fn %AshAi.Tool{name: :list_artists}, arguments, _context ->
+        assert arguments == %{"unexpected" => true}
+        {:error, "Expected shape: {}"}
+      end
+
+      response =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "transform_legacy",
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "list_artists",
+            "arguments" => %{"unexpected" => true}
+          }
+        })
+        |> Router.call(Keyword.put(@opts, :tool_argument_transformer, transformer))
+
+      assert response.status == 200
+      result = Jason.decode!(response.resp_body)["result"]
+      refute Map.has_key?(result, "resultType")
+      assert result["isError"] == true
+      assert result["content"] == [%{"type" => "text", "text" => "Expected shape: {}"}]
     end
   end
 
