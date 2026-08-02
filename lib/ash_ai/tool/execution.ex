@@ -227,20 +227,25 @@ defmodule AshAi.Tool.Execution do
 
     aggregate_kind = String.to_existing_atom(aggregate_kind)
 
-    aggregate_struct =
-      Ash.Query.Aggregate.new!(resource, :aggregate_result, aggregate_kind, field: field.name)
+    {:ok, aggregate_type, aggregate_constraints} =
+      Ash.Query.Aggregate.kind_to_type(
+        aggregate_kind,
+        field.type,
+        field.constraints || []
+      )
 
     query
-    |> Ash.aggregate(aggregate_struct)
+    |> Ash.Query.unset([:limit, :offset])
+    |> Ash.aggregate({:aggregate_result, aggregate_kind, field: field.name})
     |> case do
-      {:ok, value} -> value
+      {:ok, %{aggregate_result: value}} -> value
       {:error, error} -> raise Ash.Error.to_error_class(error)
     end
     |> then(fn result ->
       result
       |> AshAi.Serializer.serialize_value(
-        aggregate_struct.type,
-        aggregate_struct.constraints,
+        aggregate_type,
+        aggregate_constraints,
         ctx.domain
       )
       |> Jason.encode!()
