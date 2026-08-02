@@ -18,6 +18,11 @@ if Code.ensure_loaded?(Plug) do
     Tool schemas are generated without the OpenAI strict-mode transformation by
     default — MCP clients don't constrain sampling with the schema, so the
     honest form is smaller and clearer. Pass `strict: true` to restore it.
+
+    A `tool_argument_transformer` option may be a three-arity function receiving
+    the resolved `%AshAi.Tool{}`, its argument map, and the request's Ash tool
+    context. It must return `{:ok, arguments}` or `{:error, message}`. Rejections
+    are rendered as ordinary MCP tool errors in the selected protocol envelope.
     """
 
     use Plug.Router, copy_opts_to_assign: :router_opts

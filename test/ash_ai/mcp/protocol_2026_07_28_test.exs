@@ -125,6 +125,16 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert response.status == 200
       assert Jason.decode!(response.resp_body)["result"]["resultType"] == "complete"
     end
+
+    test "a present but malformed clientInfo is rejected with -32602" do
+      for client_info <- [nil, "not-an-object", %{}, %{"name" => "client"}, %{"version" => "1"}] do
+        meta = Map.put(request_meta(), "io.modelcontextprotocol/clientInfo", client_info)
+        response = versioned_request("tools/list", %{"_meta" => meta})
+
+        assert response.status == 400
+        assert Jason.decode!(response.resp_body)["error"]["code"] == -32_602
+      end
+    end
   end
 
   describe "stateless requests" do
@@ -173,6 +183,29 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       assert response.status == 200
       assert Jason.decode!(response.resp_body)["result"]["resultType"] == "complete"
+    end
+
+    test "tool argument transformer rejects after resolution in the current envelope" do
+      transformer = fn tool, arguments, context ->
+        assert %AshAi.Tool{name: :list_artists} = tool
+        assert arguments == %{"unexpected" => true}
+        assert is_map(context)
+        {:error, "Expected shape: {}"}
+      end
+
+      response =
+        versioned_request(
+          "tools/call",
+          %{"name" => "list_artists", "arguments" => %{"unexpected" => true}},
+          %{"mcp-name" => "list_artists"},
+          Keyword.put(@tool_opts, :tool_argument_transformer, transformer)
+        )
+
+      assert response.status == 200
+      result = Jason.decode!(response.resp_body)["result"]
+      assert result["resultType"] == "complete"
+      assert result["isError"] == true
+      assert result["content"] == [%{"type" => "text", "text" => "Expected shape: {}"}]
     end
 
     test "unknown tools return -32602" do
@@ -256,6 +289,45 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       response = Router.call(conn, @tool_opts)
       assert response.status == 202
+    end
+
+    test "top-level JSON-RPC batches return one bounded Invalid Request error" do
+      conn =
+        conn(:post, "/", %{
+          "_json" => [
+            %{
+              "jsonrpc" => "2.0",
+              "id" => "batch_1",
+              "method" => "tools/list",
+              "params" => %{"_meta" => request_meta()}
+            }
+          ]
+        })
+        |> put_req_header("mcp-protocol-version", @protocol_version)
+
+      response = Router.call(conn, @tool_opts)
+      assert response.status == 400
+
+      assert %{
+               "jsonrpc" => "2.0",
+               "id" => nil,
+               "error" => %{
+                 "code" => -32_600,
+                 "message" =>
+                   "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
+               }
+             } = Jason.decode!(response.resp_body)
+    end
+
+    test "DELETE is removed even when a session header is present" do
+      response =
+        conn(:delete, "/")
+        |> put_req_header("mcp-protocol-version", @protocol_version)
+        |> put_req_header("mcp-session-id", "initialize-era-session")
+        |> Router.call(@tool_opts)
+
+      assert response.status == 405
+      assert get_resp_header(response, "allow") == ["POST"]
     end
   end
 
@@ -395,6 +467,35 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert get_resp_header(response, "mcp-session-id") == []
       assert Jason.decode!(response.resp_body)["result"]["resultType"] == "complete"
     end
+
+    test "conflicting duplicate routing headers are rejected" do
+      cases = [
+        {"mcp-protocol-version", "2099-01-01"},
+        {"mcp-method", "tools/call"}
+      ]
+
+      for {name, conflicting_value} <- cases do
+        response =
+          "tools/list"
+          |> versioned_conn("req_1", %{}, %{})
+          |> prepend_req_headers([{name, conflicting_value}])
+          |> Router.call(@tool_opts)
+
+        assert response.status == 400
+        assert Jason.decode!(response.resp_body)["error"]["code"] == -32_020
+      end
+
+      response =
+        "tools/call"
+        |> versioned_conn("req_1", %{"name" => "list_artists"}, %{
+          "mcp-name" => "list_artists"
+        })
+        |> prepend_req_headers([{"mcp-name", "another_tool"}])
+        |> Router.call(@tool_opts)
+
+      assert response.status == 400
+      assert Jason.decode!(response.resp_body)["error"]["code"] == -32_020
+    end
   end
 
   describe "origin validation" do
@@ -423,6 +524,17 @@ defmodule AshAi.Mcp.Protocol20260728Test do
         |> Router.call(Keyword.put(@tool_opts, :allowed_origins, ["https://app.example.com"]))
 
       assert response.status == 200
+    end
+
+    test "duplicate Origin headers are rejected even when one is allowed" do
+      response =
+        "tools/list"
+        |> versioned_conn("req_1", %{}, %{"origin" => "https://app.example.com"})
+        |> prepend_req_headers([{"origin", "https://app.example.com"}])
+        |> Router.call(Keyword.put(@tool_opts, :allowed_origins, ["https://app.example.com"]))
+
+      assert response.status == 403
+      assert Jason.decode!(response.resp_body)["error"]["message"] == "Origin not allowed"
     end
   end
 
