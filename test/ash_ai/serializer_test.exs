@@ -63,17 +63,35 @@ defmodule AshAi.SerializerTest do
     end
   end
 
+  defmodule AggregateResource do
+    use Ash.Resource,
+      domain: AshAi.SerializerTest.TestDomain,
+      data_layer: Ash.DataLayer.Ets
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+      attribute :amount, :decimal, public?: true
+      attribute :category, :string, public?: true
+    end
+
+    actions do
+      defaults [:read, create: [:amount, :category]]
+    end
+  end
+
   defmodule TestDomain do
     use Ash.Domain, extensions: [AshAi]
 
     resources do
       resource UnionResource
       resource PartialSelectResource
+      resource AggregateResource
     end
 
     tools do
       tool :read_union_resources, UnionResource, :read
       tool :read_partial_select, PartialSelectResource, :read_name_only
+      tool :read_aggregate_resources, AggregateResource, :read
     end
   end
 
@@ -121,6 +139,49 @@ defmodule AshAi.SerializerTest do
       [item] = decoded
       assert item["name"] == "widget"
       refute Map.has_key?(item, "amount")
+    end
+  end
+
+  describe "Tools.execute with decimal aggregates" do
+    test "serializes the named aggregate result instead of the result map" do
+      for amount <- ["12.50", "7.25"] do
+        AggregateResource
+        |> Ash.Changeset.for_create(:create, %{
+          amount: Decimal.new(amount),
+          category: "included"
+        })
+        |> Ash.create!()
+      end
+
+      AggregateResource
+      |> Ash.Changeset.for_create(:create, %{
+        amount: Decimal.new("100.00"),
+        category: "excluded"
+      })
+      |> Ash.create!()
+
+      [tool] = AshAi.exposed_tools(actions: [{AggregateResource, [:read]}])
+
+      assert {:ok, json, _result} =
+               AshAi.Tools.execute(
+                 tool,
+                 %{
+                   "filter" => %{
+                     "field" => "category",
+                     "operator" => "eq",
+                     "value" => "included"
+                   },
+                   "limit" => 1,
+                   "offset" => 1,
+                   "result_type" => %{
+                     "aggregate" => "sum",
+                     "field" => "amount"
+                   }
+                 },
+                 %{}
+               )
+
+      assert Jason.decode!(json) == "19.75"
     end
   end
 end
