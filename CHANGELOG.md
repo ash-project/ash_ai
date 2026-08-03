@@ -11,6 +11,17 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v0.8.2](https://github.com/ash-project/ash_ai/compare/v0.8.1...v0.8.2) (2026-08-03)
+
+
+
+
+### Bug Fixes:
+
+* tools: serialize filtered aggregate results (#217) by chance-portal [(#217)](https://github.com/ash-project/ash_ai/pull/217)
+
+* mcp: harden current transport contract (#215) by chance-portal [(#215)](https://github.com/ash-project/ash_ai/pull/215)
+
 ## [v0.8.1](https://github.com/ash-project/ash_ai/compare/v0.8.0...v0.8.1) (2026-07-29)
 
 
