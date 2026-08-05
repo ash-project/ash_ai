@@ -79,6 +79,61 @@ defmodule AshAi.SerializerTest do
     end
   end
 
+  defmodule FieldPolicyResource do
+    use Ash.Resource,
+      domain: AshAi.SerializerTest.TestDomain,
+      data_layer: Ash.DataLayer.Ets,
+      authorizers: [Ash.Policy.Authorizer]
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+      attribute :name, :string, public?: true
+      attribute :secret, :string, public?: true
+    end
+
+    actions do
+      defaults [:read, create: [:name, :secret]]
+    end
+
+    policies do
+      policy always() do
+        authorize_if always()
+      end
+    end
+
+    field_policies do
+      field_policy :secret do
+        authorize_if actor_attribute_equals(:admin, true)
+      end
+
+      field_policy :* do
+        authorize_if always()
+      end
+    end
+  end
+
+  defmodule NestedFieldPolicyResource do
+    use Ash.Resource,
+      domain: AshAi.SerializerTest.TestDomain,
+      data_layer: Ash.DataLayer.Ets
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+      attribute :name, :string, public?: true
+    end
+
+    relationships do
+      belongs_to :user, AshAi.SerializerTest.FieldPolicyResource do
+        public? true
+        attribute_writable? true
+      end
+    end
+
+    actions do
+      defaults [:read, create: [:name, :user_id]]
+    end
+  end
+
   defmodule TestDomain do
     use Ash.Domain, extensions: [AshAi]
 
@@ -86,12 +141,16 @@ defmodule AshAi.SerializerTest do
       resource UnionResource
       resource PartialSelectResource
       resource AggregateResource
+      resource FieldPolicyResource
+      resource NestedFieldPolicyResource
     end
 
     tools do
       tool :read_union_resources, UnionResource, :read
       tool :read_partial_select, PartialSelectResource, :read_name_only
       tool :read_aggregate_resources, AggregateResource, :read
+      tool :read_field_policy_resources, FieldPolicyResource, :read
+      tool :read_nested_field_policy_resources, NestedFieldPolicyResource, :read, load: [:user]
     end
   end
 
@@ -140,6 +199,79 @@ defmodule AshAi.SerializerTest do
       assert item["name"] == "widget"
       refute Map.has_key?(item, "amount")
     end
+  end
+
+  describe "Tools.execute with field policies" do
+    setup context do
+      name = "widget-#{:erlang.phash2(context.test)}"
+
+      user =
+        FieldPolicyResource
+        |> Ash.Changeset.for_create(:create, %{name: name, secret: "hunter2"}, authorize?: false)
+        |> Ash.create!(authorize?: false)
+
+      NestedFieldPolicyResource
+      |> Ash.Changeset.for_create(:create, %{name: name, user_id: user.id})
+      |> Ash.create!()
+
+      [tool] = AshAi.exposed_tools(actions: [{FieldPolicyResource, [:read]}])
+      [nested_tool] = AshAi.exposed_tools(actions: [{NestedFieldPolicyResource, [:read]}])
+
+      {:ok, tool: tool, nested_tool: nested_tool, name: name}
+    end
+
+    test "omits fields the actor may not see instead of failing the call", %{
+      tool: tool,
+      name: name
+    } do
+      assert {:ok, json, _result} =
+               AshAi.Tools.execute(tool, %{}, %{actor: %{admin: false}})
+
+      item = fetch_by_name(json, name)
+      assert item["name"] == name
+      refute Map.has_key?(item, "secret")
+    end
+
+    test "still serializes the field for an actor who may see it", %{tool: tool, name: name} do
+      assert {:ok, json, _result} =
+               AshAi.Tools.execute(tool, %{}, %{actor: %{admin: true}})
+
+      assert fetch_by_name(json, name)["secret"] == "hunter2"
+    end
+
+    test "omits withheld fields on a loaded relationship", %{
+      nested_tool: nested_tool,
+      name: name
+    } do
+      assert {:ok, json, _result} =
+               AshAi.Tools.execute(nested_tool, %{}, %{actor: %{admin: false}})
+
+      user = fetch_user(json, name)
+      assert user["name"] == name
+      refute Map.has_key?(user, "secret")
+    end
+
+    test "still serializes a relationship field for an actor who may see it", %{
+      nested_tool: nested_tool,
+      name: name
+    } do
+      assert {:ok, json, _result} =
+               AshAi.Tools.execute(nested_tool, %{}, %{actor: %{admin: true}})
+
+      assert fetch_user(json, name)["secret"] == "hunter2"
+    end
+  end
+
+  defp fetch_by_name(json, name) do
+    json
+    |> Jason.decode!()
+    |> Enum.find(&(&1["name"] == name))
+  end
+
+  defp fetch_user(json, name) do
+    record = fetch_by_name(json, name)
+    refute is_nil(record), "no record named #{name} in #{json}"
+    record["user"]
   end
 
   describe "Tools.execute with decimal aggregates" do
