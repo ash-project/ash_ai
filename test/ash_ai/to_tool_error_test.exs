@@ -170,6 +170,76 @@ defmodule AshAi.ToToolErrorTest do
     end
   end
 
+  describe "Ash.Error.Query.NoSuchField" do
+    test "names the field without leaking the resource module" do
+      error = Ash.Error.Query.NoSuchField.exception(field: :nickname, resource: Res)
+
+      assert AshAi.ToToolError.to_tool_error(error) == "no such field: nickname"
+    end
+  end
+
+  describe "Ash.Error.Query.NoSuchFilterPredicate" do
+    test "names the predicate without leaking the resource module" do
+      error =
+        Ash.Error.Query.NoSuchFilterPredicate.exception(key: "contains", resource: Res)
+
+      assert AshAi.ToToolError.to_tool_error(error) == "no such filter predicate: \"contains\""
+    end
+  end
+
+  describe "Ash.Error.Query.InvalidFilterValue" do
+    test "returns the value and message" do
+      error =
+        Ash.Error.Query.InvalidFilterValue.exception(
+          value: "abc",
+          message: "must be an integer"
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) ==
+               "invalid filter value \"abc\": must be an integer"
+    end
+
+    test "returns just the value when there is no message" do
+      error = Ash.Error.Query.InvalidFilterValue.exception(value: "abc")
+
+      assert AshAi.ToToolError.to_tool_error(error) == "invalid filter value \"abc\""
+    end
+
+    test "does not leak the internal filter context" do
+      error =
+        Ash.Error.Query.InvalidFilterValue.exception(
+          value: "abc",
+          context: %{resource: Res, public?: true, relationship_path: [:author]}
+        )
+
+      message = AshAi.ToToolError.to_tool_error(error)
+
+      assert message == "invalid filter value \"abc\""
+      refute message =~ "resource"
+      refute message =~ "relationship_path"
+    end
+  end
+
+  describe "Ash.Error.Query.InvalidFilterReference" do
+    test "explains that the field cannot be filtered on" do
+      error = Ash.Error.Query.InvalidFilterReference.exception(field: :full_name)
+
+      assert AshAi.ToToolError.to_tool_error(error) ==
+               "full_name cannot be referenced in filters"
+    end
+
+    test "notes when only simple equality is allowed" do
+      error =
+        Ash.Error.Query.InvalidFilterReference.exception(
+          field: :full_name,
+          simple_equality?: true
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) ==
+               "full_name cannot be referenced in filters, except by simple equality"
+    end
+  end
+
   describe "error class wrappers" do
     test "Ash.Error.Invalid returns class name" do
       error = Ash.Error.Invalid.exception(errors: [])
