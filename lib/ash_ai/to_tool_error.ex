@@ -88,6 +88,36 @@ defimpl AshAi.ToToolError, for: Ash.Error.Invalid.NoSuchInput do
   end
 end
 
+defimpl AshAi.ToToolError, for: Ash.Error.Query.NoSuchField do
+  def to_tool_error(error) do
+    "no such field: #{error.field}"
+  end
+end
+
+defimpl AshAi.ToToolError, for: Ash.Error.Query.NoSuchFilterPredicate do
+  def to_tool_error(error) do
+    "no such filter predicate: #{inspect(error.key)}"
+  end
+end
+
+defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidFilterValue do
+  def to_tool_error(%{value: value, message: message}) do
+    ["invalid filter value #{inspect(value)}", message]
+    |> Enum.reject(&(&1 in [nil, ""]))
+    |> Enum.join(": ")
+  end
+end
+
+defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidFilterReference do
+  def to_tool_error(%{field: field, simple_equality?: true}) do
+    "#{field} cannot be referenced in filters, except by simple equality"
+  end
+
+  def to_tool_error(%{field: field}) do
+    "#{field} cannot be referenced in filters"
+  end
+end
+
 defimpl AshAi.ToToolError, for: Ash.Error.Invalid.InvalidPrimaryKey do
   def to_tool_error(_error) do
     "invalid primary key provided"
