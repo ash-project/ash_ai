@@ -15,7 +15,7 @@ defmodule AshAi.Tool.Execution do
     @moduledoc """
     Execution context for tool calls.
     """
-    defstruct [:actor, :tenant, :context, :load, :domain]
+    defstruct [:actor, :tenant, :context, :load, :select, :domain, load_strict?: false]
   end
 
   @doc """
@@ -31,6 +31,8 @@ defmodule AshAi.Tool.Execution do
           resource: resource,
           action: action,
           load: load,
+          load_strict?: load_strict?,
+          select: select,
           identity: identity,
           arguments: tool_arguments
         },
@@ -54,6 +56,8 @@ defmodule AshAi.Tool.Execution do
       tenant: context[:tenant],
       context: context[:context] || %{},
       load: resolved_load,
+      load_strict?: load_strict?,
+      select: select,
       domain: domain
     }
 
@@ -86,6 +90,9 @@ defmodule AshAi.Tool.Execution do
     ]
   end
 
+  defp serialize_opts(%Context{select: nil} = ctx), do: [load: ctx.load]
+  defp serialize_opts(ctx), do: [load: ctx.load, select: ctx.select]
+
   defp run_read(resource, action, arguments, input, opts, ctx) do
     sort = build_sort(arguments["sort"])
     limit = build_limit(arguments["limit"], action.pagination)
@@ -96,6 +103,7 @@ defmodule AshAi.Tool.Execution do
       |> Ash.Query.offset(arguments["offset"])
       |> apply_sort(sort)
       |> apply_filter(arguments["filter"])
+      |> apply_select(ctx)
       |> Ash.Query.for_read(action.name, input, opts)
 
     execute_read(query, action, arguments["result_type"] || "run_query", ctx)
@@ -133,6 +141,17 @@ defmodule AshAi.Tool.Execution do
   defp apply_sort(query, ""), do: query
   defp apply_sort(query, sort), do: Ash.Query.sort_input(query, sort)
 
+  defp apply_select(query, %Context{select: nil}), do: query
+  defp apply_select(query, %Context{select: select}), do: Ash.Query.select(query, select)
+
+  defp apply_changeset_select(changeset, %Context{select: nil}), do: changeset
+
+  defp apply_changeset_select(changeset, %Context{select: select}),
+    do: Ash.Changeset.select(changeset, select, replace?: true)
+
+  defp put_select(opts, %Context{select: nil}), do: opts
+  defp put_select(opts, %Context{select: select}), do: Keyword.put(opts, :select, select)
+
   defp apply_filter(query, nil), do: query
   defp apply_filter(query, []), do: query
   defp apply_filter(query, filter) when is_map(filter) and map_size(filter) == 0, do: query
@@ -162,7 +181,7 @@ defmodule AshAi.Tool.Execution do
 
   defp execute_read(query, action, "run_query", ctx) do
     query
-    |> Ash.Actions.Read.unpaginated_read(action, load: ctx.load)
+    |> Ash.Actions.Read.unpaginated_read(action, load: ctx.load, strict?: ctx.load_strict?)
     |> case do
       {:ok, value} -> value
       {:error, error} -> raise Ash.Error.to_error_class(error)
@@ -171,7 +190,7 @@ defmodule AshAi.Tool.Execution do
       resource = query.resource
 
       result
-      |> AshAi.Serializer.serialize_value({:array, resource}, [], ctx.domain, load: ctx.load)
+      |> AshAi.Serializer.serialize_value({:array, resource}, [], ctx.domain, serialize_opts(ctx))
       |> Jason.encode!()
       |> then(&{:ok, &1, result})
     end)
@@ -256,10 +275,11 @@ defmodule AshAi.Tool.Execution do
   defp run_create(resource, action, input, opts, ctx) do
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
+    |> apply_changeset_select(ctx)
     |> Ash.create!(load: ctx.load)
     |> then(fn result ->
       result
-      |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
+      |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
       |> Jason.encode!()
       |> then(&{:ok, &1, result})
     end)
@@ -282,11 +302,12 @@ defmodule AshAi.Tool.Execution do
         allow_stream_with: :full_read,
         return_records?: true
       )
+      |> put_select(ctx)
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
         result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
+        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
         |> Jason.encode!()
         |> then(&{:ok, &1, result})
 
@@ -312,11 +333,12 @@ defmodule AshAi.Tool.Execution do
         allow_stream_with: :full_read,
         return_records?: true
       )
+      |> put_select(ctx)
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
         result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, load: ctx.load)
+        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
         |> Jason.encode!()
         |> then(&{:ok, &1, result})
 

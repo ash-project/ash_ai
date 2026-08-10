@@ -160,12 +160,14 @@ defmodule AshAi.Serializer do
         key -> key
       end)
 
+    select = Keyword.get(opts, :select)
+
     fields =
       if opts[:top_level?] do
-        Map.get(request.fields, resource) || Map.get(request.route, :default_fields) ||
+        Map.get(request.fields, resource) || Map.get(request.route, :default_fields) || select ||
           default_attributes(resource)
       else
-        Map.get(request.fields, resource) ||
+        Map.get(request.fields, resource) || select ||
           default_attributes(resource)
       end
       |> Enum.concat(load_fields)
@@ -233,7 +235,7 @@ defmodule AshAi.Serializer do
               _ -> nil
             end)
 
-          new_opts = opts |> Keyword.put(:load, new_load)
+          new_opts = opts |> Keyword.put(:load, new_load) |> Keyword.delete(:select)
 
           value =
             serialize_value(

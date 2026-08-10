@@ -48,6 +48,23 @@ tool :update_artist, Artist, :update, identity: :id, load: [:albums]
 ```
 
 ```
+tool :list_artists, Artist, :read, load: [albums: [:title]], load_strict?: true
+```
+
+```
+tool :list_artists, Artist, :read, select: [:name]
+```
+
+```
+tool :list_artists, Artist, :read do
+  load fn input ->
+    [schedule: [date: input["date"]]] # Use string keys!
+  end
+end
+
+```
+
+```
 tool :get_board, Board, :read, _meta: %{"openai/outputTemplate" => "ui://widget/kanban-board.html", "openai/toolInvocation/invoking" => "Preparing the board…", "openai/toolInvocation/invoked" => "Board ready."}
 ```
 
@@ -70,7 +87,9 @@ tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 |------|------|---------|------|
 | [`action_parameters`](#tools-tool-action_parameters){: #tools-tool-action_parameters } | `list(atom \| {:result_type, list(:run_query \| :count \| :exists \| :aggregate)})` |  | A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included. |
 | [`full_filter_schema?`](#tools-tool-full_filter_schema?){: #tools-tool-full_filter_schema? } | `boolean` | `false` | Whether to generate the full JSON schema for the `filter` parameter of read actions. When `false` (the default), the filter is a free-form object whose shape is explained in the parameter description, keeping the tool definition much smaller. Set to `true` when you need a fully-specified schema, e.g. for strict/grammar-constrained tool calling. |
-| [`load`](#tools-tool-load){: #tools-tool-load } | `any` | `[]` | A list of relationships and calculations to load, or an anonymous function/1. Note that loaded fields can include private attributes, which will then be included in the tool's response. However, private attributes cannot be used for filtering, sorting, or aggregation. If a function is provided, it will be called with the tool input (a Map with **String keys**) and must return the final load list. ## Example load fn input ->   [schedule: [date: input["date"]]] # Use string keys! end |
+| [`load`](#tools-tool-load){: #tools-tool-load } | `any` | `[]` | A list of relationships and calculations to load, or an anonymous function/1. Note that loaded fields can include private attributes, which will then be included in the tool's response. However, private attributes cannot be used for filtering, sorting, or aggregation. If a function is provided, it will be called with the tool input (a Map with **String keys**) and must return the final load list, e.g. `load fn input -> [schedule: [date: input["date"]]] end` (use string keys!). |
+| [`load_strict?`](#tools-tool-load_strict?){: #tools-tool-load_strict? } | `boolean` | `false` | Whether to apply the `load` statement strictly. When `true`, only the fields listed for a relationship in `load` are selected on that relationship, rather than all of its public attributes. This keeps tool responses (and the underlying queries) smaller when you only need a few fields of a related record. Note that with `load_strict?: true` you must list every field you want alongside any nested relationships, e.g. `load: [:title, category: [:name]]`. |
+| [`select`](#tools-tool-select){: #tools-tool-select } | `list(atom)` |  | A list of attributes to return for the tool's resource. When set, only these attributes are read and included in the tool's response, instead of all public attributes. Private attributes may be listed here, which will then be included in the response. Note that private attributes still cannot be used for filtering, sorting, or aggregation. Fields listed in `load` are included in the response in addition to those listed here. |
 | [`async`](#tools-tool-async){: #tools-tool-async } | `boolean` | `true` |  |
 | [`description`](#tools-tool-description){: #tools-tool-description } | `String.t` |  | A description for the tool. Defaults to the action's description. |
 | [`identity`](#tools-tool-identity){: #tools-tool-identity } | `atom` |  | The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely. |
