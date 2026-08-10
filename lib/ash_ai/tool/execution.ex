@@ -44,40 +44,42 @@ defmodule AshAi.Tool.Execution do
 
     opts = build_opts(domain, context)
 
-    resolved_load =
-      case load do
-        func when is_function(func, 1) -> func.(client_input)
-        list when is_list(list) -> list
-        _ -> []
+    with :ok <- validate_input_shape(client_input) do
+      resolved_load =
+        case load do
+          func when is_function(func, 1) -> func.(client_input)
+          list when is_list(list) -> list
+          _ -> []
+        end
+
+      exec_ctx = %Context{
+        actor: context[:actor],
+        tenant: context[:tenant],
+        context: context[:context] || %{},
+        load: resolved_load,
+        load_strict?: load_strict?,
+        select: select,
+        domain: domain
+      }
+
+      try do
+        validate_inputs!(resource, client_input, action, tool_arguments)
+        input = Map.take(client_input, valid_action_inputs(resource, action))
+
+        case action.type do
+          :read -> run_read(resource, action, arguments, input, opts, exec_ctx)
+          :create -> run_create(resource, action, input, opts, exec_ctx)
+          :update -> run_update(resource, action, arguments, input, opts, identity, exec_ctx)
+          :destroy -> run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
+          :action -> run_generic(resource, action, input, opts, exec_ctx)
+        end
+      rescue
+        error ->
+          {:error, Errors.format(error)}
+      catch
+        {:tool_error, error_msg} ->
+          {:error, error_msg}
       end
-
-    exec_ctx = %Context{
-      actor: context[:actor],
-      tenant: context[:tenant],
-      context: context[:context] || %{},
-      load: resolved_load,
-      load_strict?: load_strict?,
-      select: select,
-      domain: domain
-    }
-
-    try do
-      validate_inputs!(resource, client_input, action, tool_arguments)
-      input = Map.take(client_input, valid_action_inputs(resource, action))
-
-      case action.type do
-        :read -> run_read(resource, action, arguments, input, opts, exec_ctx)
-        :create -> run_create(resource, action, input, opts, exec_ctx)
-        :update -> run_update(resource, action, arguments, input, opts, identity, exec_ctx)
-        :destroy -> run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
-        :action -> run_generic(resource, action, input, opts, exec_ctx)
-      end
-    rescue
-      error ->
-        {:error, Errors.format(error)}
-    catch
-      {:tool_error, error_msg} ->
-        {:error, error_msg}
     end
   end
 
@@ -392,6 +394,14 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
+  defp validate_input_shape(client_input) when is_map(client_input), do: :ok
+
+  defp validate_input_shape(client_input) do
+    {:error,
+     "`input` must be a JSON object, got #{truncate(Jason.encode!(client_input))}. " <>
+       "Pass the arguments themselves, not a JSON-encoded string of them."}
+  end
+
   defp validate_inputs!(resource, client_input, action, tool_arguments) do
     allowed_keys =
       MapSet.new(
@@ -408,6 +418,10 @@ defmodule AshAi.Tool.Execution do
     else
       :ok
     end
+  end
+
+  defp truncate(encoded) do
+    if String.length(encoded) > 120, do: String.slice(encoded, 0, 120) <> "...", else: encoded
   end
 
   defp valid_action_inputs(resource, action) do

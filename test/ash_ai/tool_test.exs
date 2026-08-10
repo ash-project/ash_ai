@@ -199,6 +199,31 @@ defmodule AshAi.ToolTest do
       {:ok, json, _raw} = registry["read_test_resources"].(nil, context())
       assert is_binary(json)
     end
+
+    test "rejects a non-object input naming the type that arrived" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(actions: [{TestResource, :*}], strict: false)
+
+      for input <- [~s({"public_name": "John"}), [1, 2], true, 42] do
+        {:error, error} = registry["read_test_resources"].(%{"input" => input}, context())
+
+        assert error =~ "`input` must be a JSON object"
+        assert error =~ "got #{Jason.encode!(input)}"
+        refute error =~ "unexpected error occurred"
+      end
+    end
+
+    test "truncates a long non-object input" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(actions: [{TestResource, :*}], strict: false)
+
+      {:error, error} =
+        registry["read_test_resources"].(%{"input" => String.duplicate("a", 500)}, context())
+
+      assert error =~ "`input` must be a JSON object"
+      assert error =~ "..."
+      assert String.length(error) < 300
+    end
   end
 
   describe "tool parameter schema visibility" do
