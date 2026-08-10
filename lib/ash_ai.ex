@@ -30,6 +30,7 @@ defmodule AshAi do
       :resource,
       :action,
       :load,
+      :select,
       :async,
       :domain,
       :identity,
@@ -39,6 +40,7 @@ defmodule AshAi do
       :_meta,
       :ui,
       full_filter_schema?: false,
+      load_strict?: false,
       __spark_metadata__: nil
     ]
 
