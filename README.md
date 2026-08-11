@@ -308,7 +308,7 @@ Resources are exposed via the MCP server at `/mcp` and can be accessed by MCP-co
 
 **Important**: Tools have different access levels for different operations:
 - **Filtering/Sorting/Aggregation**: Only public attributes (`public?: true`) can be used
-- **Single-record lookup**: Use `get_by` on read tools to require public, filterable lookup fields and return one record
+- **Single-record lookup**: Use `get_by` on read tools to look up one record by filterable fields
 - **Arguments**: Only public action arguments are exposed
 - **Response data**: Public attributes are returned by default
 - **Loading data**: Use the `load` option to include relationships, calculations, or additional attributes (including private ones) in responses

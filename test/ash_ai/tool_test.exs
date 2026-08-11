@@ -450,11 +450,11 @@ defmodule AshAi.ToolTest do
   end
 
   describe "get_by validation" do
-    test "rejects private lookup fields at compile time", %{test: test} do
+    test "rejects non-filterable lookup fields at compile time", %{test: test} do
       domain = Module.concat([__MODULE__, test, Domain])
       resource = Module.concat([__MODULE__, test, Resource])
 
-      assert_raise Spark.Error.DslError, ~r/not public/, fn ->
+      assert_raise Spark.Error.DslError, ~r/not filterable/, fn ->
         Module.create(
           resource,
           quote do
@@ -466,7 +466,7 @@ defmodule AshAi.ToolTest do
 
             attributes do
               uuid_v7_primary_key(:id, writable?: true)
-              attribute(:private_name, :string)
+              attribute(:name, :string, public?: true, filterable?: false)
             end
 
             actions do
@@ -474,7 +474,7 @@ defmodule AshAi.ToolTest do
             end
 
             tools do
-              tool(:get_by_private_name, :read, get_by: :private_name)
+              tool(:get_by_name, :read, get_by: :name)
             end
           end,
           Macro.Env.location(__ENV__)

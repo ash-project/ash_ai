@@ -120,9 +120,6 @@ defmodule AshAi do
              ] ->
           {:error, "cannot `get_by` on the relationship `#{inspect(field_name)}`"}
 
-        %{public?: false} ->
-          {:error, "`#{inspect(field_name)}` is not public, so it cannot be used in `get_by`"}
-
         %{filterable?: false} ->
           {:error, "`#{inspect(field_name)}` is not filterable, so it cannot be used in `get_by`"}
 

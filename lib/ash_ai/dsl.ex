@@ -121,7 +121,7 @@ defmodule AshAi.Dsl do
     get_by: [
       type: {:or, [:atom, {:list, :atom}]},
       doc:
-        "For read actions, a field or list of fields used to fetch a single record. The fields must be public and filterable."
+        "For read actions, a field or list of fields used to fetch a single record. The fields must be filterable attributes, calculations or aggregates."
     ],
     _meta: [
       type: :any,
