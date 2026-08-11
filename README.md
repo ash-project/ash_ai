@@ -243,6 +243,7 @@ defmodule MyApp.Blog do
 
   tools do
     tool :read_posts, MyApp.Blog.Post, :read
+    tool :get_post_by_id, MyApp.Blog.Post, :read, get_by: :id
     tool :create_post, MyApp.Blog.Post, :create
     tool :publish_post, MyApp.Blog.Post, :publish
     tool :read_comments, MyApp.Blog.Comment, :read
@@ -261,6 +262,7 @@ defmodule MyApp.Blog.Post do
 
   tools do
     tool :read_posts, :read
+    tool :get_post_by_slug, :read, get_by: :slug
     tool :create_post, :create
   end
 end
@@ -306,6 +308,7 @@ Resources are exposed via the MCP server at `/mcp` and can be accessed by MCP-co
 
 **Important**: Tools have different access levels for different operations:
 - **Filtering/Sorting/Aggregation**: Only public attributes (`public?: true`) can be used
+- **Single-record lookup**: Use `get_by` on read tools to look up one record by filterable fields
 - **Arguments**: Only public action arguments are exposed
 - **Response data**: Public attributes are returned by default
 - **Loading data**: Use the `load` option to include relationships, calculations, or additional attributes (including private ones) in responses
@@ -315,7 +318,10 @@ Example:
 tools do
   # Returns only public attributes
   tool :read_posts, MyApp.Blog.Post, :read
-  
+
+  # Returns one post by ID instead of a list of results
+  tool :get_post_by_id, MyApp.Blog.Post, :read, get_by: :id
+
   # Returns public attributes AND loaded relationships/calculations
   # Note: loaded fields can include private attributes
   tool :read_posts_with_details, MyApp.Blog.Post, :read,

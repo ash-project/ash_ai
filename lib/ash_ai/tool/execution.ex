@@ -34,6 +34,7 @@ defmodule AshAi.Tool.Execution do
           load_strict?: load_strict?,
           select: select,
           identity: identity,
+          get_by: get_by,
           arguments: tool_arguments
         },
         client_arguments,
@@ -67,7 +68,7 @@ defmodule AshAi.Tool.Execution do
         input = Map.take(client_input, valid_action_inputs(resource, action))
 
         case action.type do
-          :read -> run_read(resource, action, arguments, input, opts, exec_ctx)
+          :read -> run_read(resource, action, arguments, input, opts, get_by, exec_ctx)
           :create -> run_create(resource, action, input, opts, exec_ctx)
           :update -> run_update(resource, action, arguments, input, opts, identity, exec_ctx)
           :destroy -> run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
@@ -95,7 +96,7 @@ defmodule AshAi.Tool.Execution do
   defp serialize_opts(%Context{select: nil} = ctx), do: [load: ctx.load]
   defp serialize_opts(ctx), do: [load: ctx.load, select: ctx.select]
 
-  defp run_read(resource, action, arguments, input, opts, ctx) do
+  defp run_read(resource, action, arguments, input, opts, nil, ctx) do
     sort = build_sort(arguments["sort"])
     limit = build_limit(arguments["limit"], action.pagination)
 
@@ -109,6 +110,21 @@ defmodule AshAi.Tool.Execution do
       |> Ash.Query.for_read(action.name, input, opts)
 
     execute_read(query, action, arguments["result_type"] || "run_query", ctx)
+  end
+
+  defp run_read(resource, action, arguments, input, opts, get_by, ctx) do
+    resource
+    |> apply_select(ctx)
+    |> Ash.Query.for_read(action.name, input, opts)
+    |> Ash.Query.do_filter(get_by_filter(resource, get_by, arguments))
+    |> Ash.read_one!(
+      Keyword.merge(opts,
+        load: ctx.load,
+        strict?: ctx.load_strict?,
+        not_found_error?: true
+      )
+    )
+    |> serialize_record(resource, ctx)
   end
 
   defp build_sort(sort) when is_list(sort) do
@@ -279,12 +295,7 @@ defmodule AshAi.Tool.Execution do
     |> Ash.Changeset.for_create(action.name, input, opts)
     |> apply_changeset_select(ctx)
     |> Ash.create!(load: ctx.load)
-    |> then(fn result ->
-      result
-      |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
-      |> Jason.encode!()
-      |> then(&{:ok, &1, result})
-    end)
+    |> serialize_record(resource, ctx)
   end
 
   defp run_update(resource, action, arguments, input, opts, identity, ctx) do
@@ -308,10 +319,7 @@ defmodule AshAi.Tool.Execution do
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
-        result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
-        |> Jason.encode!()
-        |> then(&{:ok, &1, result})
+        serialize_record(result, resource, ctx)
 
       %Ash.BulkResult{status: :success, records: []} ->
         raise Ash.Error.to_error_class(Ash.Error.Query.NotFound.exception(primary_key: filter))
@@ -339,14 +347,18 @@ defmodule AshAi.Tool.Execution do
     )
     |> case do
       %Ash.BulkResult{status: :success, records: [result]} ->
-        result
-        |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
-        |> Jason.encode!()
-        |> then(&{:ok, &1, result})
+        serialize_record(result, resource, ctx)
 
       %Ash.BulkResult{status: :success, records: []} ->
         raise Ash.Error.to_error_class(Ash.Error.Query.NotFound.exception(primary_key: filter))
     end
+  end
+
+  defp serialize_record(result, resource, ctx) do
+    result
+    |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
+    |> Jason.encode!()
+    |> then(&{:ok, &1, result})
   end
 
   defp run_generic(resource, action, input, opts, ctx) do
@@ -376,7 +388,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> AshAi.Tool.identity_keys(nil)
     |> Enum.reduce(nil, fn key, expr ->
-      value = Map.get(arguments, to_string(key))
+      value = identity_value(resource, key, arguments)
 
       if expr do
         Ash.Expr.expr(^expr and ^Ash.Expr.ref(key) == ^value)
@@ -390,8 +402,56 @@ defmodule AshAi.Tool.Execution do
     resource
     |> AshAi.Tool.identity_keys(identity)
     |> Enum.map(fn key ->
-      {key, Map.get(arguments, to_string(key))}
+      {key, identity_value(resource, key, arguments)}
     end)
+  end
+
+  defp identity_value(resource, key, arguments) do
+    arguments
+    |> Map.get(to_string(key))
+    |> then(&cast_lookup_value!(resource, key, &1, "identity"))
+  end
+
+  defp get_by_filter(resource, get_by, arguments) do
+    get_by
+    |> List.wrap()
+    |> Map.new(fn field_name ->
+      case Map.get(arguments, to_string(field_name)) do
+        nil -> throw({:tool_error, "Missing required get_by argument: #{field_name}"})
+        value -> {field_name, cast_lookup_value!(resource, field_name, value, "get_by")}
+      end
+    end)
+  end
+
+  # Values arrive as JSON primitives, so they are cast to the field's type before
+  # filtering. Mirrors what `Ash.CodeInterface` does for `get_by` code interfaces.
+  # A missing argument stays `nil` here, so the caller decides how to handle it.
+  defp cast_lookup_value!(_resource, _field_name, nil, _label), do: nil
+
+  defp cast_lookup_value!(resource, field_name, value, label) do
+    {type, constraints} = lookup_field_type(resource, field_name)
+
+    with {:ok, casted} <- Ash.Type.cast_input(type, value, constraints),
+         {:ok, casted} <- Ash.Type.apply_constraints(type, casted, constraints) do
+      casted
+    else
+      _ ->
+        throw(
+          {:tool_error,
+           "Invalid value for #{label} argument #{field_name}: #{truncate(Jason.encode!(value))}"}
+        )
+    end
+  end
+
+  defp lookup_field_type(resource, field_name) do
+    case Ash.Resource.Info.field(resource, field_name) do
+      %Ash.Resource.Aggregate{} = aggregate ->
+        {:ok, type, constraints} = Ash.Query.Aggregate.aggregate_type(resource, aggregate)
+        {type, constraints}
+
+      %{type: type} = field ->
+        {type, Map.get(field, :constraints) || []}
+    end
   end
 
   defp validate_input_shape(client_input) when is_map(client_input), do: :ok

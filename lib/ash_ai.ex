@@ -34,6 +34,7 @@ defmodule AshAi do
       :async,
       :domain,
       :identity,
+      :get_by,
       :description,
       :action_parameters,
       :arguments,
@@ -91,6 +92,50 @@ defmodule AshAi do
           identity.keys
       end
     end
+
+    @doc false
+    # Raises ArgumentError if a field is not usable as a lookup.
+    def get_by_fields(resource, get_by) do
+      get_by
+      |> List.wrap()
+      |> Enum.map(fn field_name ->
+        case validate_get_by_field(resource, field_name) do
+          {:ok, field} -> field
+          {:error, message} -> raise ArgumentError, message
+        end
+      end)
+    end
+
+    @doc false
+    # `resource` may be a resource module or its Spark.Dsl state, so this can run while the
+    # resource itself is being compiled.
+    def validate_get_by_field(resource, field_name) do
+      case Ash.Resource.Info.field(resource, field_name) do
+        %struct{}
+        when struct in [
+               Ash.Resource.Relationships.BelongsTo,
+               Ash.Resource.Relationships.HasOne,
+               Ash.Resource.Relationships.HasMany,
+               Ash.Resource.Relationships.ManyToMany
+             ] ->
+          {:error, "cannot `get_by` on the relationship `#{inspect(field_name)}`"}
+
+        %{filterable?: false} ->
+          {:error, "`#{inspect(field_name)}` is not filterable, so it cannot be used in `get_by`"}
+
+        nil ->
+          {:error,
+           "`#{inspect(field_name)}` is not a valid attribute, calculation or aggregate on #{inspect(resource_module(resource))}"}
+
+        field ->
+          {:ok, field}
+      end
+    end
+
+    defp resource_module(resource) when is_atom(resource), do: resource
+
+    defp resource_module(dsl_state),
+      do: Spark.Dsl.Transformer.get_persisted(dsl_state, :module, dsl_state)
   end
 
   defmodule McpResource do

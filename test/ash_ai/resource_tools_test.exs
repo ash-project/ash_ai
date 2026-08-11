@@ -31,6 +31,7 @@ defmodule AshAi.ResourceToolsTest do
 
     tools do
       tool(:resource_read, :read)
+      tool(:resource_get_by_id, :read, get_by: :id)
       tool(:resource_create, :create)
     end
   end
@@ -91,6 +92,17 @@ defmodule AshAi.ResourceToolsTest do
       assert tool.action == :read
     end
 
+    test "tool :name, :action supports get_by" do
+      tool =
+        ResourceToolResource
+        |> AshAi.Info.tools()
+        |> Enum.find(&(&1.name == :resource_get_by_id))
+
+      assert tool.resource == ResourceToolResource
+      assert tool.action == :read
+      assert tool.get_by == :id
+    end
+
     test "resource-level tools reject explicit resource argument" do
       module =
         Module.concat(__MODULE__, :"InvalidResourceTool#{System.unique_integer([:positive])}")
@@ -142,6 +154,58 @@ defmodule AshAi.ResourceToolsTest do
         )
       end
     end
+
+    test "domain-level get_by tools tolerate resources compiled later", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
+
+      assert {:module, ^domain, _binary, _term} =
+               Module.create(
+                 domain,
+                 quote do
+                   use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+                   resources do
+                     resource unquote(resource)
+                   end
+
+                   tools do
+                     tool(:get_deferred_resource, unquote(resource), :read, get_by: :id)
+                   end
+                 end,
+                 Macro.Env.location(__ENV__)
+               )
+
+      assert {:module, ^resource, _binary, _term} =
+               Module.create(
+                 resource,
+                 quote do
+                   use Ash.Resource,
+                     domain: unquote(domain),
+                     extensions: [AshAi],
+                     data_layer: Ash.DataLayer.Ets,
+                     validate_domain_inclusion?: false
+
+                   attributes do
+                     uuid_v7_primary_key(:id, writable?: true)
+                   end
+
+                   actions do
+                     defaults([:read])
+                   end
+                 end,
+                 Macro.Env.location(__ENV__)
+               )
+
+      tool =
+        domain
+        |> AshAi.Info.tools()
+        |> Enum.find(&(&1.name == :get_deferred_resource))
+
+      assert tool.resource == resource
+      assert tool.action == :read
+      assert tool.get_by == :id
+    end
   end
 
   describe "AshAi.exposed_tools/1 discovery" do
@@ -151,7 +215,12 @@ defmodule AshAi.ResourceToolsTest do
       assert tools
              |> Enum.map(& &1.name)
              |> MapSet.new() ==
-               MapSet.new([:resource_read, :resource_create, :domain_create_alias])
+               MapSet.new([
+                 :resource_read,
+                 :resource_get_by_id,
+                 :resource_create,
+                 :domain_create_alias
+               ])
     end
 
     test "actions filter by specific action keeps matching tools from both levels" do

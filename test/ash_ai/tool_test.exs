@@ -10,6 +10,10 @@ defmodule AshAi.ToolTest do
   defmodule TestResource do
     use Ash.Resource, domain: TestDomain, data_layer: Ash.DataLayer.Ets
 
+    ets do
+      private? true
+    end
+
     attributes do
       uuid_v7_primary_key(:id, writable?: true)
 
@@ -36,6 +40,13 @@ defmodule AshAi.ToolTest do
     tools do
       tool :read_test_resources, TestResource, :read, load: [:internal_status]
 
+      tool :get_test_resource_by_id, TestResource, :read,
+        get_by: :id,
+        load: [:internal_status]
+
+      tool :get_test_resource_by_name_and_email, TestResource, :read,
+        get_by: [:public_name, :public_email]
+
       tool :read_test_resources_full_filter, TestResource, :read, full_filter_schema?: true
 
       tool :read_test_resources_with_meta,
@@ -52,6 +63,10 @@ defmodule AshAi.ToolTest do
 
   defmodule IdentityResource do
     use Ash.Resource, domain: IdentityDomain, data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
 
     attributes do
       integer_primary_key :id, writable?: true
@@ -158,6 +173,39 @@ defmodule AshAi.ToolTest do
       other = Ash.get!(IdentityResource, 1, domain: IdentityDomain)
       assert other.name == "Name 1"
     end
+
+    test "casts identity values to the field type" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update]}],
+          strict: false
+        )
+
+      {:ok, _json, updated} =
+        registry["update_by_pk"].(
+          %{"id" => "2", "input" => %{"name" => "Renamed"}},
+          context()
+        )
+
+      assert updated.id == 2
+      assert updated.name == "Renamed"
+    end
+
+    test "returns a tool error when an identity value is not castable" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update]}],
+          strict: false
+        )
+
+      assert {:error, message} =
+               registry["update_by_pk"].(
+                 %{"id" => "not-an-integer", "input" => %{"name" => "Renamed"}},
+                 context()
+               )
+
+      assert message =~ "Invalid value for identity argument id"
+    end
   end
 
   describe "tool response" do
@@ -223,6 +271,140 @@ defmodule AshAi.ToolTest do
       assert error =~ "`input` must be a JSON object"
       assert error =~ "..."
       assert String.length(error) < 300
+    end
+  end
+
+  describe "get_by read tools" do
+    setup do
+      id = Ash.UUIDv7.generate()
+
+      resource =
+        TestResource
+        |> Ash.Changeset.for_create(:create, %{
+          id: id,
+          public_name: "Jane #{id}",
+          public_email: "jane-#{id}@example.com",
+          private_notes: "Private lookup notes",
+          internal_status: "reviewed"
+        })
+        |> Ash.create!(domain: TestDomain)
+
+      %{resource: resource}
+    end
+
+    test "schema exposes lookup fields and not list-query controls" do
+      tool =
+        [actions: [{TestResource, [:read]}], tools: [:get_test_resource_by_id], strict: false]
+        |> AshAi.list_tools()
+        |> hd()
+
+      props = tool.parameter_schema["properties"]
+
+      assert Map.has_key?(props, "id")
+      assert tool.parameter_schema["required"] == ["id"]
+
+      refute Map.has_key?(props, "filter")
+      refute Map.has_key?(props, "sort")
+      refute Map.has_key?(props, "limit")
+      refute Map.has_key?(props, "offset")
+      refute Map.has_key?(props, "result_type")
+    end
+
+    test "executes by a single lookup field and returns one record", %{resource: resource} do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      {:ok, json, fetched} =
+        registry["get_test_resource_by_id"].(%{"id" => resource.id}, context())
+
+      assert fetched.id == resource.id
+
+      assert json ==
+               "{\"id\":\"#{resource.id}\",\"public_name\":\"Jane #{resource.id}\",\"public_email\":\"jane-#{resource.id}@example.com\",\"internal_status\":\"reviewed\"}"
+    end
+
+    test "executes by a composite lookup", %{resource: resource} do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_name_and_email],
+          strict: false
+        )
+
+      {:ok, _json, fetched} =
+        registry["get_test_resource_by_name_and_email"].(
+          %{
+            "public_name" => resource.public_name,
+            "public_email" => resource.public_email
+          },
+          context()
+        )
+
+      assert fetched.id == resource.id
+    end
+
+    test "returns a tool error when a lookup argument is missing" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:error, "Missing required get_by argument: id"} =
+               registry["get_test_resource_by_id"].(%{}, context())
+    end
+
+    test "casts lookup values to the field type", %{resource: resource} do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:ok, _json, fetched} =
+               registry["get_test_resource_by_id"].(
+                 %{"id" => String.upcase(resource.id)},
+                 context()
+               )
+
+      assert fetched.id == resource.id
+    end
+
+    test "returns a tool error when a lookup value is not castable" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:error, message} =
+               registry["get_test_resource_by_id"].(%{"id" => "not-a-uuid"}, context())
+
+      assert message =~ "Invalid value for get_by argument id"
+    end
+
+    test "returns a tool error when no record matches" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:error, message} =
+               registry["get_test_resource_by_id"].(
+                 %{"id" => "0197b375-4daa-7112-a9d8-7f0104489999"},
+                 context()
+               )
+
+      assert message =~ "could not be found"
     end
   end
 
@@ -301,6 +483,132 @@ defmodule AshAi.ToolTest do
       tool_with_meta = Enum.find(tools, &(&1.name == :read_test_resources_with_meta))
 
       assert AshAi.Tool.has_meta?(tool_with_meta)
+    end
+  end
+
+  describe "get_by validation" do
+    test "rejects non-filterable lookup fields at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
+
+      assert_raise Spark.Error.DslError, ~r/not filterable/, fn ->
+        Module.create(
+          resource,
+          quote do
+            use Ash.Resource,
+              domain: unquote(domain),
+              extensions: [AshAi],
+              data_layer: Ash.DataLayer.Ets,
+              validate_domain_inclusion?: false
+
+            attributes do
+              uuid_v7_primary_key(:id, writable?: true)
+              attribute(:name, :string, public?: true, filterable?: false)
+            end
+
+            actions do
+              defaults([:read])
+            end
+
+            tools do
+              tool(:get_by_name, :read, get_by: :name)
+            end
+          end,
+          Macro.Env.location(__ENV__)
+        )
+      end
+    end
+
+    test "rejects relationship lookup fields at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
+      related = Module.concat([__MODULE__, test, Related])
+
+      Module.create(
+        related,
+        quote do
+          use Ash.Resource,
+            domain: unquote(domain),
+            data_layer: Ash.DataLayer.Ets,
+            validate_domain_inclusion?: false
+
+          attributes do
+            uuid_v7_primary_key(:id, writable?: true)
+            attribute(:parent_id, :uuid, public?: true)
+          end
+
+          actions do
+            defaults([:read])
+          end
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      assert_raise Spark.Error.DslError, ~r/cannot `get_by` on the relationship/, fn ->
+        Module.create(
+          resource,
+          quote do
+            use Ash.Resource,
+              domain: unquote(domain),
+              extensions: [AshAi],
+              data_layer: Ash.DataLayer.Ets,
+              validate_domain_inclusion?: false
+
+            attributes do
+              uuid_v7_primary_key(:id, writable?: true)
+            end
+
+            relationships do
+              has_many(:children, unquote(related),
+                public?: true,
+                destination_attribute: :parent_id
+              )
+            end
+
+            actions do
+              defaults([:read])
+            end
+
+            tools do
+              tool(:get_by_children, :read, get_by: :children)
+            end
+          end,
+          Macro.Env.location(__ENV__)
+        )
+      end
+    end
+
+    test "rejects get_by on non-read tools at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
+
+      assert_raise Spark.Error.DslError, ~r/only be used with read tools/, fn ->
+        Module.create(
+          resource,
+          quote do
+            use Ash.Resource,
+              domain: unquote(domain),
+              extensions: [AshAi],
+              data_layer: Ash.DataLayer.Ets,
+              validate_domain_inclusion?: false
+
+            attributes do
+              uuid_v7_primary_key(:id, writable?: true)
+              attribute(:name, :string, public?: true)
+            end
+
+            actions do
+              defaults([:read, :create])
+              default_accept([:name])
+            end
+
+            tools do
+              tool(:create_by_name, :create, get_by: :name)
+            end
+          end,
+          Macro.Env.location(__ENV__)
+        )
+      end
     end
   end
 
