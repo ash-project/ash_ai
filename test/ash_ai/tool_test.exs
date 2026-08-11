@@ -10,6 +10,10 @@ defmodule AshAi.ToolTest do
   defmodule TestResource do
     use Ash.Resource, domain: TestDomain, data_layer: Ash.DataLayer.Ets
 
+    ets do
+      private? true
+    end
+
     attributes do
       uuid_v7_primary_key(:id, writable?: true)
 
@@ -59,6 +63,10 @@ defmodule AshAi.ToolTest do
 
   defmodule IdentityResource do
     use Ash.Resource, domain: IdentityDomain, data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
 
     attributes do
       integer_primary_key :id, writable?: true
@@ -187,11 +195,7 @@ defmodule AshAi.ToolTest do
       {_tools, registry} =
         AshAi.build_tools_and_registry(actions: [{TestResource, :*}], strict: false)
 
-      {:ok, json, [fetched]} =
-        registry["read_test_resources"].(
-          %{"filter" => %{"field" => "id", "operator" => "eq", "value" => resource.id}},
-          context()
-        )
+      {:ok, json, [fetched]} = registry["read_test_resources"].(%{}, context())
 
       assert fetched.id == resource.id
       assert fetched.public_name == "John Doe"
