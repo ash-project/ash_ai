@@ -173,6 +173,39 @@ defmodule AshAi.ToolTest do
       other = Ash.get!(IdentityResource, 1, domain: IdentityDomain)
       assert other.name == "Name 1"
     end
+
+    test "casts identity values to the field type" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update]}],
+          strict: false
+        )
+
+      {:ok, _json, updated} =
+        registry["update_by_pk"].(
+          %{"id" => "2", "input" => %{"name" => "Renamed"}},
+          context()
+        )
+
+      assert updated.id == 2
+      assert updated.name == "Renamed"
+    end
+
+    test "returns a tool error when an identity value is not castable" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update]}],
+          strict: false
+        )
+
+      assert {:error, message} =
+               registry["update_by_pk"].(
+                 %{"id" => "not-an-integer", "input" => %{"name" => "Renamed"}},
+                 context()
+               )
+
+      assert message =~ "Invalid value for identity argument id"
+    end
   end
 
   describe "tool response" do

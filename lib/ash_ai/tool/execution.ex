@@ -388,7 +388,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> AshAi.Tool.identity_keys(nil)
     |> Enum.reduce(nil, fn key, expr ->
-      value = Map.get(arguments, to_string(key))
+      value = identity_value(resource, key, arguments)
 
       if expr do
         Ash.Expr.expr(^expr and ^Ash.Expr.ref(key) == ^value)
@@ -402,8 +402,14 @@ defmodule AshAi.Tool.Execution do
     resource
     |> AshAi.Tool.identity_keys(identity)
     |> Enum.map(fn key ->
-      {key, Map.get(arguments, to_string(key))}
+      {key, identity_value(resource, key, arguments)}
     end)
+  end
+
+  defp identity_value(resource, key, arguments) do
+    arguments
+    |> Map.get(to_string(key))
+    |> then(&cast_lookup_value!(resource, key, &1, "identity"))
   end
 
   defp get_by_filter(resource, get_by, arguments) do
@@ -412,15 +418,18 @@ defmodule AshAi.Tool.Execution do
     |> Map.new(fn field_name ->
       case Map.get(arguments, to_string(field_name)) do
         nil -> throw({:tool_error, "Missing required get_by argument: #{field_name}"})
-        value -> {field_name, cast_get_by_value!(resource, field_name, value)}
+        value -> {field_name, cast_lookup_value!(resource, field_name, value, "get_by")}
       end
     end)
   end
 
   # Values arrive as JSON primitives, so they are cast to the field's type before
   # filtering. Mirrors what `Ash.CodeInterface` does for `get_by` code interfaces.
-  defp cast_get_by_value!(resource, field_name, value) do
-    {type, constraints} = get_by_field_type(resource, field_name)
+  # A missing argument stays `nil` here, so the caller decides how to handle it.
+  defp cast_lookup_value!(_resource, _field_name, nil, _label), do: nil
+
+  defp cast_lookup_value!(resource, field_name, value, label) do
+    {type, constraints} = lookup_field_type(resource, field_name)
 
     with {:ok, casted} <- Ash.Type.cast_input(type, value, constraints),
          {:ok, casted} <- Ash.Type.apply_constraints(type, casted, constraints) do
@@ -429,12 +438,12 @@ defmodule AshAi.Tool.Execution do
       _ ->
         throw(
           {:tool_error,
-           "Invalid value for get_by argument #{field_name}: #{truncate(Jason.encode!(value))}"}
+           "Invalid value for #{label} argument #{field_name}: #{truncate(Jason.encode!(value))}"}
         )
     end
   end
 
-  defp get_by_field_type(resource, field_name) do
+  defp lookup_field_type(resource, field_name) do
     case Ash.Resource.Info.field(resource, field_name) do
       %Ash.Resource.Aggregate{} = aggregate ->
         {:ok, type, constraints} = Ash.Query.Aggregate.aggregate_type(resource, aggregate)
