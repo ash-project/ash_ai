@@ -93,44 +93,52 @@ defmodule AshAi do
       end
     end
 
-    @doc """
-    Resolves the fields used to address a single record for read tools.
-    """
-    def get_by_fields(_resource, nil), do: []
-
+    @doc false
+    # Raises ArgumentError if a field is not usable as a lookup.
     def get_by_fields(resource, get_by) do
       get_by
       |> List.wrap()
       |> Enum.map(fn field_name ->
-        field = Ash.Resource.Info.field(resource, field_name)
-
-        case validate_get_by_field(field, field_name, resource) do
-          :ok -> field
+        case validate_get_by_field(resource, field_name) do
+          {:ok, field} -> field
           {:error, message} -> raise ArgumentError, message
         end
       end)
     end
 
-    @doc """
-    Checks that a field resolved for `get_by` exists and is public and filterable.
-    """
-    def validate_get_by_field(nil, field_name, resource) do
-      {:error,
-       "`#{inspect(field_name)}` is not a valid attribute, calculation or aggregate on #{inspect(resource)}"}
-    end
+    @doc false
+    # `resource` may be a resource module or its Spark.Dsl state, so this can run while the
+    # resource itself is being compiled.
+    def validate_get_by_field(resource, field_name) do
+      case Ash.Resource.Info.field(resource, field_name) do
+        %struct{}
+        when struct in [
+               Ash.Resource.Relationships.BelongsTo,
+               Ash.Resource.Relationships.HasOne,
+               Ash.Resource.Relationships.HasMany,
+               Ash.Resource.Relationships.ManyToMany
+             ] ->
+          {:error, "cannot `get_by` on the relationship `#{inspect(field_name)}`"}
 
-    def validate_get_by_field(field, field_name, _resource) do
-      cond do
-        !Map.get(field, :public?, false) ->
+        %{public?: false} ->
           {:error, "`#{inspect(field_name)}` is not public, so it cannot be used in `get_by`"}
 
-        !Map.get(field, :filterable?, false) ->
+        %{filterable?: false} ->
           {:error, "`#{inspect(field_name)}` is not filterable, so it cannot be used in `get_by`"}
 
-        true ->
-          :ok
+        nil ->
+          {:error,
+           "`#{inspect(field_name)}` is not a valid attribute, calculation or aggregate on #{inspect(resource_module(resource))}"}
+
+        field ->
+          {:ok, field}
       end
     end
+
+    defp resource_module(resource) when is_atom(resource), do: resource
+
+    defp resource_module(dsl_state),
+      do: Spark.Dsl.Transformer.get_persisted(dsl_state, :module, dsl_state)
   end
 
   defmodule McpResource do

@@ -322,6 +322,37 @@ defmodule AshAi.ToolTest do
                registry["get_test_resource_by_id"].(%{}, context())
     end
 
+    test "casts lookup values to the field type", %{resource: resource} do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:ok, _json, fetched} =
+               registry["get_test_resource_by_id"].(
+                 %{"id" => String.upcase(resource.id)},
+                 context()
+               )
+
+      assert fetched.id == resource.id
+    end
+
+    test "returns a tool error when a lookup value is not castable" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{TestResource, [:read]}],
+          tools: [:get_test_resource_by_id],
+          strict: false
+        )
+
+      assert {:error, message} =
+               registry["get_test_resource_by_id"].(%{"id" => "not-a-uuid"}, context())
+
+      assert message =~ "Invalid value for get_by argument id"
+    end
+
     test "returns a tool error when no record matches" do
       {_tools, registry} =
         AshAi.build_tools_and_registry(
@@ -419,12 +450,9 @@ defmodule AshAi.ToolTest do
   end
 
   describe "get_by validation" do
-    test "rejects private lookup fields at compile time" do
-      domain =
-        Module.concat(__MODULE__, :"InvalidGetByDomain#{System.unique_integer([:positive])}")
-
-      resource =
-        Module.concat(__MODULE__, :"InvalidGetByResource#{System.unique_integer([:positive])}")
+    test "rejects private lookup fields at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
 
       assert_raise Spark.Error.DslError, ~r/not public/, fn ->
         Module.create(
@@ -454,18 +482,68 @@ defmodule AshAi.ToolTest do
       end
     end
 
-    test "rejects get_by on non-read tools at compile time" do
-      domain =
-        Module.concat(
-          __MODULE__,
-          :"InvalidGetByActionDomain#{System.unique_integer([:positive])}"
-        )
+    test "rejects relationship lookup fields at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
+      related = Module.concat([__MODULE__, test, Related])
 
-      resource =
-        Module.concat(
-          __MODULE__,
-          :"InvalidGetByActionResource#{System.unique_integer([:positive])}"
+      Module.create(
+        related,
+        quote do
+          use Ash.Resource,
+            domain: unquote(domain),
+            data_layer: Ash.DataLayer.Ets,
+            validate_domain_inclusion?: false
+
+          attributes do
+            uuid_v7_primary_key(:id, writable?: true)
+            attribute(:parent_id, :uuid, public?: true)
+          end
+
+          actions do
+            defaults([:read])
+          end
+        end,
+        Macro.Env.location(__ENV__)
+      )
+
+      assert_raise Spark.Error.DslError, ~r/cannot `get_by` on the relationship/, fn ->
+        Module.create(
+          resource,
+          quote do
+            use Ash.Resource,
+              domain: unquote(domain),
+              extensions: [AshAi],
+              data_layer: Ash.DataLayer.Ets,
+              validate_domain_inclusion?: false
+
+            attributes do
+              uuid_v7_primary_key(:id, writable?: true)
+            end
+
+            relationships do
+              has_many(:children, unquote(related),
+                public?: true,
+                destination_attribute: :parent_id
+              )
+            end
+
+            actions do
+              defaults([:read])
+            end
+
+            tools do
+              tool(:get_by_children, :read, get_by: :children)
+            end
+          end,
+          Macro.Env.location(__ENV__)
         )
+      end
+    end
+
+    test "rejects get_by on non-read tools at compile time", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
 
       assert_raise Spark.Error.DslError, ~r/only be used with read tools/, fn ->
         Module.create(

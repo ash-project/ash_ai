@@ -155,18 +155,9 @@ defmodule AshAi.ResourceToolsTest do
       end
     end
 
-    test "domain-level get_by tools tolerate resources compiled later" do
-      domain =
-        Module.concat(
-          __MODULE__,
-          :"DeferredGetByDomain#{System.unique_integer([:positive])}"
-        )
-
-      resource =
-        Module.concat(
-          __MODULE__,
-          :"DeferredGetByResource#{System.unique_integer([:positive])}"
-        )
+    test "domain-level get_by tools tolerate resources compiled later", %{test: test} do
+      domain = Module.concat([__MODULE__, test, Domain])
+      resource = Module.concat([__MODULE__, test, Resource])
 
       assert {:module, ^domain, _binary, _term} =
                Module.create(

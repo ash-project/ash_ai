@@ -84,11 +84,8 @@ defmodule AshAi.Transformers.ResourceTools do
     end
   end
 
-  # Resource-level tools point at the module being compiled, so its own
-  # dsl_state is the source of truth (this transformer runs after Ash has
-  # materialized default actions). Domain-level tools reference other modules,
-  # which may not be compiled yet — those are skipped here and the same checks
-  # run again when the tool's schema is built.
+  # Domain-level tools reference other modules, which may not be compiled yet. Those are
+  # skipped here; the same checks run again when the tool's schema is built.
   defp fetch_action(tool, dsl_state, true) do
     Ash.Resource.Info.action(dsl_state, tool.action)
   end
@@ -111,10 +108,8 @@ defmodule AshAi.Transformers.ResourceTools do
     tool.get_by
     |> List.wrap()
     |> Enum.each(fn field_name ->
-      field = Ash.Resource.Info.field(source, field_name)
-
-      case AshAi.Tool.validate_get_by_field(field, field_name, tool.resource) do
-        :ok -> :ok
+      case AshAi.Tool.validate_get_by_field(source, field_name) do
+        {:ok, _field} -> :ok
         {:error, message} -> raise_get_by_error!(tool, module, message)
       end
     end)

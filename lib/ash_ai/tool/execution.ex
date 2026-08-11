@@ -116,7 +116,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> apply_select(ctx)
     |> Ash.Query.for_read(action.name, input, opts)
-    |> Ash.Query.do_filter(get_by_filter(get_by, arguments))
+    |> Ash.Query.do_filter(get_by_filter(resource, get_by, arguments))
     |> Ash.read_one!(
       Keyword.merge(opts,
         load: ctx.load,
@@ -406,17 +406,43 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
-  # The get_by fields were already validated at compile time and schema build,
-  # so only their names are needed here.
-  defp get_by_filter(get_by, arguments) do
+  defp get_by_filter(resource, get_by, arguments) do
     get_by
     |> List.wrap()
     |> Map.new(fn field_name ->
       case Map.get(arguments, to_string(field_name)) do
         nil -> throw({:tool_error, "Missing required get_by argument: #{field_name}"})
-        value -> {field_name, value}
+        value -> {field_name, cast_get_by_value!(resource, field_name, value)}
       end
     end)
+  end
+
+  # Values arrive as JSON primitives, so they are cast to the field's type before
+  # filtering. Mirrors what `Ash.CodeInterface` does for `get_by` code interfaces.
+  defp cast_get_by_value!(resource, field_name, value) do
+    {type, constraints} = get_by_field_type(resource, field_name)
+
+    with {:ok, casted} <- Ash.Type.cast_input(type, value, constraints),
+         {:ok, casted} <- Ash.Type.apply_constraints(type, casted, constraints) do
+      casted
+    else
+      _ ->
+        throw(
+          {:tool_error,
+           "Invalid value for get_by argument #{field_name}: #{truncate(Jason.encode!(value))}"}
+        )
+    end
+  end
+
+  defp get_by_field_type(resource, field_name) do
+    case Ash.Resource.Info.field(resource, field_name) do
+      %Ash.Resource.Aggregate{} = aggregate ->
+        {:ok, type, constraints} = Ash.Query.Aggregate.aggregate_type(resource, aggregate)
+        {type, constraints}
+
+      %{type: type} = field ->
+        {type, Map.get(field, :constraints) || []}
+    end
   end
 
   defp validate_input_shape(client_input) when is_map(client_input), do: :ok

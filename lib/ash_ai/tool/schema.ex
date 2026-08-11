@@ -52,8 +52,10 @@ defmodule AshAi.Tool.Schema do
     get_by = Keyword.get(opts, :get_by, nil)
 
     get_by_fields =
-      if get_by && action.type == :read do
+      if action.type == :read do
         AshAi.Tool.get_by_fields(resource, get_by)
+      else
+        []
       end
 
     attributes =
@@ -132,7 +134,7 @@ defmodule AshAi.Tool.Schema do
           get_by_fields: get_by_fields,
           full_filter_schema?: Keyword.get(opts, :full_filter_schema?, false)
         ),
-      required: Map.keys(props_with_input) ++ Enum.map(get_by_fields || [], & &1.name),
+      required: Map.keys(props_with_input) ++ Enum.map(get_by_fields, & &1.name),
       additionalProperties: false
     }
     |> Jason.encode!()
@@ -255,8 +257,15 @@ defmodule AshAi.Tool.Schema do
          action_parameters,
          opts
        ) do
-    case Keyword.get(opts, :get_by_fields) do
-      nil ->
+    case Keyword.get(opts, :get_by_fields, []) do
+      [_ | _] = get_by_fields ->
+        get_by_fields
+        |> Map.new(fn field ->
+          {field.name, AshAi.OpenApi.resource_write_attribute_type(field, resource, :create)}
+        end)
+        |> then(&Map.merge(properties, &1))
+
+      [] ->
         strict? = Keyword.get(opts, :strict?, true)
         {allowed_result_types, action_parameters} = extract_result_types(action_parameters)
 
@@ -269,14 +278,6 @@ defmodule AshAi.Tool.Schema do
           allowed_result_types,
           opts
         )
-
-      get_by_fields ->
-        get_by_properties =
-          Map.new(get_by_fields, fn field ->
-            {field.name, AshAi.OpenApi.resource_write_attribute_type(field, resource, :create)}
-          end)
-
-        Map.merge(properties, get_by_properties)
     end
   end
 
