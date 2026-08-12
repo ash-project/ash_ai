@@ -42,6 +42,8 @@ defmodule AshAi.Mcp.Server do
   @meta_client_capabilities "io.modelcontextprotocol/clientCapabilities"
   @meta_server_info "io.modelcontextprotocol/serverInfo"
   @meta_subscription_id "io.modelcontextprotocol/subscriptionId"
+  @ui_extension "io.modelcontextprotocol/ui"
+  @ui_mime_type "text/html;profile=mcp-app"
 
   @doc """
   The protocol versions this server supports, newest first.
@@ -302,11 +304,11 @@ defmodule AshAi.Mcp.Server do
 
   defp decode_header_value(value), do: {:ok, value}
 
-  defp dispatch_2026_07_28(conn, "server/discover", id, _params, opts) do
+  defp dispatch_2026_07_28(conn, "server/discover", id, params, opts) do
     result =
       %{
         "supportedVersions" => @supported_protocol_versions,
-        "capabilities" => opts |> mcp_resources() |> capabilities()
+        "capabilities" => capabilities(opts, client_capabilities_2026_07_28(params))
       }
       |> maybe_put("instructions", get_instructions(opts))
       |> cacheable_result(opts, :list)
@@ -690,10 +692,7 @@ defmodule AshAi.Mcp.Server do
             if(requested_version in @initialize_based_versions, do: requested_version) ||
             "2025-03-26"
 
-        capabilities =
-          opts
-          |> mcp_resources()
-          |> capabilities()
+        capabilities = capabilities(opts, params["capabilities"] || %{})
 
         result =
           %{
@@ -849,6 +848,43 @@ defmodule AshAi.Mcp.Server do
     do:
       capabilities([])
       |> Map.put("resources", %{})
+
+  defp capabilities(opts, client_capabilities) do
+    resources = mcp_resources(opts)
+
+    resources
+    |> capabilities()
+    |> maybe_add_ui_capability(resources, client_capabilities)
+  end
+
+  defp maybe_add_ui_capability(capabilities, resources, client_capabilities) do
+    if ui_capable?(client_capabilities) &&
+         Enum.any?(resources, &match?(%AshAi.McpUiResource{}, &1)) do
+      ui_capability = %{"mimeTypes" => [@ui_mime_type]}
+
+      Map.update(
+        capabilities,
+        "extensions",
+        %{@ui_extension => ui_capability},
+        &Map.put(&1, @ui_extension, ui_capability)
+      )
+    else
+      capabilities
+    end
+  end
+
+  defp client_capabilities_2026_07_28(params) do
+    get_in(params, ["_meta", @meta_client_capabilities]) || %{}
+  end
+
+  defp ui_capable?(client_capabilities) do
+    client_capabilities
+    |> get_in(["extensions", @ui_extension, "mimeTypes"])
+    |> case do
+      mime_types when is_list(mime_types) -> @ui_mime_type in mime_types
+      _ -> false
+    end
+  end
 
   defp mcp_resources(opts) do
     mcp_action_resources(opts) ++ mcp_ui_resources(opts)
