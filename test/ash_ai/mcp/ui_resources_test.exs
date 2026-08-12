@@ -12,6 +12,8 @@ defmodule AshAi.Mcp.UiResourcesTest do
   alias AshAi.Mcp.Router
 
   @opts [otp_app: :ash_ai]
+  @ui_extension "io.modelcontextprotocol/ui"
+  @ui_mime_type "text/html;profile=mcp-app"
 
   describe "mcp_ui_resource in resources/list" do
     test "includes UI resources in the resource list" do
@@ -115,6 +117,69 @@ defmodule AshAi.Mcp.UiResourcesTest do
     end
   end
 
+  describe "MCP Apps extension negotiation" do
+    test "initialize advertises the stable extension for a capable client" do
+      response = initialize_with_capabilities(@opts, ui_capabilities())
+      capabilities = decode_response(response)["result"]["capabilities"]
+
+      assert capabilities["extensions"][@ui_extension] == %{
+               "mimeTypes" => [@ui_mime_type]
+             }
+    end
+
+    test "initialize omits the extension for a client without the supported MIME type" do
+      response = initialize_with_capabilities(@opts, %{})
+      capabilities = decode_response(response)["result"]["capabilities"]
+
+      refute Map.has_key?(capabilities, "extensions")
+    end
+
+    test "a non-App client retains the native UI-linked tool and text result" do
+      response = initialize_with_capabilities(@opts, %{})
+      session_id = extract_session_id(response)
+
+      tool_response =
+        conn(:post, "/", %{"method" => "tools/list", "id" => "list_tools"})
+        |> put_req_header("mcp-session-id", session_id)
+        |> Router.call(tools: [:list_artists_with_ui], otp_app: :ash_ai)
+
+      [tool] = decode_response(tool_response)["result"]["tools"]
+      assert tool["_meta"]["ui"]["resourceUri"] == "ui://test/app.html"
+
+      call_response =
+        conn(:post, "/", %{
+          "method" => "tools/call",
+          "id" => "call_tool",
+          "params" => %{"name" => "list_artists_with_ui", "arguments" => %{}}
+        })
+        |> put_req_header("mcp-session-id", session_id)
+        |> Router.call(tools: [:list_artists_with_ui], otp_app: :ash_ai)
+
+      result = decode_response(call_response)["result"]
+      assert result["isError"] == false
+      assert [%{"type" => "text", "text" => text}] = result["content"]
+      assert is_list(Jason.decode!(text))
+    end
+
+    test "2026-07-28 server discovery negotiates the extension per request" do
+      capable = discover_2026_07_28(@opts, ui_capabilities())
+      incapable = discover_2026_07_28(@opts, %{})
+
+      assert capable["capabilities"]["extensions"][@ui_extension] == %{
+               "mimeTypes" => [@ui_mime_type]
+             }
+
+      refute Map.has_key?(incapable["capabilities"], "extensions")
+    end
+
+    test "servers without UI resources do not advertise the extension" do
+      response = initialize_with_capabilities([actions: [], mcp_resources: []], ui_capabilities())
+      capabilities = decode_response(response)["result"]["capabilities"]
+
+      refute Map.has_key?(capabilities, "extensions")
+    end
+  end
+
   # Helper functions
 
   defp initialize_and_get_session_id(opts) do
@@ -127,6 +192,49 @@ defmodule AshAi.Mcp.UiResourcesTest do
       |> Router.call(opts)
 
     extract_session_id(response)
+  end
+
+  defp initialize_with_capabilities(opts, capabilities) do
+    conn(:post, "/", %{
+      "method" => "initialize",
+      "id" => "init_capabilities",
+      "params" => %{
+        "protocolVersion" => "2025-06-18",
+        "capabilities" => capabilities,
+        "clientInfo" => %{"name" => "test_client", "version" => "1.0.0"}
+      }
+    })
+    |> Router.call(opts)
+  end
+
+  defp discover_2026_07_28(opts, client_capabilities) do
+    method = "server/discover"
+
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => client_capabilities,
+      "io.modelcontextprotocol/clientInfo" => %{"name" => "test_client", "version" => "1.0.0"}
+    }
+
+    conn(:post, "/", %{
+      "jsonrpc" => "2.0",
+      "id" => "discover",
+      "method" => method,
+      "params" => %{"_meta" => meta}
+    })
+    |> put_req_header("mcp-protocol-version", "2026-07-28")
+    |> put_req_header("mcp-method", method)
+    |> Router.call(opts)
+    |> decode_response()
+    |> Map.fetch!("result")
+  end
+
+  defp ui_capabilities do
+    %{
+      "extensions" => %{
+        @ui_extension => %{"mimeTypes" => [@ui_mime_type]}
+      }
+    }
   end
 
   defp list_resources(session_id, opts) do
