@@ -15,15 +15,26 @@ defmodule AshAi.Tool.Execution do
     @moduledoc """
     Execution context for tool calls.
     """
-    defstruct [:actor, :tenant, :context, :load, :select, :domain, load_strict?: false]
+    defstruct [
+      :actor,
+      :tenant,
+      :context,
+      :load,
+      :select,
+      :domain,
+      encode?: true,
+      load_strict?: false
+    ]
   end
 
   @doc """
   Executes a tool with the given arguments and context.
 
   Returns:
-  - `{:ok, json_result, raw_result}` for successful tool calls
+  - `{:ok, result, raw_result}` for successful tool calls
   - `{:error, error_text}` for execution failures
+
+  Set `:encode?` to `false` to return the serialized result before JSON encoding.
   """
   def run(
         %AshAi.Tool{
@@ -38,7 +49,8 @@ defmodule AshAi.Tool.Execution do
           arguments: tool_arguments
         },
         client_arguments,
-        context
+        context,
+        run_opts \\ []
       ) do
     arguments = client_arguments || %{}
     client_input = arguments["input"] || %{}
@@ -60,7 +72,8 @@ defmodule AshAi.Tool.Execution do
         load: resolved_load,
         load_strict?: load_strict?,
         select: select,
-        domain: domain
+        domain: domain,
+        encode?: Keyword.get(run_opts, :encode?, true)
       }
 
       try do
@@ -209,7 +222,7 @@ defmodule AshAi.Tool.Execution do
 
       result
       |> AshAi.Serializer.serialize_value({:array, resource}, [], ctx.domain, serialize_opts(ctx))
-      |> Jason.encode!()
+      |> encode_result(ctx)
       |> then(&{:ok, &1, result})
     end)
   end
@@ -225,7 +238,7 @@ defmodule AshAi.Tool.Execution do
     |> then(fn result ->
       result
       |> AshAi.Serializer.serialize_value(Ash.Type.Integer, [], ctx.domain)
-      |> Jason.encode!()
+      |> encode_result(ctx)
       |> then(&{:ok, &1, result})
     end)
   end
@@ -240,7 +253,7 @@ defmodule AshAi.Tool.Execution do
     |> then(fn result ->
       result
       |> AshAi.Serializer.serialize_value(Ash.Type.Boolean, [], ctx.domain)
-      |> Jason.encode!()
+      |> encode_result(ctx)
       |> then(&{:ok, &1, result})
     end)
   end
@@ -285,7 +298,7 @@ defmodule AshAi.Tool.Execution do
         aggregate_constraints,
         ctx.domain
       )
-      |> Jason.encode!()
+      |> encode_result(ctx)
       |> then(&{:ok, &1, result})
     end)
   end
@@ -357,7 +370,7 @@ defmodule AshAi.Tool.Execution do
   defp serialize_record(result, resource, ctx) do
     result
     |> AshAi.Serializer.serialize_value(resource, [], ctx.domain, serialize_opts(ctx))
-    |> Jason.encode!()
+    |> encode_result(ctx)
     |> then(&{:ok, &1, result})
   end
 
@@ -374,13 +387,16 @@ defmodule AshAi.Tool.Execution do
           ctx.domain,
           load: ctx.load
         )
-        |> Jason.encode!()
+        |> encode_result(ctx)
       else
         "success"
       end
       |> then(&{:ok, &1, result})
     end)
   end
+
+  defp encode_result(result, %Context{encode?: true}), do: Jason.encode!(result)
+  defp encode_result(result, %Context{encode?: false}), do: result
 
   defp identity_filter(false, _resource, _arguments), do: nil
 

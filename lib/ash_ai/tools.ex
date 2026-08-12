@@ -35,12 +35,14 @@ defmodule AshAi.Tools do
   @doc """
   Executes a tool with the given arguments and context.
 
-  Delegates to `AshAi.Tool.Execution.run/3`.
+  Delegates to `AshAi.Tool.Execution.run/4`.
 
-  Returns `{:ok, json_result, raw_result}` on success or `{:error, json_error}` on failure.
+  Returns `{:ok, result, raw_result}` on success or `{:error, json_error}` on failure.
+  By default, `result` is JSON-encoded text. Set `:encode?` to `false` to return
+  the serialized value before JSON encoding.
   """
-  def execute(%Tool{} = tool, arguments, context) do
-    Execution.run(tool, arguments, context)
+  def execute(%Tool{} = tool, arguments, context, opts \\ []) do
+    Execution.run(tool, arguments, context, opts)
   end
 
   @doc """

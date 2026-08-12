@@ -984,23 +984,45 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp execute_resolved_tool(tool, arguments, context) do
-    case AshAi.Tools.execute(tool, arguments, context) do
+    case AshAi.Tools.execute(tool, arguments, context, encode?: false) do
       {:ok, result, _} ->
-        result = %{
-          "isError" => false,
-          "content" => [%{"type" => "text", "text" => result}]
-        }
+        case encode_tool_result(tool, result) do
+          {:ok, encoded_result} ->
+            result =
+              %{
+                "isError" => false,
+                "content" => [%{"type" => "text", "text" => encoded_result}]
+              }
+              |> maybe_put_structured_content(result)
 
-        if Tool.has_meta?(tool) do
-          {:ok, Map.put(result, "_meta", tool._meta)}
-        else
-          {:ok, result}
+            if Tool.has_meta?(tool) do
+              {:ok, Map.put(result, "_meta", tool._meta)}
+            else
+              {:ok, result}
+            end
+
+          {:error, error_text} ->
+            {:ok, tool_error_result(error_text)}
         end
 
       {:error, error_text} ->
         {:ok, tool_error_result(error_text)}
     end
   end
+
+  defp encode_tool_result(%{action: %{type: :action, returns: nil}}, result), do: {:ok, result}
+
+  defp encode_tool_result(_tool, result) do
+    {:ok, Jason.encode!(result)}
+  rescue
+    error -> {:error, AshAi.Tool.Errors.format(error)}
+  end
+
+  defp maybe_put_structured_content(result, structured_content)
+       when is_map(structured_content),
+       do: Map.put(result, "structuredContent", structured_content)
+
+  defp maybe_put_structured_content(result, _structured_content), do: result
 
   defp tool_error_result(error_text) do
     %{
