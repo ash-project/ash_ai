@@ -26,6 +26,9 @@ You can install `AshAi` using igniter. For example:
 mix igniter.install ash_ai
 ```
 
+The installer also adds `req_llm`, which powers every feature that calls an LLM.
+If you only want to serve tools over MCP, pass `--no-req-llm` to skip it.
+
 ### Manually
 
 Add `AshAi` to your list of dependencies:
@@ -33,7 +36,10 @@ Add `AshAi` to your list of dependencies:
 ```elixir
 def deps do
   [
-    {:ash_ai, "~> 0.2"}
+    {:ash_ai, "~> 0.2"},
+    # Optional: required for prompt-backed actions, `AshAi.ToolLoop`,
+    # `mix ash_ai.gen.chat` and ReqLLM embeddings. Not needed for MCP only.
+    {:req_llm, "~> 1.7"}
   ]
 end
 ```

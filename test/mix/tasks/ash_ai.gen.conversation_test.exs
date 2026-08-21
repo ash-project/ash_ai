@@ -12,6 +12,14 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     %{argv: ["--user", "MyApp.Accounts.User", "--extend", "ets"]}
   end
 
+  test "adds req_llm as a dependency", %{argv: argv} do
+    phx_test_project()
+    |> Igniter.compose_task("ash_ai.gen.chat", argv)
+    |> assert_has_patch("mix.exs", """
+    + |      {:req_llm, "~> 1.7"},
+    """)
+  end
+
   test "--live flag doesnt explode", %{argv: argv} do
     argv = argv ++ ["--live"]
 

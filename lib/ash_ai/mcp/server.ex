@@ -942,13 +942,11 @@ defmodule AshAi.Mcp.Server do
     |> Enum.map(fn %Tool{} = tool ->
       # MCP schemas are advisory (no grammar-constrained sampling), so the
       # OpenAI strict transformation defaults off here.
-      {req_tool, _callback} =
-        AshAi.Tools.build(tool, strict: Keyword.get(opts, :strict, false))
-
       result = %{
-        "name" => req_tool.name,
-        "description" => req_tool.description,
-        "inputSchema" => req_tool.parameter_schema
+        "name" => to_string(tool.name),
+        "description" => AshAi.Tools.description(tool),
+        "inputSchema" =>
+          AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
       }
 
       if Tool.has_meta?(tool) do

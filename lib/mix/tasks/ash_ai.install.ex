@@ -22,6 +22,13 @@ defmodule Mix.Tasks.AshAi.Install.Docs do
     ```bash
     #{example()}
     ```
+
+    ## Options
+
+    * `--no-req-llm` - Skip adding the `req_llm` dependency. `req_llm` is optional in
+      `ash_ai` and only required for features that call an LLM (prompt-backed actions,
+      `AshAi.ToolLoop`, `mix ash_ai.gen.chat`, ReqLLM embeddings). MCP-only setups
+      can omit it.
     """
   end
 end
@@ -39,8 +46,10 @@ if Code.ensure_loaded?(Igniter) do
       %Igniter.Mix.Task.Info{
         group: :ash,
         schema: [
-          yes: :boolean
+          yes: :boolean,
+          req_llm: :boolean
         ],
+        defaults: [req_llm: true],
         installs: [],
         example: __MODULE__.Docs.example()
       }
@@ -50,7 +59,19 @@ if Code.ensure_loaded?(Igniter) do
     def igniter(igniter) do
       igniter
       |> Igniter.Project.Formatter.import_dep(:ash_ai)
+      |> maybe_add_req_llm()
       |> add_dev_mcp()
+    end
+
+    # `req_llm` is an optional dependency of `ash_ai`. It is needed for every
+    # feature that calls an LLM, so we add it by default and let MCP-only users
+    # opt out with `--no-req-llm`.
+    defp maybe_add_req_llm(igniter) do
+      if igniter.args.options[:req_llm] do
+        Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.7"})
+      else
+        igniter
+      end
     end
 
     defp add_dev_mcp(igniter) do
