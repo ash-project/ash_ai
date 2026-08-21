@@ -99,6 +99,7 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
 
     The generator ensures the following dependencies are installed and configured:
 
+    * `req_llm` - for talking to the LLM provider (optional dependency of `ash_ai`)
     * `ash_phoenix` - for forms and code interfaces
     * `ash_oban` - for background job processing
     * `mdex` - for Markdown rendering in the UI
@@ -386,6 +387,13 @@ if Code.ensure_loaded?(Igniter) do
     end
 
     defp ensure_deps(igniter, otp_app) do
+      {igniter, install_req_llm?} =
+        if Igniter.Project.Deps.has_dep?(igniter, :req_llm) do
+          {igniter, false}
+        else
+          {Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.7"}), true}
+        end
+
       {igniter, install_ash_phoenix?} =
         if Igniter.Project.Deps.has_dep?(igniter, :ash_phoenix) do
           {igniter, false}
@@ -416,7 +424,8 @@ if Code.ensure_loaded?(Igniter) do
 
       igniter
       |> then(fn igniter ->
-        if install_ash_phoenix? || install_ash_oban? || install_mdex? || install_lumis? do
+        if install_req_llm? || install_ash_phoenix? || install_ash_oban? || install_mdex? ||
+             install_lumis? do
           if igniter.assigns[:test_mode?] do
             igniter
           else

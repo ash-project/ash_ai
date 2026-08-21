@@ -7,8 +7,6 @@ defmodule AshAi do
   Documentation for `AshAi`.
   """
 
-  alias ReqLLM.Context
-
   defstruct []
 
   require Logger
@@ -458,59 +456,65 @@ defmodule AshAi do
 
   def build_tools_and_registry(opts), do: AshAi.Tools.build_tools_and_registry(opts)
 
-  @doc """
-  Interactive IEx chat loop powered by ReqLLM.
-  """
-  def iex_chat(opts \\ []) do
-    validated_opts = Options.validate!(opts)
+  if Code.ensure_loaded?(ReqLLM) do
+    alias ReqLLM.Context
 
-    base_messages =
-      case validated_opts.system_prompt do
-        :none ->
-          []
+    @doc """
+    Interactive IEx chat loop powered by ReqLLM.
+    """
+    def iex_chat(opts \\ []) do
+      validated_opts = Options.validate!(opts)
 
-        nil ->
-          [
-            Context.system("""
-            You are a helpful assistant.
-            Your purpose is to operate the application on behalf of the user.
-            """)
-          ]
+      base_messages =
+        case validated_opts.system_prompt do
+          :none ->
+            []
 
-        system_prompt ->
-          [Context.system(system_prompt.(validated_opts))]
+          nil ->
+            [
+              Context.system("""
+              You are a helpful assistant.
+              Your purpose is to operate the application on behalf of the user.
+              """)
+            ]
+
+          system_prompt ->
+            [Context.system(system_prompt.(validated_opts))]
+        end
+
+      run_iex_loop(base_messages, opts)
+    end
+
+    defp run_iex_loop(messages, opts) do
+      case AshAi.ToolLoop.run(messages, opts) do
+        {:ok, %AshAi.ToolLoop.Result{messages: updated_messages, final_text: final_text}} ->
+          if final_text != "" do
+            IO.puts(final_text)
+          end
+
+          case get_user_message() do
+            :eof ->
+              :ok
+
+            user_message ->
+              run_iex_loop(updated_messages ++ [Context.user(user_message)], opts)
+          end
+
+        {:error, error} ->
+          raise "Something went wrong:\n #{inspect(error)}"
       end
-
-    run_iex_loop(base_messages, opts)
-  end
-
-  defp run_iex_loop(messages, opts) do
-    case AshAi.ToolLoop.run(messages, opts) do
-      {:ok, %AshAi.ToolLoop.Result{messages: updated_messages, final_text: final_text}} ->
-        if final_text != "" do
-          IO.puts(final_text)
-        end
-
-        case get_user_message() do
-          :eof ->
-            :ok
-
-          user_message ->
-            run_iex_loop(updated_messages ++ [Context.user(user_message)], opts)
-        end
-
-      {:error, error} ->
-        raise "Something went wrong:\n #{inspect(error)}"
     end
-  end
 
-  defp get_user_message do
-    case Mix.shell().prompt("> ") do
-      nil -> :eof
-      "" -> get_user_message()
-      "\n" -> get_user_message()
-      message -> message
+    defp get_user_message do
+      case Mix.shell().prompt("> ") do
+        nil -> :eof
+        "" -> get_user_message()
+        "\n" -> get_user_message()
+        message -> message
+      end
     end
+  else
+    def iex_chat(_opts \\ []), do: AshAi.Dependencies.require_req_llm!("`AshAi.iex_chat/1`")
   end
 
   @doc false
