@@ -315,6 +315,18 @@ defmodule AshAi.Actions.PromptTest do
             )
       end
 
+      action :analyze_with_function_user_content, :string do
+        description("Function prompt whose message content is built from user input")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: fn input, _context ->
+                [%{role: "user", content: input.arguments.text}]
+              end,
+              req_llm: FakeReqLLM
+            )
+      end
+
       action :analyze_with_reqllm_context, :string do
         description("Test ReqLLM.Context prompt")
         argument(:text, :string, allow_nil?: false)
@@ -533,6 +545,22 @@ defmodule AshAi.Actions.PromptTest do
 
       assert_receive {:generate_object_called, "openai:gpt-4o", context}
       assert %ReqLLM.Context{} = context
+    end
+
+    test "user content returned from a prompt function is not evaluated as an EEx template" do
+      # If the function-supplied content were run through EEx.eval_string/2, this
+      # attacker-controlled argument would execute arbitrary Elixir (RCE).
+      payload = "<%= send(self(), :rce_executed) %>"
+
+      TestResource
+      |> Ash.ActionInput.for_action(:analyze_with_function_user_content, %{text: payload})
+      |> Ash.run_action!()
+
+      refute_received :rce_executed
+
+      assert_receive {:generate_object_called, _model, context}
+      user_message = Enum.find(context.messages, &(&1.role == :user))
+      assert content_contains?(user_message.content, payload)
     end
   end
 

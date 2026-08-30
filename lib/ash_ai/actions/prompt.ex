@@ -488,24 +488,24 @@ if Code.ensure_loaded?(ReqLLM) do
     defp unwrap_result(%{result: value}), do: value
     defp unwrap_result(value), do: value
 
-    # sobelow_skip ["RCE.EEx"]
     defp build_context(input, opts, context) do
       prompt = Keyword.get(opts, :prompt, @prompt_template)
 
-      prompt_value =
-        case prompt do
-          func when is_function(func, 2) ->
-            func.(input, context)
+      case prompt do
+        func when is_function(func, 2) ->
+          # Content returned from the prompt function is produced at runtime and
+          # is frequently built from action arguments (user input). Running it
+          # through EEx would compile that text as Elixir source (RCE), so it is
+          # used verbatim. EEx templating remains available for the statically
+          # configured prompt forms in the other clause.
+          normalize_to_context(func.(input, context), input, context, false)
 
-          other ->
-            other
-        end
-
-      normalize_to_context(prompt_value, input, context)
+        other ->
+          normalize_to_context(other, input, context, true)
+      end
     end
 
-    # sobelow_skip ["RCE.EEx"]
-    defp normalize_to_context(prompt, input, context) do
+    defp normalize_to_context(prompt, input, context, eex?) do
       case prompt do
         # Already a ReqLLM.Context - pass through
         %ReqLLM.Context{} = ctx ->
@@ -513,7 +513,7 @@ if Code.ensure_loaded?(ReqLLM) do
 
         # String template - evaluate and create system + user messages
         prompt when is_binary(prompt) ->
-          system_prompt = EEx.eval_string(prompt, assigns: [input: input, context: context])
+          system_prompt = maybe_eval_template(prompt, input, context, eex?)
 
           ReqLLM.Context.new([
             ReqLLM.Context.system(system_prompt),
@@ -522,8 +522,8 @@ if Code.ensure_loaded?(ReqLLM) do
 
         # {system, user} tuple - evaluate both templates
         {system, user} when is_binary(system) and is_binary(user) ->
-          system_prompt = EEx.eval_string(system, assigns: [input: input, context: context])
-          user_message = EEx.eval_string(user, assigns: [input: input, context: context])
+          system_prompt = maybe_eval_template(system, input, context, eex?)
+          user_message = maybe_eval_template(user, input, context, eex?)
 
           ReqLLM.Context.new([
             ReqLLM.Context.system(system_prompt),
@@ -532,38 +532,44 @@ if Code.ensure_loaded?(ReqLLM) do
 
         # List of messages - process EEx templates in string content, then normalize
         messages when is_list(messages) ->
-          processed = process_message_templates(messages, input, context)
+          processed = process_message_templates(messages, input, context, eex?)
           ReqLLM.Context.normalize!(processed, convert_loose: true)
       end
     end
 
-    # sobelow_skip ["RCE.EEx"]
-    defp process_message_templates(messages, input, context) do
+    defp process_message_templates(messages, input, context, eex?) do
       Enum.map(messages, fn msg ->
         case msg do
           # ReqLLM.Message struct - process content if it's a string
           %ReqLLM.Message{content: content} = message when is_binary(content) ->
-            processed = EEx.eval_string(content, assigns: [input: input, context: context])
-            %{message | content: processed}
+            %{message | content: maybe_eval_template(content, input, context, eex?)}
 
           %ReqLLM.Message{} = message ->
             message
 
           # Loose map with string keys
           %{"content" => content} = map when is_binary(content) ->
-            processed = EEx.eval_string(content, assigns: [input: input, context: context])
-            Map.put(map, "content", processed)
+            Map.put(map, "content", maybe_eval_template(content, input, context, eex?))
 
           # Loose map with atom keys
           %{content: content} = map when is_binary(content) ->
-            processed = EEx.eval_string(content, assigns: [input: input, context: context])
-            Map.put(map, :content, processed)
+            Map.put(map, :content, maybe_eval_template(content, input, context, eex?))
 
           # Pass through anything else (ReqLLM.Context.normalize will handle it)
           other ->
             other
         end
       end)
+    end
+
+    # Only statically-configured prompt templates are evaluated as EEx. Content
+    # supplied at runtime (from a `prompt` function) is returned verbatim so that
+    # attacker-controlled text is never compiled as Elixir source.
+    defp maybe_eval_template(content, _input, _context, false), do: content
+
+    # sobelow_skip ["RCE.EEx"]
+    defp maybe_eval_template(content, input, context, true) do
+      EEx.eval_string(content, assigns: [input: input, context: context])
     end
   end
 else
