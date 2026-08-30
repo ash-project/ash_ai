@@ -206,6 +206,28 @@ defmodule AshAi.ToolTest do
 
       assert message =~ "Invalid value for identity argument id"
     end
+
+    test "rejects a nested operator map as an identity value (no filter-expression injection)" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update]}],
+          strict: false
+        )
+
+      # A map value must not be parsed as a filter predicate (e.g. `not_eq`),
+      # which would retarget the write at a record the caller never identified.
+      assert {:error, message} =
+               registry["update_by_public_id"].(
+                 %{"public_id" => %{"not_eq" => "pub-1"}, "input" => %{"name" => "PWNED"}},
+                 context()
+               )
+
+      assert message =~ "Invalid value for identity argument public_id"
+
+      # Neither record was retargeted.
+      assert Ash.get!(IdentityResource, 1, domain: IdentityDomain).name == "Name 1"
+      assert Ash.get!(IdentityResource, 2, domain: IdentityDomain).name == "Name 2"
+    end
   end
 
   describe "tool response" do
