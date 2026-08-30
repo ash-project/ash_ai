@@ -155,6 +155,30 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |> apply_igniter!()
   end
 
+  test "--user adds ownership authorization policies to the generated chat resources", %{
+    argv: argv
+  } do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv)
+      |> apply_igniter!()
+
+    conversation =
+      igniter.rewrite.sources["lib/test/chat/conversation.ex"] |> Rewrite.Source.get(:content)
+
+    assert conversation =~ "Ash.Policy.Authorizer"
+    assert conversation =~ "bypass AshAi.Checks.ActorIsAshAi"
+    assert conversation =~ "authorize_if(relating_to_actor(:user))"
+    assert conversation =~ "authorize_if(relates_to_actor_via(:user))"
+
+    message =
+      igniter.rewrite.sources["lib/test/chat/message.ex"] |> Rewrite.Source.get(:content)
+
+    assert message =~ "Ash.Policy.Authorizer"
+    assert message =~ "bypass AshAi.Checks.ActorIsAshAi"
+    assert message =~ "authorize_if(relates_to_actor_via([:conversation, :user]))"
+  end
+
   test "when --user is not provided, generated conversation create action does not relate actor" do
     igniter =
       phx_test_project()

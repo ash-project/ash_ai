@@ -369,7 +369,7 @@ if Code.ensure_loaded?(Igniter) do
       |> ensure_deps(otp_app)
       |> configure()
       |> create_conversation(conversation, message, user)
-      |> create_message(chat, conversation, message, otp_app)
+      |> create_message(chat, conversation, message, user, otp_app)
       |> add_chat_live(chat, conversation, message, user)
       |> add_chat_live_component(chat, conversation, message, user)
       |> add_code_interfaces(chat, conversation, message, user)
@@ -573,18 +573,30 @@ if Code.ensure_loaded?(Igniter) do
       """)
       |> then(fn igniter ->
         if user do
-          Ash.Resource.Igniter.add_new_action(igniter, conversation, :my_conversations, """
+          igniter
+          |> Ash.Resource.Igniter.add_new_action(conversation, :my_conversations, """
           read :my_conversations do
             filter expr(user_id == ^actor(:id))
           end
           """)
+          |> add_policy_authorizer(conversation)
+          |> Ash.Resource.Igniter.add_policy(
+            conversation,
+            quote(do: action_type(:create)),
+            quote(do: authorize_if(relating_to_actor(:user)))
+          )
+          |> Ash.Resource.Igniter.add_policy(
+            conversation,
+            quote(do: action_type([:read, :update, :destroy])),
+            quote(do: authorize_if(relates_to_actor_via(:user)))
+          )
         else
           igniter
         end
       end)
     end
 
-    defp create_message(igniter, chat, conversation, message, otp_app) do
+    defp create_message(igniter, chat, conversation, message, user, otp_app) do
       create_conversation_if_not_provided =
         Module.concat([message, Changes, CreateConversationIfNotProvided])
 
@@ -773,6 +785,19 @@ if Code.ensure_loaded?(Igniter) do
         upsert_fields [:complete]
       end
       """)
+      |> then(fn igniter ->
+        if user do
+          igniter
+          |> add_policy_authorizer(message)
+          |> Ash.Resource.Igniter.add_policy(
+            message,
+            quote(do: always()),
+            quote(do: authorize_if(relates_to_actor_via([:conversation, :user])))
+          )
+        else
+          igniter
+        end
+      end)
       |> Ash.Resource.Igniter.add_new_calculation(message, :needs_response, """
       calculate :needs_response, :boolean do
         calculation expr(source == :user and not exists(response))
@@ -1443,6 +1468,19 @@ if Code.ensure_loaded?(Igniter) do
         {:code, api_key_code}
       )
       |> Igniter.Project.IgniterConfig.add_extension(Igniter.Extensions.Phoenix)
+    end
+
+    # Adds Ash.Policy.Authorizer plus a bypass for the internal `%AshAi{}` actor
+    # used by agent-run actions (e.g. `:upsert_response`). Ownership policies are
+    # added by the callers.
+    defp add_policy_authorizer(igniter, resource) do
+      igniter
+      |> Spark.Igniter.add_extension(resource, Ash.Resource, :authorizers, Ash.Policy.Authorizer)
+      |> Ash.Resource.Igniter.add_bypass(
+        resource,
+        quote(do: AshAi.Checks.ActorIsAshAi),
+        quote(do: authorize_if(always()))
+      )
     end
 
     defp user_relationship(nil), do: []
