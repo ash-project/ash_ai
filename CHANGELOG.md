@@ -11,6 +11,49 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.0.0](https://github.com/ash-project/ash_ai/compare/v0.8.2...v1.0.0) (2026-08-30)
+### Breaking Changes:
+
+* make req_llm an optional dependency (#224) by [@maennchen](https://github.com/maennchen) [(#224)](https://github.com/ash-project/ash_ai/pull/224)
+
+
+
+### Features:
+
+* mcp: publish structured tool outputs (#223) by Rodolfo Torres [(#223)](https://github.com/ash-project/ash_ai/pull/223)
+
+* add get_by argument to tool definitions (#222) by [@maennchen](https://github.com/maennchen) [(#222)](https://github.com/ash-project/ash_ai/pull/222)
+
+* tools: add load_strict? and select tool options by [@zachdaniel](https://github.com/zachdaniel) [(#219)](https://github.com/ash-project/ash_ai/pull/219)
+
+* tools: add load_strict? and select tool options by [@maennchen](https://github.com/maennchen) [(#219)](https://github.com/ash-project/ash_ai/pull/219)
+
+### Bug Fixes:
+
+* generate ownership authorization policies for ash_ai.gen.chat resources by [@zachdaniel](https://github.com/zachdaniel)
+
+* do not leak raw embedding provider errors into user-facing errors (CVE-2026-75760) by [@zachdaniel](https://github.com/zachdaniel)
+
+* reject operator-map values in identity-based tool lookups (CVE-2026-82564) by [@maennchen](https://github.com/maennchen)
+
+* route raised tool errors through the safe formatter, not raw messages (CVE-2026-82580) by [@zachdaniel](https://github.com/zachdaniel)
+
+* terminate the tool loop when no unprocessed tool calls remain (CVE-2026-82579) by [@zachdaniel](https://github.com/zachdaniel)
+
+* reject spoofable Host/X-Forwarded-Proto in MCP origin check (CVE-2026-81315) by [@zachdaniel](https://github.com/zachdaniel)
+
+* don't evaluate runtime prompt content as EEx templates (CVE-2026-77956) by [@zachdaniel](https://github.com/zachdaniel)
+
+* tools: reject a non-object tool `input` with an actionable error by [@zachdaniel](https://github.com/zachdaniel) [(#220)](https://github.com/ash-project/ash_ai/pull/220)
+
+* tools: reject a non-object tool `input` with an actionable error by [@maennchen](https://github.com/maennchen) [(#220)](https://github.com/ash-project/ash_ai/pull/220)
+
+* tools: describe filter errors instead of "unexpected error occurred" by [@zachdaniel](https://github.com/zachdaniel) [(#221)](https://github.com/ash-project/ash_ai/pull/221)
+
+* tools: describe filter errors instead of "unexpected error occurred" by [@maennchen](https://github.com/maennchen) [(#221)](https://github.com/ash-project/ash_ai/pull/221)
+
+* tools: omit fields withheld by field policies by [@damir](https://github.com/damir) [(#218)](https://github.com/ash-project/ash_ai/pull/218)
+
 ## [v0.8.2](https://github.com/ash-project/ash_ai/compare/v0.8.1...v0.8.2) (2026-08-03)
 
 
