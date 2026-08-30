@@ -11,6 +11,8 @@ defmodule AshAi.Changes.Vectorize do
 
   use Ash.Resource.Change
 
+  require Logger
+
   def change(changeset, _opts, _context) do
     {embedding_model, vector_opts} =
       AshAi.Info.vectorize_embedding_model!(changeset.resource)
@@ -46,9 +48,15 @@ defmodule AshAi.Changes.Vectorize do
       {:error, error} ->
         fields = Enum.map(changes, fn {field, _} -> field end)
 
+        # Do not inspect the raw provider error into a user-facing (:invalid)
+        # message: it can carry the outbound Authorization header (API key), the
+        # request URL, and the provider response body. Log it server-side and
+        # surface a generic message.
+        Logger.error("An error occurred while generating embeddings: #{inspect(error)}")
+
         Ash.Changeset.add_error(changeset,
           fields: fields,
-          message: "An error occurred while generating embeddings: #{inspect(error)}"
+          message: "An error occurred while generating embeddings"
         )
     end
   end

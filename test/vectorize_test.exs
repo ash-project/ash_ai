@@ -39,6 +39,29 @@ defmodule AshAiVectorizeTest do
     assert is_list(Ash.Vector.to_list(artist.name_full_text_vector))
   end
 
+  test "embedding generation errors do not leak provider internals into the error message" do
+    artist =
+      Music.create_artist_manual!(%{
+        name: "John Doe",
+        bio: "John Doe FORCE_EMBED_ERROR"
+      })
+
+    assert {:error, error} = Music.update_embeddings_artist_manual(artist)
+
+    message =
+      error
+      |> Ash.Error.to_error_class()
+      |> Map.get(:errors, [])
+      |> Enum.map_join(" ", &(Map.get(&1, :message) || Exception.message(&1)))
+
+    # The raw provider error (API key, URL, response body) must not be echoed
+    # into the user-facing validation error.
+    refute message =~ "sk-live-SECRET-2726"
+    refute message =~ "req_int_7fa1"
+    refute message =~ "authorization"
+    assert message =~ "An error occurred while generating embeddings"
+  end
+
   test "ash_oban strategy works as expected" do
     artist =
       Music.create_artist_oban!(%{
