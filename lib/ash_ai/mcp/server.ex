@@ -490,11 +490,13 @@ defmodule AshAi.Mcp.Server do
   transport's DNS-rebinding protection requirement.
 
   Returns `:ok` when the request carries no `Origin` header (non-browser
-  clients), when the origin's host is a localhost value, when the origin
-  matches the request host over HTTPS, or when it is explicitly allowed by
-  the `:allowed_origins` option (a list of origin strings, or a 1-arity
-  predicate function). Returns `:forbidden` otherwise — respond with HTTP
-  403.
+  clients), when the origin's host is a localhost value, or when it is
+  explicitly allowed by the `:allowed_origins` option (a list of origin
+  strings, or a 1-arity predicate function). Deployments serving a browser
+  client from a non-localhost origin must set `:allowed_origins`; the request
+  `Host` and `X-Forwarded-Proto` headers are attacker-controlled and are not
+  used to authorize an origin. Returns `:forbidden` otherwise — respond with
+  HTTP 403.
   """
   def check_origin(conn, opts) do
     case Plug.Conn.get_req_header(conn, "origin") do
@@ -513,11 +515,14 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  defp origin_allowed?(origin, conn, nil) do
-    uri = URI.parse(origin)
-
-    localhost_host?(uri.host) or
-      (uri.host == conn.host and forwarded_scheme(conn) == "https")
+  defp origin_allowed?(origin, _conn, nil) do
+    # Without an explicit :allowed_origins allowlist, only same-machine
+    # (localhost) origins are trusted. The request Host and X-Forwarded-Proto
+    # headers are both attacker-controlled - and equal to the origin under DNS
+    # rebinding - so they cannot be used to authorize a non-localhost origin.
+    # Deployments that serve a browser client from another origin must configure
+    # :allowed_origins.
+    localhost_host?(URI.parse(origin).host)
   end
 
   defp origin_allowed?(origin, _conn, allowed) when is_list(allowed), do: origin in allowed
@@ -526,13 +531,6 @@ defmodule AshAi.Mcp.Server do
     do: allowed.(origin)
 
   defp localhost_host?(host), do: host in ["localhost", "127.0.0.1", "::1", "[::1]"]
-
-  defp forwarded_scheme(conn) do
-    case Plug.Conn.get_req_header(conn, "x-forwarded-proto") do
-      [proto | _] -> proto
-      [] -> to_string(conn.scheme)
-    end
-  end
 
   @doc """
   Process an HTTP GET request.

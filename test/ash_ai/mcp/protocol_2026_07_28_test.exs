@@ -565,4 +565,39 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert close["result"]["_meta"][@meta_subscription_id] == "req_1"
     end
   end
+
+  describe "check_origin/2 (DNS-rebinding protection)" do
+    test "rejects a cross-origin request that spoofs X-Forwarded-Proto: https" do
+      conn =
+        conn(:post, "http://evil.com/")
+        |> put_req_header("origin", "http://evil.com")
+        |> put_req_header("x-forwarded-proto", "https")
+
+      assert AshAi.Mcp.Server.check_origin(conn, []) == :forbidden
+    end
+
+    test "allows localhost origins by default" do
+      conn =
+        conn(:post, "http://127.0.0.1/")
+        |> put_req_header("origin", "http://127.0.0.1")
+
+      assert AshAi.Mcp.Server.check_origin(conn, []) == :ok
+    end
+
+    test "honors an explicit :allowed_origins allowlist" do
+      conn =
+        conn(:post, "http://app.example.com/")
+        |> put_req_header("origin", "https://app.example.com")
+
+      assert AshAi.Mcp.Server.check_origin(conn, allowed_origins: ["https://app.example.com"]) ==
+               :ok
+
+      assert AshAi.Mcp.Server.check_origin(conn, allowed_origins: ["https://other.example.com"]) ==
+               :forbidden
+    end
+
+    test "allows non-browser clients that send no Origin header" do
+      assert AshAi.Mcp.Server.check_origin(conn(:post, "http://evil.com/"), []) == :ok
+    end
+  end
 end
