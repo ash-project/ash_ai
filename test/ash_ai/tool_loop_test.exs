@@ -459,6 +459,29 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMAlwaysSameToolCall do
+    @moduledoc "Always returns the same tool_call id and never a final message."
+    def stream_text(_model, _messages, _opts \\ []) do
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      {:ok,
+       %ReqLLM.StreamResponse{
+         stream: [
+           ReqLLM.StreamChunk.tool_call("echo_tool", %{"input" => %{"message" => "again"}}, %{
+             id: "call_1",
+             index: 0
+           }),
+           ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+         ],
+         metadata_handle: :ignored,
+         cancel: fn -> :ok end,
+         model: "openai:gpt-4o",
+         context: ReqLLM.Context.new([])
+       }}
+    end
+  end
+
   test "run/2 returns {:error, reason} when req_llm.stream_text fails" do
     messages = [Context.user("hello")]
 
@@ -580,6 +603,25 @@ defmodule AshAi.ToolLoopTest do
 
     assert tool_result_ids == ["call_1", "call_2"]
     assert match?({:done, %ToolLoop.Result{final_text: "done"}}, List.last(events))
+  end
+
+  test "run/2 terminates instead of looping when the model only replays a processed tool_call id" do
+    Process.delete({FakeReqLLMAlwaysSameToolCall, :call_count})
+    messages = [Context.user("trigger tool")]
+
+    # The first iteration processes call_1; the model then replays the same
+    # (now-processed) id every time, which filters to an empty tool-call list.
+    # If that were not terminal the loop would re-send an identical request up to
+    # the iteration budget (and forever under `max_iterations: :infinity`).
+    assert {:ok, %ToolLoop.Result{}} =
+             ToolLoop.run(messages,
+               actions: [{TestResource, :*}],
+               model: "openai:gpt-4o",
+               max_iterations: 5,
+               req_llm: FakeReqLLMAlwaysSameToolCall
+             )
+
+    assert Process.get({FakeReqLLMAlwaysSameToolCall, :call_count}) <= 2
   end
 
   test "run/2 surfaces summed token usage across iterations on Result.usage" do

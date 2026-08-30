@@ -151,12 +151,21 @@ if Code.ensure_loaded?(ReqLLM) do
               |> Map.put(:stream, chunks)
               |> ReqLLM.StreamResponse.classify()
 
-            if classification.type == :tool_calls do
-              tool_calls =
+            tool_calls =
+              if classification.type == :tool_calls do
                 classification.tool_calls
                 |> normalize_tool_calls(chunk_tool_call_ids)
                 |> unprocessed_tool_calls(messages)
+              else
+                []
+              end
 
+            # An empty post-filter list means the model returned only invalid or
+            # already-processed tool calls, so `messages` would not advance.
+            # Recursing would re-send a byte-identical request forever (a
+            # no-progress loop, unbounded under `max_iterations: :infinity`), so
+            # treat it as terminal.
+            if tool_calls != [] do
               messages =
                 append_tool_call_turn(
                   messages,
@@ -309,12 +318,21 @@ if Code.ensure_loaded?(ReqLLM) do
               |> Map.put(:stream, chunks)
               |> ReqLLM.StreamResponse.classify()
 
-            if classification.type == :tool_calls do
-              tool_calls =
+            tool_calls =
+              if classification.type == :tool_calls do
                 classification.tool_calls
                 |> normalize_tool_calls(chunk_tool_call_ids)
                 |> unprocessed_tool_calls(messages)
+              else
+                []
+              end
 
+            # An empty post-filter list means the model returned only invalid or
+            # already-processed tool calls, so `messages` would not advance.
+            # Recursing would re-send a byte-identical request forever (a
+            # no-progress loop, unbounded under `max_iterations: :infinity`), so
+            # treat it as terminal.
+            if tool_calls != [] do
               messages =
                 append_tool_call_turn(
                   messages,
