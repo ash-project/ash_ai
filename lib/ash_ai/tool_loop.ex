@@ -537,8 +537,6 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp normalize_tool_call_arguments(_), do: %{}
 
-    defp append_tool_call_turn(messages, _text, _thinking, []), do: messages
-
     defp append_tool_call_turn(messages, text, thinking, tool_calls) do
       case merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
         {:ok, merged_messages} ->
