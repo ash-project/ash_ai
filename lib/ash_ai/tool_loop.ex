@@ -402,7 +402,11 @@ if Code.ensure_loaded?(ReqLLM) do
                 fun.(args, ctx)
               rescue
                 e ->
-                  {:error, Jason.encode!(%{error: Exception.message(e)})}
+                  # Route the raised exception through the same safe formatter as
+                  # other tool errors instead of echoing Exception.message/1,
+                  # which can carry internal details (DB schema, SQL, policy
+                  # internals). Unknown errors are logged and rendered generically.
+                  {:error, Jason.encode!(%{error: AshAi.Tool.Errors.format(e)})}
               end
 
             {:error, reason} ->

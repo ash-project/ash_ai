@@ -205,9 +205,12 @@ defmodule AshAi.Tools do
     end
 
     defp normalize_extra_tool_error(content) do
-      Jason.encode!(%{error: Exception.message(content)})
+      # Route through the same safe formatter as other tool errors instead of
+      # echoing Exception.message/1, which can carry internal details (DB schema,
+      # SQL, policy internals). Unknown errors are logged and rendered generically.
+      Jason.encode!(%{error: AshAi.Tool.Errors.format(content)})
     rescue
-      _ -> Jason.encode!(%{error: inspect(content)})
+      _ -> Jason.encode!(%{error: "Tool execution failed"})
     end
   else
     def build(%Tool{}, _opts \\ []), do: require_req_llm!()

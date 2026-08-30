@@ -482,6 +482,40 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMCallsRaisingTool do
+    @moduledoc "Calls a tool that raises, then returns a final message."
+    def stream_text(_model, _messages, _opts \\ []) do
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      if count == 0 do
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.tool_call("boom", %{}, %{id: "call_boom", index: 0}),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "openai:gpt-4o",
+           context: ReqLLM.Context.new([])
+         }}
+      else
+        {:ok,
+         %ReqLLM.StreamResponse{
+           stream: [
+             ReqLLM.StreamChunk.text("done"),
+             ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+           ],
+           metadata_handle: :ignored,
+           cancel: fn -> :ok end,
+           model: "openai:gpt-4o",
+           context: ReqLLM.Context.new([])
+         }}
+      end
+    end
+  end
+
   test "run/2 returns {:error, reason} when req_llm.stream_text fails" do
     messages = [Context.user("hello")]
 
@@ -686,6 +720,36 @@ defmodule AshAi.ToolLoopTest do
     tool_message = Enum.find(final_messages, &(&1.role == :tool))
     assert tool_message.tool_call_id == "call_extra"
     assert ReqLLM.ToolResult.output_from_message(tool_message) == %{"echo" => "hello"}
+  end
+
+  test "run/2 does not leak raw tool exception text into the conversation" do
+    Process.delete({FakeReqLLMCallsRaisingTool, :call_count})
+    messages = [Context.user("trigger boom")]
+
+    assert {:ok, %ToolLoop.Result{messages: final_messages}} =
+             ToolLoop.run(messages,
+               tools: false,
+               extra_tools: [raising_extra_tool()],
+               model: "openai:gpt-4o",
+               max_iterations: 3,
+               req_llm: FakeReqLLMCallsRaisingTool
+             )
+
+    tool_message = Enum.find(final_messages, &(&1.role == :tool))
+
+    content =
+      tool_message.content
+      |> List.wrap()
+      |> Enum.map_join(" ", fn
+        %{text: text} when is_binary(text) -> text
+        part -> inspect(part)
+      end)
+
+    # The raw exception (schema, columns, SQL) must not reach the conversation;
+    # it is rendered through the same safe formatter as other tool errors.
+    refute content =~ "password_hash"
+    refute content =~ "internal"
+    assert content =~ "unexpected error occurred"
   end
 
   test "stream/2 emits tool events for extra tools" do
@@ -943,6 +1007,17 @@ defmodule AshAi.ToolLoopTest do
                "assistant message with tool_calls at index #{idx} must be followed by a tool_result, got: #{inspect(next)}"
       end
     end)
+  end
+
+  defp raising_extra_tool do
+    ReqLLM.Tool.new!(
+      name: "boom",
+      description: "Raises with sensitive internal text",
+      parameter_schema: [],
+      callback: fn _arguments ->
+        raise ~s|column "password_hash" does not exist. query: SELECT ... FROM "internal"."users"|
+      end
+    )
   end
 
   defp plain_extra_tool do
