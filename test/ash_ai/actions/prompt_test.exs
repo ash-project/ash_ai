@@ -117,7 +117,7 @@ defmodule AshAi.Actions.PromptTest do
            ReqLLM.StreamChunk.tool_call("read_test_resources", %{}),
            ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
          ],
-         metadata_handle: :ignored,
+         metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
          cancel: fn -> :ok end,
          model: "openai:gpt-4o",
          context: ReqLLM.Context.new([])
@@ -151,7 +151,7 @@ defmodule AshAi.Actions.PromptTest do
              ),
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: model,
            context: ReqLLM.Context.new(messages)
@@ -163,7 +163,7 @@ defmodule AshAi.Actions.PromptTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: model,
            context: ReqLLM.Context.new(messages)
