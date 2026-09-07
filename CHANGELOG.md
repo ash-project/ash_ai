@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.0.2](https://github.com/ash-project/ash_ai/compare/v1.0.1...v1.0.2) (2026-09-07)
+
+
+
+
+### Bug Fixes:
+
+* require ReqLLM 1.18 for signed thinking (#226) by mikehostetler [(#226)](https://github.com/ash-project/ash_ai/pull/226)
+
 ## [v1.0.1](https://github.com/ash-project/ash_ai/compare/v1.0.0...v1.0.1) (2026-09-07)
 
 
