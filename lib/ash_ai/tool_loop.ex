@@ -8,10 +8,13 @@ if Code.ensure_loaded?(ReqLLM) do
     Manages a ReqLLM conversation loop with tool calls.
 
     This module is the primary orchestration API for tool-enabled conversations.
+
+    Each assistant tool-call turn is appended before its tool results. Earlier
+    messages remain unchanged, including their reasoning and provider metadata.
     """
 
     alias ReqLLM.Context
-    alias ReqLLM.Message.ContentPart
+    alias ReqLLM.StreamResponse
 
     defmodule IterationEvent do
       @moduledoc """
@@ -139,12 +142,11 @@ if Code.ensure_loaded?(ReqLLM) do
 
         {:done, [{:error, :max_iterations_reached}], result}
       else
-        case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
-          {:ok, stream_response} ->
-            chunks = Enum.to_list(stream_response.stream)
+        case request_response(req_llm, model, messages, req_llm_opts, tools) do
+          {:ok, stream_response, chunks, response, usage} ->
             content_events = content_events(chunks)
-            chunk_tool_call_ids = chunk_tool_call_ids(chunks)
-            usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
+            assistant = response.message
+            usage_acc = accumulate_usage(usage_acc, usage)
 
             classification =
               stream_response
@@ -154,7 +156,7 @@ if Code.ensure_loaded?(ReqLLM) do
             tool_calls =
               if classification.type == :tool_calls do
                 classification.tool_calls
-                |> normalize_tool_calls(chunk_tool_call_ids)
+                |> normalize_tool_calls()
                 |> unprocessed_tool_calls(messages)
               else
                 []
@@ -169,8 +171,7 @@ if Code.ensure_loaded?(ReqLLM) do
               messages =
                 append_tool_call_turn(
                   messages,
-                  classification.text,
-                  classification.thinking,
+                  assistant,
                   tool_calls
                 )
 
@@ -194,8 +195,8 @@ if Code.ensure_loaded?(ReqLLM) do
               messages =
                 maybe_append_assistant_message(
                   messages,
+                  assistant,
                   classification.text,
-                  classification.thinking,
                   model
                 )
 
@@ -246,14 +247,18 @@ if Code.ensure_loaded?(ReqLLM) do
       end)
     end
 
-    # ReqLLM.StreamResponse.usage/1 awaits a metadata-handle pid; test
-    # fixtures stub the field with non-pid values like `:ignored`, so we
-    # guard against that here rather than failing the whole loop.
-    defp safe_stream_usage(%{metadata_handle: handle} = stream_response) when is_pid(handle) do
-      ReqLLM.StreamResponse.usage(stream_response)
-    end
+    defp request_response(req_llm, model, messages, req_llm_opts, tools) do
+      with {:ok, stream_response} <-
+             req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
+        chunks = Enum.map(stream_response.stream, &normalize_chunk_tool_call_id/1)
+        usage = StreamResponse.usage(stream_response)
 
-    defp safe_stream_usage(_), do: nil
+        with {:ok, response} <-
+               StreamResponse.to_response(%{stream_response | stream: chunks, model: model}) do
+          {:ok, stream_response, chunks, response, usage}
+        end
+      end
+    end
 
     defp run_tools_streaming(tool_calls, messages, registry, ctx) do
       Enum.reduce(tool_calls, {messages, []}, fn tool_call, {msgs, events} ->
@@ -288,7 +293,9 @@ if Code.ensure_loaded?(ReqLLM) do
     defp resolve_model(model, opts) when is_function(model, 1),
       do: resolve_model(model.(opts), opts)
 
-    defp resolve_model(model, _opts) when is_function(model, 0), do: model.()
+    defp resolve_model(model, opts) when is_function(model, 0),
+      do: resolve_model(model.(), opts)
+
     defp resolve_model(model, _opts), do: ReqLLM.model!(model)
 
     defp run_loop(
@@ -307,11 +314,10 @@ if Code.ensure_loaded?(ReqLLM) do
       if max_iterations_reached?(iteration, max_iterations) do
         {:error, :max_iterations_reached}
       else
-        case req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
-          {:ok, stream_response} ->
-            chunks = Enum.to_list(stream_response.stream)
-            chunk_tool_call_ids = chunk_tool_call_ids(chunks)
-            usage_acc = accumulate_usage(usage_acc, safe_stream_usage(stream_response))
+        case request_response(req_llm, model, messages, req_llm_opts, tools) do
+          {:ok, stream_response, chunks, response, usage} ->
+            assistant = response.message
+            usage_acc = accumulate_usage(usage_acc, usage)
 
             classification =
               stream_response
@@ -321,7 +327,7 @@ if Code.ensure_loaded?(ReqLLM) do
             tool_calls =
               if classification.type == :tool_calls do
                 classification.tool_calls
-                |> normalize_tool_calls(chunk_tool_call_ids)
+                |> normalize_tool_calls()
                 |> unprocessed_tool_calls(messages)
               else
                 []
@@ -336,8 +342,7 @@ if Code.ensure_loaded?(ReqLLM) do
               messages =
                 append_tool_call_turn(
                   messages,
-                  classification.text,
-                  classification.thinking,
+                  assistant,
                   tool_calls
                 )
 
@@ -360,8 +365,8 @@ if Code.ensure_loaded?(ReqLLM) do
               messages =
                 maybe_append_assistant_message(
                   messages,
+                  assistant,
                   classification.text,
-                  classification.thinking,
                   model
                 )
 
@@ -439,55 +444,42 @@ if Code.ensure_loaded?(ReqLLM) do
     defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
     defp decode_tool_call_arguments(_), do: {:ok, %{}}
 
-    defp maybe_append_assistant_message(messages, _text, _thinking, %{provider: :anthropic}),
+    defp maybe_append_assistant_message(messages, _assistant, _text, %{provider: :anthropic}),
       do: messages
 
-    defp maybe_append_assistant_message(messages, text, thinking, _model)
+    defp maybe_append_assistant_message(messages, assistant, text, _model)
          when is_binary(text) and text != "" do
-      content = build_assistant_content(text, thinking)
-      messages ++ [Context.assistant(content)]
+      messages ++ [%{assistant | tool_calls: nil}]
     end
 
     defp maybe_append_assistant_message(messages, _, _, _), do: messages
 
-    defp build_assistant_content(text, thinking) do
-      parts = []
-      parts = if text != "", do: parts ++ [ContentPart.text(text)], else: parts
-
-      parts =
-        if thinking != "", do: parts ++ [ContentPart.thinking(thinking)], else: parts
-
-      parts
+    defp normalize_chunk_tool_call_id(%ReqLLM.StreamChunk{type: :tool_call} = chunk) do
+      metadata = chunk.metadata || %{}
+      id = metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
+      %{chunk | metadata: Map.put(metadata, :id, normalize_tool_call_id(id))}
     end
 
-    defp chunk_tool_call_ids(chunks) do
-      chunks
-      |> Enum.filter(&(&1.type == :tool_call))
-      |> Enum.map(fn chunk ->
-        metadata = chunk.metadata || %{}
-        metadata_field(metadata, :id) || metadata_field(metadata, :call_id)
-      end)
-    end
+    defp normalize_chunk_tool_call_id(chunk), do: chunk
 
-    defp normalize_tool_calls(tool_calls, chunk_tool_call_ids) do
+    defp normalize_tool_calls(tool_calls) do
       tool_calls
       |> List.wrap()
-      |> Enum.with_index()
-      |> Enum.flat_map(fn {tool_call, index} ->
-        case normalize_tool_call(tool_call, Enum.at(chunk_tool_call_ids, index)) do
+      |> Enum.flat_map(fn tool_call ->
+        case normalize_tool_call(tool_call) do
           nil -> []
           normalized -> [normalized]
         end
       end)
     end
 
-    defp normalize_tool_call(%ReqLLM.ToolCall{} = tool_call, chunk_id) do
+    defp normalize_tool_call(%ReqLLM.ToolCall{} = tool_call) do
       tool_call
       |> ReqLLM.ToolCall.to_map()
-      |> normalize_tool_call(chunk_id)
+      |> normalize_tool_call()
     end
 
-    defp normalize_tool_call(tool_call, chunk_id) when is_map(tool_call) do
+    defp normalize_tool_call(tool_call) when is_map(tool_call) do
       name =
         Map.get(tool_call, :name) ||
           Map.get(tool_call, "name") ||
@@ -502,8 +494,7 @@ if Code.ensure_loaded?(ReqLLM) do
           %{}
 
       id =
-        chunk_id ||
-          Map.get(tool_call, :id) ||
+        Map.get(tool_call, :id) ||
           Map.get(tool_call, "id") ||
           Map.get(tool_call, :call_id) ||
           Map.get(tool_call, "call_id")
@@ -519,10 +510,10 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
-    defp normalize_tool_call(_tool_call, _chunk_id), do: nil
+    defp normalize_tool_call(_tool_call), do: nil
 
     defp normalize_tool_call_id(id) when is_binary(id) and id != "", do: id
-    defp normalize_tool_call_id(id) when is_atom(id), do: Atom.to_string(id)
+    defp normalize_tool_call_id(id) when is_atom(id) and not is_nil(id), do: Atom.to_string(id)
     defp normalize_tool_call_id(id) when is_number(id), do: to_string(id)
     defp normalize_tool_call_id(_), do: generate_tool_id()
 
@@ -537,51 +528,10 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp normalize_tool_call_arguments(_), do: %{}
 
-    defp append_tool_call_turn(messages, text, thinking, tool_calls) do
-      case merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
-        {:ok, merged_messages} ->
-          merged_messages
-
-        :no_merge ->
-          content = build_assistant_content(text, thinking)
-          messages ++ [Context.assistant(content, tool_calls: tool_calls)]
-      end
-    end
-
-    defp merge_into_previous_tool_turn(messages, text, thinking, tool_calls) do
-      {trailing_tools_rev, rest_rev} =
-        messages
-        |> Enum.reverse()
-        |> Enum.split_while(fn message -> Map.get(message, :role) == :tool end)
-
-      trailing_tools = Enum.reverse(trailing_tools_rev)
-      rest = Enum.reverse(rest_rev)
-
-      case List.last(rest) do
-        %{role: :assistant} = assistant ->
-          if has_tool_calls?(assistant.tool_calls) do
-            prefix = Enum.drop(rest, -1)
-
-            merged_tool_calls =
-              merge_tool_call_lists(
-                assistant.tool_calls,
-                normalize_context_tool_calls(tool_calls)
-              )
-
-            merged_assistant = %{
-              assistant
-              | tool_calls: merged_tool_calls,
-                content: merge_assistant_content(assistant.content, text, thinking)
-            }
-
-            {:ok, prefix ++ [merged_assistant] ++ trailing_tools}
-          else
-            :no_merge
-          end
-
-        _ ->
-          :no_merge
-      end
+    defp append_tool_call_turn(messages, assistant, tool_calls) do
+      ids = MapSet.new(tool_calls, & &1.id)
+      calls = Enum.filter(assistant.tool_calls, &MapSet.member?(ids, &1.id))
+      messages ++ [%{assistant | tool_calls: calls}]
     end
 
     defp unprocessed_tool_calls(tool_calls, messages) do
@@ -600,26 +550,6 @@ if Code.ensure_loaded?(ReqLLM) do
       end)
     end
 
-    defp merge_tool_call_lists(existing, new_calls) do
-      {merged, _seen_ids} =
-        Enum.reduce(List.wrap(existing) ++ List.wrap(new_calls), {[], MapSet.new()}, fn
-          call, {acc, seen} ->
-            case tool_call_id(call) do
-              id when is_binary(id) ->
-                if MapSet.member?(seen, id) do
-                  {acc, seen}
-                else
-                  {acc ++ [call], MapSet.put(seen, id)}
-                end
-
-              _ ->
-                {acc ++ [call], seen}
-            end
-        end)
-
-      merged
-    end
-
     defp tool_call_id(%ReqLLM.ToolCall{} = tool_call), do: tool_call.id
 
     defp tool_call_id(tool_call) when is_map(tool_call) do
@@ -630,60 +560,6 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     defp tool_call_id(_), do: nil
-
-    defp has_tool_calls?(tool_calls) when is_list(tool_calls), do: tool_calls != []
-    defp has_tool_calls?(_), do: false
-
-    defp normalize_context_tool_calls(tool_calls) do
-      Context.assistant("", tool_calls: tool_calls).tool_calls || []
-    end
-
-    defp merge_assistant_content(content, _text, _thinking) when content == [], do: content
-
-    defp merge_assistant_content(content, text, _thinking) when text in [nil, ""], do: content
-
-    defp merge_assistant_content(content, text, thinking) do
-      existing_text = assistant_text(content)
-
-      combined_text =
-        if existing_text == "" do
-          text
-        else
-          existing_text <> "\n" <> text
-        end
-
-      # Preserve non-text content parts (e.g. thinking, images) unless
-      # new thinking is provided, in which case we replace old thinking.
-      other_parts =
-        Enum.reject(content, fn
-          %ContentPart{type: :text} -> true
-          %{type: :text} -> true
-          _ -> false
-        end)
-
-      parts = [ContentPart.text(combined_text)]
-
-      parts =
-        if thinking != "" do
-          parts ++ [ContentPart.thinking(thinking)]
-        else
-          parts ++ other_parts
-        end
-
-      parts
-    end
-
-    defp assistant_text(content_parts) when is_list(content_parts) do
-      content_parts
-      |> Enum.map_join(fn
-        %ContentPart{type: :text, text: text} when is_binary(text) -> text
-        %{type: :text, text: text} when is_binary(text) -> text
-        _ -> ""
-      end)
-      |> String.trim()
-    end
-
-    defp assistant_text(_), do: ""
 
     defp metadata_field(metadata, key) when is_map(metadata) do
       Map.get(metadata, key) || Map.get(metadata, to_string(key))

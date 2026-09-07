@@ -63,7 +63,7 @@ defmodule AshAi.ToolLoopTest do
              },
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -75,7 +75,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -99,7 +99,7 @@ defmodule AshAi.ToolLoopTest do
              }),
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -111,7 +111,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -136,7 +136,7 @@ defmodule AshAi.ToolLoopTest do
                }),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -156,7 +156,7 @@ defmodule AshAi.ToolLoopTest do
                ),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -169,7 +169,7 @@ defmodule AshAi.ToolLoopTest do
                ReqLLM.StreamChunk.text("done"),
                ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -194,7 +194,7 @@ defmodule AshAi.ToolLoopTest do
                }),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -222,7 +222,7 @@ defmodule AshAi.ToolLoopTest do
                ),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -235,7 +235,7 @@ defmodule AshAi.ToolLoopTest do
                ReqLLM.StreamChunk.text("done"),
                ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -261,7 +261,7 @@ defmodule AshAi.ToolLoopTest do
                }),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -282,7 +282,7 @@ defmodule AshAi.ToolLoopTest do
                ),
                ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -295,7 +295,7 @@ defmodule AshAi.ToolLoopTest do
                ReqLLM.StreamChunk.text("done"),
                ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
              ],
-             metadata_handle: :ignored,
+             metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
              cancel: fn -> :ok end,
              model: "openai:gpt-4o",
              context: ReqLLM.Context.new([])
@@ -320,7 +320,7 @@ defmodule AshAi.ToolLoopTest do
              }),
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -332,7 +332,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -400,7 +400,7 @@ defmodule AshAi.ToolLoopTest do
            ReqLLM.StreamChunk.text("done"),
            ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
          ],
-         metadata_handle: :ignored,
+         metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
          cancel: fn -> :ok end,
          model: "openai:gpt-4o",
          context: ReqLLM.Context.new([])
@@ -423,7 +423,7 @@ defmodule AshAi.ToolLoopTest do
              }),
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "anthropic:claude-opus-4-6",
            context: ReqLLM.Context.new([])
@@ -435,7 +435,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "anthropic:claude-opus-4-6",
            context: ReqLLM.Context.new([])
@@ -451,7 +451,7 @@ defmodule AshAi.ToolLoopTest do
          stream: [
            ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
          ],
-         metadata_handle: :ignored,
+         metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
          cancel: fn -> :ok end,
          model: "anthropic:claude-opus-4-6",
          context: ReqLLM.Context.new([])
@@ -474,7 +474,7 @@ defmodule AshAi.ToolLoopTest do
            }),
            ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
          ],
-         metadata_handle: :ignored,
+         metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
          cancel: fn -> :ok end,
          model: "openai:gpt-4o",
          context: ReqLLM.Context.new([])
@@ -495,7 +495,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.tool_call("boom", %{}, %{id: "call_boom", index: 0}),
              ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -507,7 +507,7 @@ defmodule AshAi.ToolLoopTest do
              ReqLLM.StreamChunk.text("done"),
              ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
            ],
-           metadata_handle: :ignored,
+           metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
            cancel: fn -> :ok end,
            model: "openai:gpt-4o",
            context: ReqLLM.Context.new([])
@@ -590,7 +590,7 @@ defmodule AshAi.ToolLoopTest do
     assert match?({:done, %ToolLoop.Result{final_text: "done"}}, List.last(events))
   end
 
-  test "run/2 merges sequential tool-call assistant turns into a single pending group" do
+  test "run/2 keeps sequential tool-call assistant turns separate" do
     Process.delete({FakeReqLLMSequentialToolCalls, :call_count})
     messages = [Context.user("trigger tools")]
 
@@ -604,9 +604,11 @@ defmodule AshAi.ToolLoopTest do
     assistant_tool_turns =
       Enum.filter(final_messages, &tool_call?/1)
 
-    assert length(assistant_tool_turns) == 1
+    assert length(assistant_tool_turns) == 2
 
-    assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+    assert Enum.map(assistant_tool_turns, fn message ->
+             Enum.map(message.tool_calls, & &1.id)
+           end) == [["call_1"], ["call_2"]]
 
     tool_result_turns =
       Enum.filter(final_messages, fn message ->
@@ -811,7 +813,7 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
-  test "run/2 merges tool-call turns even when each turn includes assistant text" do
+  test "run/2 keeps assistant text in its own tool-call turn" do
     Process.delete({FakeReqLLMToolCallsWithInterleavedText, :call_count})
     messages = [Context.user("trigger tools")]
 
@@ -824,7 +826,7 @@ defmodule AshAi.ToolLoopTest do
 
     assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
-    assert length(assistant_tool_turns) == 1
+    assert length(assistant_tool_turns) == 2
 
     assistant_text =
       assistant_tool_turns
@@ -836,8 +838,12 @@ defmodule AshAi.ToolLoopTest do
       end)
 
     assert assistant_text =~ "First tool pass."
-    assert assistant_text =~ "Second tool pass."
-    assert Enum.map(hd(assistant_tool_turns).tool_calls, & &1.id) == ["call_1", "call_2"]
+    refute assistant_text =~ "Second tool pass."
+    assert [%{text: "Second tool pass."}] = List.last(assistant_tool_turns).content
+
+    assert Enum.map(assistant_tool_turns, fn message ->
+             Enum.map(message.tool_calls, & &1.id)
+           end) == [["call_1"], ["call_2"]]
   end
 
   describe "trailing assistant message handling" do
@@ -978,7 +984,7 @@ defmodule AshAi.ToolLoopTest do
 
       assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
-      assert length(assistant_tool_turns) == 1
+      assert length(assistant_tool_turns) == 2
 
       assistant_text =
         assistant_tool_turns
@@ -990,7 +996,8 @@ defmodule AshAi.ToolLoopTest do
         end)
 
       assert assistant_text =~ "First tool pass."
-      assert assistant_text =~ "Second tool pass."
+      refute assistant_text =~ "Second tool pass."
+      assert [%{text: "Second tool pass."}] = List.last(assistant_tool_turns).content
 
       assert_tool_results_after_tool_calls(final_messages)
     end
