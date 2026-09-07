@@ -391,7 +391,7 @@ if Code.ensure_loaded?(Igniter) do
         if Igniter.Project.Deps.has_dep?(igniter, :req_llm) do
           {igniter, false}
         else
-          {Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.7"}), true}
+          {Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.18"}), true}
         end
 
       {igniter, install_ash_phoenix?} =

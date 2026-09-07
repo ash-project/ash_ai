@@ -39,7 +39,7 @@ def deps do
     {:ash_ai, "~> 0.2"},
     # Optional: required for prompt-backed actions, `AshAi.ToolLoop`,
     # `mix ash_ai.gen.chat` and ReqLLM embeddings. Not needed for MCP only.
-    {:req_llm, "~> 1.7"}
+    {:req_llm, "~> 1.18"}
   ]
 end
 ```
