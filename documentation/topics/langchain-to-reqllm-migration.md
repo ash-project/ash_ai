@@ -33,7 +33,7 @@ In `mix.exs`:
 - Add ReqLLM dependency:
 
 ```elixir
-{:req_llm, "~> 1.7"}
+{:req_llm, "~> 1.18"}
 ```
 
 Then fetch and resolve:

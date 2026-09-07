@@ -11,7 +11,7 @@ defmodule Mix.Tasks.AshAi.InstallTest do
     phx_test_project()
     |> Igniter.compose_task("ash_ai.install", ["--yes"])
     |> assert_has_patch("mix.exs", """
-    + |      {:req_llm, "~> 1.7"},
+    + |      {:req_llm, "~> 1.18"},
     """)
   end
 

@@ -68,7 +68,7 @@ if Code.ensure_loaded?(Igniter) do
     # opt out with `--no-req-llm`.
     defp maybe_add_req_llm(igniter) do
       if igniter.args.options[:req_llm] do
-        Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.7"})
+        Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.18"})
       else
         igniter
       end
