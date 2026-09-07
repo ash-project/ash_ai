@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.0.1](https://github.com/ash-project/ash_ai/compare/v1.0.0...v1.0.1) (2026-09-07)
+
+
+
+
+### Bug Fixes:
+
+* preserve assistant history across tool loop rounds (#225) by mikehostetler [(#225)](https://github.com/ash-project/ash_ai/pull/225)
+
 ## [v1.0.0](https://github.com/ash-project/ash_ai/compare/v0.8.2...v1.0.0) (2026-08-30)
 ### Breaking Changes:
 
