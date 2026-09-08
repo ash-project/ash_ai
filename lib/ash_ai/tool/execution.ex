@@ -286,7 +286,9 @@ defmodule AshAi.Tool.Execution do
 
     query
     |> Ash.Query.unset([:limit, :offset])
-    |> Ash.aggregate({:aggregate_result, aggregate_kind, field: field.name})
+    |> Ash.aggregate({:aggregate_result, aggregate_kind, field: field.name},
+      authorize_fields?: true
+    )
     |> case do
       {:ok, %{aggregate_result: value}} -> value
       {:error, error} -> raise Ash.Error.to_error_class(error)
