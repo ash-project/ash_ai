@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.0.3](https://github.com/ash-project/ash_ai/compare/v1.0.2...v1.0.3) (2026-09-08)
+
+
+
+
+### Bug Fixes:
+
+* authorize aggregated fields in the aggregate tool (CVE-2026-78230) by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.0.2](https://github.com/ash-project/ash_ai/compare/v1.0.1...v1.0.2) (2026-09-07)
 
 
