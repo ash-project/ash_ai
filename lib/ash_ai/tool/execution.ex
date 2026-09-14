@@ -11,6 +11,8 @@ defmodule AshAi.Tool.Execution do
 
   alias AshAi.Tool.Errors
 
+  @grouped_scan_limit 25_000
+
   defmodule Context do
     @moduledoc """
     Execution context for tool calls.
@@ -118,6 +120,21 @@ defmodule AshAi.Tool.Execution do
   defp serialize_opts(%Context{select: nil} = ctx), do: [load: ctx.load]
   defp serialize_opts(ctx), do: [load: ctx.load, select: ctx.select]
 
+  defp run_read(
+         resource,
+         action,
+         %{"group_by" => [_ | _] = group_by} = arguments,
+         input,
+         opts,
+         nil,
+         ctx
+       ) do
+    resource
+    |> apply_filter(arguments["filter"])
+    |> Ash.Query.for_read(action.name, input, opts)
+    |> execute_grouped(group_by, arguments["result_type"], ctx)
+  end
+
   defp run_read(resource, action, arguments, input, opts, nil, ctx) do
     sort = build_sort(arguments["sort"])
     limit = build_limit(arguments["limit"], action.pagination)
@@ -162,6 +179,171 @@ defmodule AshAi.Tool.Execution do
   end
 
   defp build_sort(_), do: ""
+
+  defp execute_grouped(query, group_by, result_type, ctx) do
+    resource = query.resource
+    fields = Enum.map(group_by, &group_field(resource, &1))
+    aggregate = group_aggregate(resource, result_type)
+
+    query
+    |> select_for_group(fields, aggregate)
+    |> Ash.stream!(batch_size: 500, allow_stream_with: :full_read)
+    |> Enum.reduce({0, %{}}, &fold_record(&1, &2, fields, aggregate))
+    |> elem(1)
+    |> Enum.sort_by(fn {key, _tallies} -> key end)
+    |> Enum.map(&render_group(&1, fields, aggregate, ctx))
+    |> then(fn groups -> {:ok, encode_result(groups, ctx), groups} end)
+  end
+
+  defp group_field(resource, name) do
+    resource
+    |> AshAi.Tool.groupable_fields()
+    |> Enum.find(&(to_string(&1.name) == to_string(name)))
+    |> case do
+      nil -> throw({:tool_error, "group_by: #{name} is not a groupable field of this resource"})
+      field -> field
+    end
+  end
+
+  defp group_aggregate(_resource, result_type) when result_type in [nil, "count"], do: nil
+
+  defp group_aggregate(resource, %{"aggregate" => kind, "field" => name})
+       when kind in ["min", "max", "sum", "avg", "count"] do
+    field = Ash.Resource.Info.field(resource, name)
+
+    if !field || !field.public? do
+      throw({:tool_error, "group_by: no such field #{name}"})
+    end
+
+    kind = String.to_existing_atom(kind)
+
+    ensure_foldable(kind, field)
+
+    case Ash.Query.Aggregate.kind_to_type(kind, field.type, field.constraints || []) do
+      {:ok, type, constraints} ->
+        %{kind: kind, field: field, type: type, constraints: constraints}
+
+      _unsupported ->
+        throw(
+          {:tool_error,
+           "#{kind} is not supported for #{name}, whose type is #{inspect(field.type)}"}
+        )
+    end
+  end
+
+  defp group_aggregate(_resource, result_type) do
+    throw(
+      {:tool_error,
+       "group_by requires result_type to be \"count\" or an aggregate object, got: #{inspect(result_type)}"}
+    )
+  end
+
+  defp select_for_group(query, fields, aggregate) do
+    named = Enum.map(fields, & &1.name) ++ aggregate_field_names(aggregate)
+
+    {attributes, loads} =
+      Enum.split_with(named, &Ash.Resource.Info.attribute(query.resource, &1))
+
+    query
+    |> Ash.Query.select(Ash.Resource.Info.primary_key(query.resource) ++ attributes)
+    |> Ash.Query.load(loads)
+  end
+
+  defp aggregate_field_names(nil), do: []
+  defp aggregate_field_names(%{field: field}), do: [field.name]
+
+  defp fold_record(_record, {scanned, _groups}, _fields, _aggregate)
+       when scanned >= @grouped_scan_limit do
+    throw(
+      {:tool_error,
+       "group_by scanned more than #{@grouped_scan_limit} records. Narrow the filter and try again"}
+    )
+  end
+
+  defp fold_record(record, {scanned, groups}, fields, aggregate) do
+    key = Enum.map(fields, &Map.get(record, &1.name))
+
+    {scanned + 1, Map.update(groups, key, first_tally(record, aggregate), &tally(record, &1, aggregate))}
+  end
+
+  defp first_tally(record, aggregate), do: tally(record, {0, initial_state(aggregate)}, aggregate)
+
+  defp tally(_record, {rows, state}, nil), do: {rows + 1, state}
+
+  defp tally(record, {rows, state}, %{kind: kind, field: field}) do
+    case Map.get(record, field.name) do
+      nil -> {rows + 1, state}
+      value -> {rows + 1, fold_value(kind, value, state)}
+    end
+  end
+
+  defp initial_state(nil), do: nil
+  defp initial_state(%{kind: :avg}), do: {0, 0}
+  defp initial_state(%{kind: kind}) when kind in [:count, :sum], do: 0
+  defp initial_state(%{kind: _min_or_max}), do: nil
+
+  defp fold_value(:count, _value, state), do: state + 1
+  defp fold_value(:sum, value, state), do: add_values(state, value)
+  defp fold_value(:avg, value, {sum, seen}), do: {add_values(sum, value), seen + 1}
+  defp fold_value(:min, value, nil), do: value
+  defp fold_value(:max, value, nil), do: value
+
+  defp fold_value(:min, value, state) do
+    if compare_values(value, state) == :lt, do: value, else: state
+  end
+
+  defp fold_value(:max, value, state) do
+    if compare_values(value, state) == :gt, do: value, else: state
+  end
+
+  defp compare_values(%DateTime{} = left, %DateTime{} = right), do: DateTime.compare(left, right)
+  defp compare_values(%Date{} = left, %Date{} = right), do: Date.compare(left, right)
+  defp compare_values(%Decimal{} = left, %Decimal{} = right), do: Decimal.compare(left, right)
+  defp compare_values(left, right) when left < right, do: :lt
+  defp compare_values(left, right) when left > right, do: :gt
+  defp compare_values(_left, _right), do: :eq
+
+  defp ensure_foldable(kind, %{type: type, name: name}) when kind in [:sum, :avg] do
+    if type not in [Ash.Type.Integer, Ash.Type.Float, Ash.Type.Decimal] do
+      throw(
+        {:tool_error, "#{kind} is not supported for #{name}, whose type is #{inspect(type)}"}
+      )
+    end
+  end
+
+  defp ensure_foldable(_kind, _field), do: :ok
+
+  defp add_values(%Decimal{} = left, right), do: Decimal.add(left, Decimal.new(to_string(right)))
+  defp add_values(left, %Decimal{} = right), do: Decimal.add(Decimal.new(to_string(left)), right)
+  defp add_values(left, right), do: left + right
+
+  defp finish_value(%{kind: :avg}, {_sum, 0}), do: nil
+  defp finish_value(%{kind: :avg}, {%Decimal{} = sum, seen}), do: Decimal.div(sum, seen)
+  defp finish_value(%{kind: :avg}, {sum, seen}), do: sum / seen
+  defp finish_value(_aggregate, state), do: state
+
+  defp render_group({key, {rows, state}}, fields, aggregate, ctx) do
+    group =
+      fields
+      |> Enum.zip(key)
+      |> Map.new(fn {field, value} ->
+        {field.name,
+         AshAi.Serializer.serialize_value(value, field.type, field.constraints, ctx.domain)}
+      end)
+
+    add_aggregate(%{group: group, count: rows}, aggregate, state, ctx)
+  end
+
+  defp add_aggregate(rendered, nil, _state, _ctx), do: rendered
+
+  defp add_aggregate(rendered, %{type: type, constraints: constraints} = aggregate, state, ctx) do
+    value =
+      aggregate
+      |> finish_value(state)
+      |> AshAi.Serializer.serialize_value(type, constraints, ctx.domain)
+
+    Map.put(rendered, :value, value)
+  end
 
   defp build_limit(limit, pagination) do
     case {limit, pagination} do

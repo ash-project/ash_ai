@@ -168,6 +168,14 @@ defmodule AshAi.Test.Music.ArtistOban do
     update_timestamp :updated_at, public?: true
     attribute :name, :string, public?: true
     attribute :bio, :string, public?: true
+    attribute :label, :string, public?: true
+    attribute :play_count, :integer, public?: true
+  end
+
+  calculations do
+    calculate :has_bio, :boolean, expr(not is_nil(bio)) do
+      public? true
+    end
   end
 
   actions do
