@@ -389,6 +389,18 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
+  defp execute_read(query, action, result_type, page_opts, ctx) do
+    query
+    |> Ash.Query.add_error(
+      Ash.Error.Query.InvalidArgument.exception(
+        field: :result_type,
+        value: result_type,
+        message: ~s(is not supported, use "run_query", "count", "exists", or an aggregate object)
+      )
+    )
+    |> execute_read(action, "run_query", page_opts, ctx)
+  end
+
   # When an action supports both kinds of pagination and no cursor is given, Ash
   # paginates by keyset but wraps the result according to the global
   # `config :ash, :default_page_type` (offset unless configured). The tool asked
