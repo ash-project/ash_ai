@@ -173,6 +173,10 @@ defmodule AshAi.Test.Music.ArtistOban do
   actions do
     default_accept [:*]
     defaults [:create, :read, :update, :destroy]
+
+    read :paged do
+      pagination required?: false, keyset?: true, max_page_size: 5
+    end
   end
 end
 

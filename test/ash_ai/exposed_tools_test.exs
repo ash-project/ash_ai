@@ -17,7 +17,7 @@ defmodule AshAi.ExposedToolsTest do
   describe "tools filtering" do
     test "tools: nil returns all tools (default)" do
       tools = AshAi.exposed_tools(@opts)
-      assert length(tools) == 8
+      assert length(tools) == 9
     end
 
     test "tools: specific list filters to only those tools" do
@@ -126,6 +126,7 @@ defmodule AshAi.ExposedToolsTest do
                MapSet.new([
                  :list_artists,
                  :list_artists_oban,
+                 :list_artists_paged,
                  :create_artist_manual,
                  :update_artist_after,
                  :list_artists_with_meta,

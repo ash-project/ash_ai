@@ -121,6 +121,7 @@ defmodule AshAi.Tool.Execution do
       |> apply_filter(arguments["filter"])
       |> apply_select(ctx)
       |> Ash.Query.for_read(action.name, input, opts)
+      |> reject_oversized_limit(arguments["limit"], action.pagination)
 
     execute_read(query, action, arguments["result_type"] || "run_query", ctx)
   end
@@ -151,6 +152,25 @@ defmodule AshAi.Tool.Execution do
   end
 
   defp build_sort(_), do: ""
+
+  defp reject_oversized_limit(
+         query,
+         requested,
+         %Ash.Resource.Actions.Read.Pagination{max_page_size: max}
+       )
+       when is_integer(requested) and is_integer(max) and requested > max do
+    Ash.Query.add_error(
+      query,
+      Ash.Error.Query.InvalidArgument.exception(
+        field: :limit,
+        value: requested,
+        message:
+          "exceeds the maximum page size of #{max}. Request at most #{max} and page with `offset`"
+      )
+    )
+  end
+
+  defp reject_oversized_limit(query, _requested, _pagination), do: query
 
   defp build_limit(limit, pagination) do
     case {limit, pagination} do

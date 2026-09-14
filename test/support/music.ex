@@ -9,6 +9,7 @@ defmodule AshAi.Test.Music do
   tools do
     tool :list_artists, AshAi.Test.Music.ArtistAfterAction, :read
     tool :list_artists_oban, AshAi.Test.Music.ArtistOban, :read
+    tool :list_artists_paged, AshAi.Test.Music.ArtistOban, :paged
     tool :create_artist_after, AshAi.Test.Music.ArtistAfterAction, :create
     tool :update_artist_after, AshAi.Test.Music.ArtistAfterAction, :update
     tool :create_artist_manual, AshAi.Test.Music.ArtistManual, :create
