@@ -305,6 +305,18 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
+  defp execute_read(query, action, result_type, ctx) do
+    query
+    |> Ash.Query.add_error(
+      Ash.Error.Query.InvalidArgument.exception(
+        field: :result_type,
+        value: result_type,
+        message: ~s(is not supported, use "run_query", "count", "exists", or an aggregate object)
+      )
+    )
+    |> execute_read(action, "run_query", ctx)
+  end
+
   defp run_create(resource, action, input, opts, ctx) do
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
