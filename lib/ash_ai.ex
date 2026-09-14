@@ -91,6 +91,23 @@ defmodule AshAi do
       end
     end
 
+    @doc """
+    The fields a read tool may group by.
+
+    Defined here so the schema's enum and execution's validation cannot drift:
+    a field offered to the caller is exactly a field the grouping code can read
+    off a record. Calculations taking arguments are excluded, because grouping
+    loads them without supplying any.
+    """
+    def groupable_fields(resource) do
+      resource
+      |> Ash.Resource.Info.fields([:attributes, :aggregates, :calculations])
+      |> Enum.filter(&(&1.public? && groupable?(&1)))
+    end
+
+    defp groupable?(%Ash.Resource.Calculation{arguments: [_ | _]}), do: false
+    defp groupable?(_field), do: true
+
     @doc false
     # Raises ArgumentError if a field is not usable as a lookup.
     def get_by_fields(resource, get_by) do

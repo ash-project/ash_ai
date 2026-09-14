@@ -328,6 +328,11 @@ defmodule AshAi.Tool.Schema do
       |> Enum.filter(& &1.public?)
       |> Enum.map(& &1.name)
 
+    groupable_fields =
+      resource
+      |> AshAi.Tool.groupable_fields()
+      |> Enum.map(& &1.name)
+
     scalar_result_types =
       for type <- ["run_query", "count", "exists"],
           String.to_existing_atom(type) in allowed_result_types,
@@ -502,6 +507,17 @@ defmodule AshAi.Tool.Schema do
     Map.merge(properties, %{
       filter: filter_schema,
       result_type: result_type_schema,
+      group_by: %{
+        type: :array,
+        description: """
+        Group the matching records by these fields and aggregate within each group, \
+        instead of returning records. Requires `result_type` to be "count" or an \
+        aggregate object. Returns one entry per group, each with the group's field \
+        values, the number of records in it and the aggregate. `limit`, `offset` and \
+        `sort` do not apply.\
+        """,
+        items: %{type: :string, enum: groupable_fields}
+      },
       limit: %{
         type: :integer,
         description: "The maximum number of records to return",

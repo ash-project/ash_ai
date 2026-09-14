@@ -61,7 +61,7 @@ defmodule AshAi.Dsl do
           ]}},
       required: false,
       doc:
-        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included."
+        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter, :group_by]`. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included. Omit `:group_by` to stop a tool aggregating server-side, which streams every matching record."
     ],
     full_filter_schema?: [
       type: :boolean,
