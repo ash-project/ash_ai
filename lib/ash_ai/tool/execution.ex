@@ -81,11 +81,20 @@ defmodule AshAi.Tool.Execution do
         input = Map.take(client_input, valid_action_inputs(resource, action))
 
         case action.type do
-          :read -> run_read(resource, action, arguments, input, opts, get_by, exec_ctx)
-          :create -> run_create(resource, action, input, opts, exec_ctx)
-          :update -> run_update(resource, action, arguments, input, opts, identity, exec_ctx)
-          :destroy -> run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
-          :action -> run_generic(resource, action, input, opts, exec_ctx)
+          :read ->
+            run_read(resource, action, arguments, input, opts, get_by, exec_ctx)
+
+          :create ->
+            run_create(resource, action, input, opts, exec_ctx)
+
+          :update ->
+            run_update(resource, action, arguments, input, opts, identity, exec_ctx)
+
+          :destroy ->
+            run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
+
+          :action ->
+            run_generic(resource, action, input, opts, exec_ctx)
         end
       rescue
         error ->
@@ -172,10 +181,10 @@ defmodule AshAi.Tool.Execution do
   end
 
   # Page options for paginated actions, `nil` otherwise. Keyset pagination is
-  # the default whenever the action supports it; when the action also supports
-  # offset pagination, a positive `offset` switches to it. Mixing the two, or
-  # using a control the action does not support, is a tool error. An `offset`
-  # of 0 is the schema default, so it counts as "not requested".
+  # the default whenever the action supports it; a positive `offset` switches
+  # to offset pagination when that is supported. Mixing the two, or using a
+  # control the action does not support, is a tool error. An `offset` of 0 is
+  # the schema default, so it counts as "not requested".
   defp build_page_opts(%Ash.Resource.Actions.Read.Pagination{} = pagination, limit, arguments) do
     cursor =
       Enum.filter([after: arguments["after"], before: arguments["before"]], fn {_key, value} ->

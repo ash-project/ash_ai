@@ -145,9 +145,13 @@ defmodule AshAiTest do
       assert result_type["type"] == ["string", "null"]
       assert result_type["enum"] == ["run_query", "count", nil]
       refute Map.has_key?(schema["properties"], "sort")
-      refute Map.has_key?(schema["properties"], "offset")
       assert Map.has_key?(schema["properties"], "filter")
       assert Map.has_key?(schema["properties"], "limit")
+
+      # the default read is paginated, so its page controls cannot be hidden
+      assert Map.has_key?(schema["properties"], "offset")
+      assert Map.has_key?(schema["properties"], "after")
+      assert Map.has_key?(schema["properties"], "before")
     end
 
     test "full_filter_schema? generates the full strict filter schema" do

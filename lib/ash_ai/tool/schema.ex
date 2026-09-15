@@ -559,7 +559,7 @@ defmodule AshAi.Tool.Schema do
         }
       }
     })
-    |> Map.merge(pagination_properties(pagination))
+    |> Map.merge(query_offset_property(pagination))
     |> then(fn map ->
       if action_parameters do
         Map.take(map, action_parameters ++ [:input])
@@ -567,12 +567,28 @@ defmodule AshAi.Tool.Schema do
         map
       end
     end)
+    |> Map.merge(pagination_properties(pagination))
   end
 
-  # Non-paginated actions still accept an `offset`, applied directly to the query.
-  # Paginated actions expose the controls their pagination supports; keyset is the
-  # default when available, and the page they return carries the value to pass for
-  # the next page. Mirrors `AshAi.Tool.Execution` page option selection.
+  # Non-paginated actions accept an `offset` applied directly to the query; it is
+  # an ordinary query control, so `action_parameters` may hide it.
+  defp query_offset_property(%Ash.Resource.Actions.Read.Pagination{}), do: %{}
+
+  defp query_offset_property(_pagination) do
+    %{
+      offset: %{
+        type: :integer,
+        description: "The number of records to skip",
+        default: 0
+      }
+    }
+  end
+
+  # Paginated actions always expose the controls their pagination supports, even
+  # when `action_parameters` narrows the other query controls: the page they
+  # return carries the value to pass for the next page, so the LLM must be able
+  # to pass it. Keyset is the default when available. Mirrors
+  # `AshAi.Tool.Execution` page option selection.
   defp pagination_properties(%Ash.Resource.Actions.Read.Pagination{} = pagination) do
     offset =
       if pagination.offset? do
@@ -614,15 +630,7 @@ defmodule AshAi.Tool.Schema do
     Map.merge(offset, keyset)
   end
 
-  defp pagination_properties(_pagination) do
-    %{
-      offset: %{
-        type: :integer,
-        description: "The number of records to skip",
-        default: 0
-      }
-    }
-  end
+  defp pagination_properties(_pagination), do: %{}
 
   defp add_input_for_fields(sort_obj, resource) do
     resource

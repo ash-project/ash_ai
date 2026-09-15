@@ -111,6 +111,9 @@ defmodule AshAi.Tool.ReadPageTest do
       tool :read_offset, OffsetResource, :read
       tool :read_keyset, KeysetResource, :read
       tool :read_both, BothResource, :read
+
+      tool :read_both_restricted, BothResource, :read, action_parameters: [:filter, :limit]
+      tool :read_plain_restricted, PlainResource, :read, action_parameters: [:filter, :limit]
     end
   end
 
@@ -307,6 +310,28 @@ defmodule AshAi.Tool.ReadPageTest do
       assert Map.has_key?(props, "offset")
       assert Map.has_key?(props, "after")
       assert Map.has_key?(props, "before")
+    end
+
+    test "action_parameters cannot hide the page controls of a paginated action",
+         %{registry: registry, tools: tools} do
+      props = schema_properties(tools, "read_both_restricted")
+
+      refute Map.has_key?(props, "sort")
+      assert Map.has_key?(props, "offset")
+      assert Map.has_key?(props, "after")
+      assert Map.has_key?(props, "before")
+
+      {:ok, json, %Ash.Page.Keyset{}} =
+        registry["read_both_restricted"].(%{"limit" => 2}, context())
+
+      assert Jason.decode!(json)["has_more"] == true
+    end
+
+    test "action_parameters still hides offset on a non-paginated action", %{tools: tools} do
+      props = schema_properties(tools, "read_plain_restricted")
+
+      refute Map.has_key?(props, "offset")
+      assert Map.has_key?(props, "limit")
     end
   end
 

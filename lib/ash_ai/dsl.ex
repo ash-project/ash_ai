@@ -61,7 +61,7 @@ defmodule AshAi.Dsl do
           ]}},
       required: false,
       doc:
-        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :after, :before, :result_type, :filter]` (`:offset`, `:after` and `:before` are only offered when the action's pagination supports them). `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included."
+        "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`. Paginated actions always expose their page controls (`offset`, and/or `after`/`before` keyset cursors) regardless of this list, since the returned page hands back the value to pass for the next page. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included."
     ],
     full_filter_schema?: [
       type: :boolean,
