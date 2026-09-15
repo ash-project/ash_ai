@@ -340,6 +340,42 @@ Key distinction:
 - Private attributes CAN be included in responses when using the `load` option
 - The `load` option is primarily for loading relationships and calculations, but also makes any loaded attributes (including private ones) visible
 
+### Read Tool Results
+
+List-style read tools (those without `get_by`) mirror `Ash.read/2`: when the action has no pagination configured the tool returns a bare array of records, limited by the `limit` argument (default `25`). When the action is paginated, the tool returns a page instead, so the LLM can tell whether more records exist and how to fetch them. Note that the default `read` action created by `defaults [:read]` supports offset and keyset pagination, so tools for it return pages.
+
+Offset pagination (`pagination offset?: true`):
+
+```json
+{
+  "results": [{"id": "...", "title": "..."}],
+  "limit": 25,
+  "offset": 0,
+  "has_more": true,
+  "next_offset": 25
+}
+```
+
+Keyset pagination (`pagination keyset?: true`) exposes `after`/`before` arguments, and the page carries the cursors to pass to them:
+
+```json
+{
+  "results": [{"id": "...", "title": "..."}],
+  "limit": 25,
+  "has_more": true,
+  "start_keyset": "g3QAAAAB...",
+  "end_keyset": "g3QAAAAB..."
+}
+```
+
+- `limit` defaults to the action's `default_limit` and is capped at its `max_page_size`.
+- `has_more` never costs a second query.
+- `next_offset` is `null` on the last page. Pass `end_keyset` as `after` (or `start_keyset` as `before`) to move through keyset pages.
+- `count` (the total number of matching records) is included only when the action's pagination is configured with `countable: :by_default`, matching when Ash itself counts automatically. Otherwise the LLM can request `result_type: "count"`.
+- Actions supporting both kinds of pagination (including the default `read` action) use keyset pagination by default. Passing a positive `offset` switches that call to offset pagination.
+
+The raw result handed to `on_tool_end` callbacks is the `Ash.Page.Offset` or `Ash.Page.Keyset` struct for paginated actions, and the list of records otherwise. Other result types (`count`, `exists`, and aggregates) and `get_by` tools are unaffected.
+
 ### Tool Execution Callbacks
 
 Monitor tool execution in real-time by providing callbacks to `AshAi.ToolLoop.run/2`:

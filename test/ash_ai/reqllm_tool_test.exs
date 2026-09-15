@@ -140,8 +140,8 @@ defmodule AshAi.ReqLLMToolTest do
       {:ok, result, _raw} = registry["read_test_resources"].(%{}, context())
 
       assert is_binary(result)
-      assert {:ok, decoded} = Jason.decode(result)
-      assert is_list(decoded)
+      assert {:ok, %{"results" => results, "has_more" => false}} = Jason.decode(result)
+      assert is_list(results)
     end
 
     test "executes create action" do

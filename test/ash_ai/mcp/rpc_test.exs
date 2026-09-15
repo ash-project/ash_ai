@@ -103,7 +103,7 @@ defmodule AshAi.Mcp.ServerTest do
       assert %{"result" => %{"content" => [%{"type" => "text", "text" => text}]}} = resp
 
       # Check that our test artist is in the results
-      artists = Jason.decode!(text)
+      %{"results" => artists} = Jason.decode!(text)
       assert Enum.any?(artists, fn a -> a["name"] == "Test Artist" end)
     end
   end

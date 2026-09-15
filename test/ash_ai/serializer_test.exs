@@ -173,7 +173,7 @@ defmodule AshAi.SerializerTest do
       assert {:ok, json, _result} = AshAi.Tools.execute(tool, %{}, %{})
 
       decoded = Jason.decode!(json)
-      [item] = decoded
+      [item] = decoded["results"]
       assert item["data"]["type"] == "embedded"
       assert item["data"]["label"] == "hello"
       assert item["name"] == "test"
@@ -265,6 +265,7 @@ defmodule AshAi.SerializerTest do
   defp fetch_by_name(json, name) do
     json
     |> Jason.decode!()
+    |> Map.fetch!("results")
     |> Enum.find(&(&1["name"] == name))
   end
 

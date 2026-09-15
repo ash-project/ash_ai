@@ -117,7 +117,7 @@ defmodule AshAi.ToolLoadSelectTest do
 
   describe "load_strict?" do
     test "defaults to false, loading all public fields of the relationship", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} = registry["read_artists"].(%{}, context())
 
       [album] = artist.albums
 
@@ -125,7 +125,7 @@ defmodule AshAi.ToolLoadSelectTest do
       assert album.year == 1959
       assert album.notes == "Modal jazz"
 
-      [serialized_album] = Jason.decode!(json) |> hd() |> Map.fetch!("albums")
+      [serialized_album] = results(json) |> hd() |> Map.fetch!("albums")
 
       assert serialized_album["title"] == "Kind of Blue"
       assert serialized_album["year"] == 1959
@@ -133,7 +133,8 @@ defmodule AshAi.ToolLoadSelectTest do
     end
 
     test "true selects only the listed fields on the relationship", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists_strict"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} =
+        registry["read_artists_strict"].(%{}, context())
 
       [album] = artist.albums
 
@@ -141,7 +142,7 @@ defmodule AshAi.ToolLoadSelectTest do
       assert match?(%Ash.NotLoaded{}, album.year)
       assert match?(%Ash.NotLoaded{}, album.notes)
 
-      [serialized_album] = Jason.decode!(json) |> hd() |> Map.fetch!("albums")
+      [serialized_album] = results(json) |> hd() |> Map.fetch!("albums")
 
       assert serialized_album["title"] == "Kind of Blue"
       refute Map.has_key?(serialized_album, "year")
@@ -151,39 +152,42 @@ defmodule AshAi.ToolLoadSelectTest do
 
   describe "select" do
     test "restricts both the query and the serialized output", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists_select"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} =
+        registry["read_artists_select"].(%{}, context())
 
       assert artist.name == "Miles Davis"
       assert match?(%Ash.NotLoaded{}, artist.bio)
 
-      assert Jason.decode!(json) == [%{"name" => "Miles Davis"}]
+      assert results(json) == [%{"name" => "Miles Davis"}]
     end
 
     test "combines with load", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists_select_and_load"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} =
+        registry["read_artists_select_and_load"].(%{}, context())
 
       assert artist.name == "Miles Davis"
       assert match?(%Ash.NotLoaded{}, artist.bio)
 
-      assert [%{"name" => "Miles Davis", "albums" => [album]}] = Jason.decode!(json)
+      assert [%{"name" => "Miles Davis", "albums" => [album]}] = results(json)
       assert album["title"] == "Kind of Blue"
     end
 
     test "can select private attributes", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists_select_private"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} =
+        registry["read_artists_select_private"].(%{}, context())
 
       assert artist.secret == "classified"
 
-      assert Jason.decode!(json) == [%{"name" => "Miles Davis", "secret" => "classified"}]
+      assert results(json) == [%{"name" => "Miles Davis", "secret" => "classified"}]
     end
 
     test "defaults to all public attributes when unset", %{registry: registry} do
-      {:ok, json, [artist]} = registry["read_artists"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [artist]}} = registry["read_artists"].(%{}, context())
 
       assert artist.name == "Miles Davis"
       assert artist.bio == "Trumpeter"
 
-      serialized = Jason.decode!(json) |> hd()
+      serialized = results(json) |> hd()
 
       assert serialized["name"] == "Miles Davis"
       assert serialized["bio"] == "Trumpeter"
@@ -211,6 +215,8 @@ defmodule AshAi.ToolLoadSelectTest do
       assert Jason.decode!(json) == %{"name" => "Miles Dewey Davis"}
     end
   end
+
+  defp results(json), do: json |> Jason.decode!() |> Map.fetch!("results")
 
   defp registry do
     {_tools, registry} =

@@ -201,8 +201,8 @@ defmodule AshAiTest do
         registry["list_artists"].(%{"filter" => %{"id" => %{"eq" => artist.id}}}, context)
 
       assert is_binary(read_json)
-      assert is_list(read_raw)
-      assert Enum.any?(read_raw, &(&1.id == artist.id))
+      assert %Ash.Page.Keyset{results: read_results} = read_raw
+      assert Enum.any?(read_results, &(&1.id == artist.id))
 
       {:ok, say_hello_json, _} =
         registry["say_hello"].(%{"input" => %{"name" => "Ash"}}, context)
@@ -222,7 +222,9 @@ defmodule AshAiTest do
 
       condition = %{"field" => "name", "operator" => "eq", "value" => artist.name}
 
-      {:ok, _json, found} = registry["list_artists"].(%{"filter" => condition}, context)
+      {:ok, _json, %Ash.Page.Keyset{results: found}} =
+        registry["list_artists"].(%{"filter" => condition}, context)
+
       assert Enum.any?(found, &(&1.id == artist.id))
 
       grouped = %{
@@ -237,7 +239,9 @@ defmodule AshAiTest do
         ]
       }
 
-      {:ok, _json, found} = registry["list_artists"].(%{"filter" => grouped}, context)
+      {:ok, _json, %Ash.Page.Keyset{results: found}} =
+        registry["list_artists"].(%{"filter" => grouped}, context)
+
       assert Enum.any?(found, &(&1.id == artist.id))
 
       excluded = %{
@@ -247,7 +251,9 @@ defmodule AshAiTest do
         ]
       }
 
-      {:ok, _json, found} = registry["list_artists"].(%{"filter" => excluded}, context)
+      {:ok, _json, %Ash.Page.Keyset{results: found}} =
+        registry["list_artists"].(%{"filter" => excluded}, context)
+
       refute Enum.any?(found, &(&1.id == artist.id))
     end
 

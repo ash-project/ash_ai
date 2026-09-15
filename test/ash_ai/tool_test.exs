@@ -250,7 +250,8 @@ defmodule AshAi.ToolTest do
       {_tools, registry} =
         AshAi.build_tools_and_registry(actions: [{TestResource, :*}], strict: false)
 
-      {:ok, json, [fetched]} = registry["read_test_resources"].(%{}, context())
+      {:ok, json, %Ash.Page.Keyset{results: [fetched]}} =
+        registry["read_test_resources"].(%{}, context())
 
       assert fetched.id == resource.id
       assert fetched.public_name == "John Doe"
@@ -258,8 +259,23 @@ defmodule AshAi.ToolTest do
       assert fetched.internal_status == "classified"
       assert fetched.private_notes == "Secret internal notes"
 
-      assert json ==
-               "[{\"id\":\"0197b375-4daa-7112-a9d8-7f0104485646\",\"public_name\":\"John Doe\",\"public_email\":\"john@example.com\",\"internal_status\":\"classified\"}]"
+      # the default `read` action is paginated, so the result is a keyset page
+      keyset = fetched.__metadata__.keyset
+
+      assert Jason.decode!(json) == %{
+               "results" => [
+                 %{
+                   "id" => "0197b375-4daa-7112-a9d8-7f0104485646",
+                   "public_name" => "John Doe",
+                   "public_email" => "john@example.com",
+                   "internal_status" => "classified"
+                 }
+               ],
+               "limit" => 25,
+               "has_more" => false,
+               "start_keyset" => keyset,
+               "end_keyset" => keyset
+             }
     end
 
     test "handles nil arguments from clients" do

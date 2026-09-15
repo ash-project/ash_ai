@@ -328,6 +328,8 @@ defmodule AshAi.Tool.Schema do
       |> Enum.filter(& &1.public?)
       |> Enum.map(& &1.name)
 
+    paginated? = match?(%Ash.Resource.Actions.Read.Pagination{}, pagination)
+
     scalar_result_types =
       for type <- ["run_query", "count", "exists"],
           String.to_existing_atom(type) in allowed_result_types,
@@ -338,9 +340,17 @@ defmodule AshAi.Tool.Schema do
       description:
         scalar_result_types
         |> Enum.map_join(", or ", fn
-          "run_query" -> "run the query returning all results"
-          "count" -> "return a count of results"
-          "exists" -> "check if any results exist"
+          "run_query" when paginated? ->
+            "run the query returning a page of results (check `has_more` to see whether further pages exist)"
+
+          "run_query" ->
+            "run the query returning the matching records (up to `limit`)"
+
+          "count" ->
+            "return a count of results"
+
+          "exists" ->
+            "check if any results exist"
         end)
         |> String.capitalize(),
       enum: scalar_result_types
@@ -506,7 +516,11 @@ defmodule AshAi.Tool.Schema do
       result_type: result_type_schema,
       limit: %{
         type: :integer,
-        description: "The maximum number of records to return",
+        description:
+          if(paginated?,
+            do: "The maximum number of records to return in one page",
+            else: "The maximum number of records to return"
+          ),
         default:
           case pagination do
             %Ash.Resource.Actions.Read.Pagination{default_limit: limit} when is_integer(limit) ->
@@ -515,11 +529,6 @@ defmodule AshAi.Tool.Schema do
             _ ->
               25
           end
-      },
-      offset: %{
-        type: :integer,
-        description: "The number of records to skip",
-        default: 0
       },
       sort: %{
         type: :array,
@@ -550,6 +559,7 @@ defmodule AshAi.Tool.Schema do
         }
       }
     })
+    |> Map.merge(pagination_properties(pagination))
     |> then(fn map ->
       if action_parameters do
         Map.take(map, action_parameters ++ [:input])
@@ -557,6 +567,61 @@ defmodule AshAi.Tool.Schema do
         map
       end
     end)
+  end
+
+  # Non-paginated actions still accept an `offset`, applied directly to the query.
+  # Paginated actions expose the controls their pagination supports; keyset is the
+  # default when available, and the page they return carries the value to pass for
+  # the next page. Mirrors `AshAi.Tool.Execution` page option selection.
+  defp pagination_properties(%Ash.Resource.Actions.Read.Pagination{} = pagination) do
+    offset =
+      if pagination.offset? do
+        %{
+          offset: %{
+            type: :integer,
+            description:
+              if(pagination.keyset?,
+                do:
+                  "The number of records to skip. Pages use keyset cursors by default; pass a positive offset to page by position instead, then pass the `next_offset` from that page for the following one.",
+                else:
+                  "The number of records to skip. Pass the `next_offset` from a previous page to fetch the following page."
+              ),
+            default: 0
+          }
+        }
+      else
+        %{}
+      end
+
+    keyset =
+      if pagination.keyset? do
+        %{
+          after: %{
+            type: :string,
+            description:
+              "Fetch the page after this keyset cursor. Pass the `end_keyset` from a previous page to fetch the following page."
+          },
+          before: %{
+            type: :string,
+            description:
+              "Fetch the page before this keyset cursor. Pass the `start_keyset` from a previous page to fetch the preceding page."
+          }
+        }
+      else
+        %{}
+      end
+
+    Map.merge(offset, keyset)
+  end
+
+  defp pagination_properties(_pagination) do
+    %{
+      offset: %{
+        type: :integer,
+        description: "The number of records to skip",
+        default: 0
+      }
+    }
   end
 
   defp add_input_for_fields(sort_obj, resource) do

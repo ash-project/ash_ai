@@ -122,7 +122,9 @@ defmodule AshAi.Tool.Execution do
       |> apply_select(ctx)
       |> Ash.Query.for_read(action.name, input, opts)
 
-    execute_read(query, action, arguments["result_type"] || "run_query", ctx)
+    page_opts = build_page_opts(action.pagination, limit, arguments)
+
+    execute_read(query, action, arguments["result_type"] || "run_query", page_opts, ctx)
   end
 
   defp run_read(resource, action, arguments, input, opts, get_by, ctx) do
@@ -169,6 +171,55 @@ defmodule AshAi.Tool.Execution do
     end
   end
 
+  # Page options for paginated actions, `nil` otherwise. Keyset pagination is
+  # the default whenever the action supports it; when the action also supports
+  # offset pagination, a positive `offset` switches to it. Mixing the two, or
+  # using a control the action does not support, is a tool error. An `offset`
+  # of 0 is the schema default, so it counts as "not requested".
+  defp build_page_opts(%Ash.Resource.Actions.Read.Pagination{} = pagination, limit, arguments) do
+    cursor =
+      Enum.filter([after: arguments["after"], before: arguments["before"]], fn {_key, value} ->
+        not is_nil(value)
+      end)
+
+    offset = arguments["offset"]
+    offset_requested? = not is_nil(offset) and offset != 0
+
+    cond do
+      Keyword.has_key?(cursor, :after) and Keyword.has_key?(cursor, :before) ->
+        throw({:tool_error, "Pass either `after` or `before`, not both."})
+
+      cursor != [] and offset_requested? ->
+        throw(
+          {:tool_error,
+           "Pass either a keyset cursor (`after`/`before`) or an `offset`, not both."}
+        )
+
+      cursor != [] and not pagination.keyset? ->
+        throw(
+          {:tool_error,
+           "This tool does not support keyset pagination; use `offset` instead of `after`/`before`."}
+        )
+
+      offset_requested? and not pagination.offset? ->
+        throw(
+          {:tool_error,
+           "This tool does not support offset pagination; use `after`/`before` cursors instead of `offset`."}
+        )
+
+      cursor != [] ->
+        [limit: limit] ++ cursor
+
+      pagination.offset? and (offset_requested? or not pagination.keyset?) ->
+        [limit: limit, offset: offset || 0]
+
+      true ->
+        [limit: limit]
+    end
+  end
+
+  defp build_page_opts(_pagination, _limit, _arguments), do: nil
+
   defp apply_sort(query, ""), do: query
   defp apply_sort(query, sort), do: Ash.Query.sort_input(query, sort)
 
@@ -210,7 +261,31 @@ defmodule AshAi.Tool.Execution do
 
   defp normalize_condition(other), do: other
 
-  defp execute_read(query, action, "run_query", ctx) do
+  # Mirrors `Ash.read/2`: a paginated read action returns a page, any other
+  # read action returns a bare list of records. The page carries `has_more` and
+  # either `next_offset` or `start_keyset`/`end_keyset`, so the LLM knows when
+  # and how to fetch further pages, plus a `count` whenever the action's
+  # pagination is `countable: :by_default` (the same condition under which Ash
+  # counts automatically).
+  defp execute_read(query, _action, "run_query", page_opts, ctx) when is_list(page_opts) do
+    query
+    |> Ash.Query.unset([:limit, :offset])
+    |> Ash.Query.page(page_opts)
+    |> Ash.read(load: ctx.load, strict?: ctx.load_strict?)
+    |> case do
+      {:ok, %struct{} = page} when struct in [Ash.Page.Offset, Ash.Page.Keyset] -> page
+      {:error, error} -> raise Ash.Error.to_error_class(error)
+    end
+    |> as_requested_page(page_opts)
+    |> then(fn page ->
+      page
+      |> serialize_page(query.resource, ctx)
+      |> encode_result(ctx)
+      |> then(&{:ok, &1, page})
+    end)
+  end
+
+  defp execute_read(query, action, "run_query", _page_opts, ctx) do
     query
     |> Ash.Actions.Read.unpaginated_read(action, load: ctx.load, strict?: ctx.load_strict?)
     |> case do
@@ -227,7 +302,7 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
-  defp execute_read(query, _action, "count", ctx) do
+  defp execute_read(query, _action, "count", _page_opts, ctx) do
     query
     |> Ash.Query.unset([:limit, :offset])
     |> Ash.count()
@@ -243,7 +318,7 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
-  defp execute_read(query, _action, "exists", ctx) do
+  defp execute_read(query, _action, "exists", _page_opts, ctx) do
     query
     |> Ash.exists()
     |> case do
@@ -258,7 +333,7 @@ defmodule AshAi.Tool.Execution do
     end)
   end
 
-  defp execute_read(query, _action, %{"aggregate" => aggregate_kind} = aggregate, ctx) do
+  defp execute_read(query, _action, %{"aggregate" => aggregate_kind} = aggregate, _page_opts, ctx) do
     resource = query.resource
 
     if aggregate_kind not in ["min", "max", "sum", "avg", "count"] do
@@ -303,6 +378,75 @@ defmodule AshAi.Tool.Execution do
       |> encode_result(ctx)
       |> then(&{:ok, &1, result})
     end)
+  end
+
+  # When an action supports both kinds of pagination and no cursor is given, Ash
+  # paginates by keyset but wraps the result according to the global
+  # `config :ash, :default_page_type` (offset unless configured). The tool asked
+  # for keyset, so rebuild the page as one; the records already carry keysets.
+  defp as_requested_page(%Ash.Page.Offset{} = page, page_opts) do
+    if Keyword.has_key?(page_opts, :offset) do
+      page
+    else
+      %Ash.Page.Keyset{
+        results: page.results,
+        count: page.count,
+        before: nil,
+        after: nil,
+        limit: page.limit,
+        more?: page.more?,
+        rerun: page.rerun
+      }
+    end
+  end
+
+  defp as_requested_page(page, _page_opts), do: page
+
+  defp serialize_page(%Ash.Page.Offset{} = page, resource, ctx) do
+    offset = page.offset || 0
+
+    %{
+      "results" => serialize_results(page.results, resource, ctx),
+      "limit" => page.limit,
+      "offset" => offset,
+      "has_more" => page.more?,
+      "next_offset" => if(page.more?, do: offset + page.limit)
+    }
+    |> put_count(page)
+  end
+
+  defp serialize_page(%Ash.Page.Keyset{} = page, resource, ctx) do
+    %{
+      "results" => serialize_results(page.results, resource, ctx),
+      "limit" => page.limit,
+      "has_more" => page.more?,
+      "start_keyset" => keyset(List.first(page.results)),
+      "end_keyset" => keyset(List.last(page.results))
+    }
+    |> put_count(page)
+  end
+
+  defp serialize_results(results, resource, ctx) do
+    AshAi.Serializer.serialize_value(
+      results,
+      {:array, resource},
+      [],
+      ctx.domain,
+      serialize_opts(ctx)
+    )
+  end
+
+  defp keyset(nil), do: nil
+  defp keyset(record), do: record.__metadata__[:keyset]
+
+  # `Ash.Page.*` typespecs declare `count: integer()`, but the field is `nil`
+  # unless a count was requested. Reading it via `Map.get/2` keeps dialyzer from
+  # treating the nil branch as unreachable.
+  defp put_count(serialized, page) do
+    case Map.get(page, :count) do
+      count when is_integer(count) -> Map.put(serialized, "count", count)
+      _ -> serialized
+    end
   end
 
   defp run_create(resource, action, input, opts, ctx) do

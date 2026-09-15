@@ -170,7 +170,7 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert result["isError"] == false
 
       [%{"type" => "text", "text" => text}] = result["content"]
-      assert Enum.any?(Jason.decode!(text), &(&1["name"] == "Stateless Artist"))
+      assert Enum.any?(Jason.decode!(text)["results"], &(&1["name"] == "Stateless Artist"))
     end
 
     test "tools/call accepts a Base64 sentinel encoded Mcp-Name header" do

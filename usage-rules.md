@@ -225,6 +225,18 @@ This provides flexibility while maintaining control over data access:
 - Private data can still be included in responses when explicitly loaded
 - The `load` option serves dual purposes: loading relationships/calculations and making any loaded attributes visible (including private ones)
 
+### Read Tool Results
+
+List-style read tools (no `get_by`) mirror `Ash.read/2`:
+
+- Action without pagination: returns a bare array of records, limited by `limit` (default 25) and `offset`. Note `defaults [:read]` creates a paginated action, so its tools return pages.
+- Action with `pagination offset?: true`: returns `{"results": [...], "limit": n, "offset": n, "has_more": bool, "next_offset": n | null}`.
+- Action with `pagination keyset?: true`: exposes `after`/`before` arguments instead of `offset` and returns `{"results": [...], "limit": n, "has_more": bool, "start_keyset": "...", "end_keyset": "..."}`. Pass `end_keyset` as `after` for the next page.
+- `count` (total matching records) is only included when the action's pagination has `countable: :by_default`. Otherwise use `result_type: "count"`.
+- To give an LLM pagination metadata, configure `pagination` on the read action. The raw result for paginated actions is an `Ash.Page.Offset` or `Ash.Page.Keyset` struct.
+- Actions supporting both offset and keyset pagination (including `defaults [:read]`) use keyset by default; a positive `offset` switches to offset pagination for that call.
+- `count`, `exists`, aggregate result types, and `get_by` tools return their value directly, never a page.
+
 ### Using Tools in LangChain
 
 Add your Ash AI tools to a LangChain chain:

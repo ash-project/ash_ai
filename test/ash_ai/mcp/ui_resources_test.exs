@@ -158,7 +158,8 @@ defmodule AshAi.Mcp.UiResourcesTest do
       result = decode_response(call_response)["result"]
       assert result["isError"] == false
       assert [%{"type" => "text", "text" => text}] = result["content"]
-      assert is_list(Jason.decode!(text))
+      assert %{"results" => results} = Jason.decode!(text)
+      assert is_list(results)
     end
 
     test "2026-07-28 server discovery negotiates the extension per request" do

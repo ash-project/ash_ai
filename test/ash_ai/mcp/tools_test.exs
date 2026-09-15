@@ -99,7 +99,9 @@ defmodule AshAi.Mcp.ToolsTest do
       assert body["result"]["isError"] == false
       refute body["result"]["_meta"]
       assert %{"result" => %{"content" => [%{"type" => "text", "text" => text}]}} = body
-      assert [%{"name" => "Test Artist"}] = Jason.decode!(text)
+
+      assert %{"results" => [%{"name" => "Test Artist"}], "has_more" => false} =
+               Jason.decode!(text)
     end
 
     test "includes _meta when tool has metadata" do
