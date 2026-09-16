@@ -291,6 +291,26 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert response.status == 202
     end
 
+    test "a non-object body is rejected without echoing the parsed term" do
+      # Plug.Parsers wraps a non-object JSON body under "_json"
+      conn =
+        conn(:post, "/", %{"_json" => 5})
+        |> put_req_header("mcp-protocol-version", @protocol_version)
+
+      response = Router.call(conn, @tool_opts)
+      assert response.status == 400
+
+      assert %{
+               "jsonrpc" => "2.0",
+               "id" => nil,
+               "error" => %{
+                 "code" => -32_600,
+                 "message" =>
+                   "Invalid Request: expected a JSON-RPC request object with a \"method\""
+               }
+             } = Jason.decode!(response.resp_body)
+    end
+
     test "top-level JSON-RPC batches return one bounded Invalid Request error" do
       conn =
         conn(:post, "/", %{

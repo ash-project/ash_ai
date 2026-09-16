@@ -170,6 +170,33 @@ defmodule AshAi.Mcp.ServerTest do
     end
   end
 
+  describe "invalid request bodies" do
+    @invalid_request "Invalid Request: expected a JSON-RPC request object with a \"method\""
+
+    test "a non-object body is rejected without echoing the parsed term" do
+      # Plug.Parsers wraps a non-object JSON body under "_json"
+      conn = conn(:post, "/", %{"_json" => 5})
+      response = Router.call(conn, @opts)
+
+      assert %{
+               "jsonrpc" => "2.0",
+               "id" => nil,
+               "error" => %{"code" => -32_600, "message" => @invalid_request}
+             } = Jason.decode!(response.resp_body)
+    end
+
+    test "an object without a method is rejected without echoing its contents" do
+      conn = conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "secret" => "do not echo"})
+      response = Router.call(conn, @opts)
+
+      assert %{"error" => %{"code" => -32_600, "message" => message}} =
+               Jason.decode!(response.resp_body)
+
+      assert message == @invalid_request
+      refute message =~ "do not echo"
+    end
+  end
+
   describe "send_sse_event/4" do
     test "writes the event chunks to an open connection" do
       conn =

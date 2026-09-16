@@ -31,6 +31,12 @@ defmodule AshAi.Mcp.Server do
 
   alias AshAi.Tool
 
+  # Sent for a body that is not a JSON-RPC request object. The body itself is
+  # not echoed: a non-object body arrives wrapped by Plug.Parsers as
+  # `%{"_json" => value}`, so inspecting it describes something the client did
+  # not send, and an object is echoed with up to 50 of its own keys and values.
+  @invalid_request_message "Invalid Request: expected a JSON-RPC request object with a \"method\""
+
   # Protocol revisions that declare their version on every request
   @per_request_versions ["2026-07-28"]
   # Protocol revisions that negotiate their version via `initialize`
@@ -196,8 +202,8 @@ defmodule AshAi.Mcp.Server do
     )
   end
 
-  defp handle_post_2026_07_28(conn, other, _opts) do
-    error_response_2026_07_28(conn, 400, nil, -32_600, "Invalid Request Got: #{inspect(other)}")
+  defp handle_post_2026_07_28(conn, _other, _opts) do
+    error_response_2026_07_28(conn, 400, nil, -32_600, @invalid_request_message)
   end
 
   # Every request must carry `_meta` with the protocol version and client
@@ -830,10 +836,9 @@ defmodule AshAi.Mcp.Server do
         # Handle other notifications (no id)
         {:no_response, nil, session_id}
 
-      other ->
+      _other ->
         # Invalid message
-        {:json_response,
-         json_rpc_error_response(nil, -32_600, "Invalid Request Got: #{inspect(other)}"),
+        {:json_response, json_rpc_error_response(nil, -32_600, @invalid_request_message),
          session_id}
     end
   end
