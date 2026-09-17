@@ -392,12 +392,10 @@ defmodule AshAi.Tool.Schema do
             default: "run_query",
             description: "The type of result to return",
             oneOf: [
-              Map.delete(scalar_result_type_schema, :type),
+              scalar_result_type_schema,
               aggregate_result_type_schema
-              |> Map.delete(:type)
               |> Map.delete(:description)
               |> Map.delete(:additionalProperties)
-              |> Map.delete(:required)
             ]
           }
       end
