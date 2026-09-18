@@ -73,6 +73,12 @@ if Code.ensure_loaded?(ReqLLM) do
     - `:max_iterations` - Maximum tool-loop iterations. Defaults to `:infinity` for prompt actions.
     - `:verbose?` - When true, logs tool-loop lifecycle events with `Logger.debug/1`.
 
+    ## Model metadata
+
+    Return `AshAi.Actions.Result` with `of:` naming the real return type to also
+    receive the model that answered and token usage (summed across the tool loop
+    and the final generation).
+
     ## Behavior Notes
 
     - Tool-loop failures are returned as action errors with loop reason details.
@@ -130,7 +136,9 @@ if Code.ensure_loaded?(ReqLLM) do
 
     def run(input, opts, context) do
       model = resolve_model_spec(opts[:model], input, context)
-      schema = build_json_schema(input)
+      action = input.action
+      {returns, constraints} = AshAi.Actions.Result.unwrap(action.returns, action.constraints)
+      schema = build_json_schema(action.allow_nil?, returns, constraints)
       initial_context = build_context(input, opts, context)
 
       req_llm_module = Keyword.get(opts, :req_llm, ReqLLM)
@@ -140,7 +148,7 @@ if Code.ensure_loaded?(ReqLLM) do
         build_flow_state(initial_context, model, req_llm_module, req_llm_opts, context, opts)
 
       with {:ok, flow_state} <- apply_flow_customizations(flow_state, context, opts),
-           {:ok, final_context} <- maybe_run_tools(flow_state, input, opts),
+           {:ok, final_context, loop_usage} <- maybe_run_tools(flow_state, input, opts),
            {:ok, generated} <-
              flow_state.req_llm.generate_object(
                flow_state.model,
@@ -148,12 +156,14 @@ if Code.ensure_loaded?(ReqLLM) do
                schema,
                flow_state.req_llm_opts
              ) do
-        case generated do
-          %{object: result} ->
-            cast_result(result, input.action)
+        {result, response} =
+          case generated do
+            %{object: result} -> {result, generated}
+            result when is_map(result) -> {result, nil}
+          end
 
-          result when is_map(result) ->
-            cast_result(result, input.action)
+        with {:ok, value} <- cast_result(result, returns, constraints) do
+          wrap_result(value, response, loop_usage, action)
         end
       else
         {:error, error} ->
@@ -262,8 +272,8 @@ if Code.ensure_loaded?(ReqLLM) do
         case prompt_loop_opts(flow_state.tool_selection, input, flow_state, opts) do
           {:ok, loop_opts} ->
             case AshAi.ToolLoop.run(flow_state.messages, loop_opts) do
-              {:ok, %AshAi.ToolLoop.Result{messages: messages}} ->
-                {:ok, ReqLLM.Context.new(messages)}
+              {:ok, %AshAi.ToolLoop.Result{messages: messages, usage: usage}} ->
+                {:ok, ReqLLM.Context.new(messages), usage || %{}}
 
               {:error, reason} ->
                 if flow_state.verbose? do
@@ -282,7 +292,42 @@ if Code.ensure_loaded?(ReqLLM) do
             {:error, error}
         end
       else
-        {:ok, ReqLLM.Context.new(flow_state.messages)}
+        {:ok, ReqLLM.Context.new(flow_state.messages), %{}}
+      end
+    end
+
+    # When the action returns `AshAi.Actions.Result`, attach the model that answered
+    # and the usage summed across the tool loop and the final generation.
+    defp wrap_result(value, response, loop_usage, action) do
+      if AshAi.Actions.Result.wrapped?(action.returns) do
+        usage = sum_usage(loop_usage, response && Map.get(response, :usage))
+        wrapped = AshAi.Actions.Result.wrap(value, response, usage)
+
+        with {:ok, value} <- Ash.Type.cast_input(action.returns, wrapped, action.constraints),
+             {:ok, value} <-
+               Ash.Type.apply_constraints(action.returns, value, action.constraints) do
+          {:ok, value}
+        else
+          {:error, error} -> {:error, "Failed to cast LLM response: #{inspect(error)}"}
+          :error -> {:error, "Failed to cast LLM response: #{inspect(wrapped)}"}
+        end
+      else
+        {:ok, value}
+      end
+    end
+
+    defp sum_usage(loop_usage, generation_usage) do
+      loop_usage = if is_map(loop_usage), do: loop_usage, else: %{}
+
+      case generation_usage do
+        usage when is_map(usage) and map_size(usage) > 0 ->
+          Map.merge(loop_usage, usage, fn
+            _key, a, b when is_number(a) and is_number(b) -> a + b
+            _key, _a, b -> b
+          end)
+
+        _ ->
+          if map_size(loop_usage) == 0, do: nil, else: loop_usage
       end
     end
 
@@ -357,12 +402,12 @@ if Code.ensure_loaded?(ReqLLM) do
       tool_selection == true or (is_list(tool_selection) and tool_selection != [])
     end
 
-    defp build_json_schema(input) do
-      if input.action.returns do
-        inner_schema = return_inner_schema(input.action)
+    defp build_json_schema(allow_nil?, returns, constraints) do
+      if returns do
+        inner_schema = return_inner_schema(%{returns: returns, constraints: constraints})
 
         result_schema =
-          if input.action.allow_nil? do
+          if allow_nil? do
             %{"anyOf" => [%{"type" => "null"}, inner_schema]}
           else
             inner_schema
@@ -408,15 +453,9 @@ if Code.ensure_loaded?(ReqLLM) do
       )
     end
 
-    defp unconstrained_map_return?(constraints) when is_list(constraints) do
+    defp unconstrained_map_return?(constraints) do
       Keyword.get(constraints, :fields) in [nil, []]
     end
-
-    defp unconstrained_map_return?(constraints) when is_map(constraints) do
-      Map.get(constraints, :fields) in [nil, []]
-    end
-
-    defp unconstrained_map_return?(_), do: true
 
     defp compose_callbacks(nil, nil), do: nil
     defp compose_callbacks(callback, nil) when is_function(callback, 1), do: callback
@@ -452,7 +491,7 @@ if Code.ensure_loaded?(ReqLLM) do
     defp maybe_put_option(opts, _key, nil), do: opts
     defp maybe_put_option(opts, key, value), do: Keyword.put(opts, key, value)
 
-    defp cast_result(result, %{returns: nil}) do
+    defp cast_result(result, nil, _constraints) do
       case unwrap_result(result) do
         nil ->
           :ok
@@ -462,21 +501,11 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
-    defp cast_result(result, action) do
+    defp cast_result(result, returns, constraints) do
       value = unwrap_result(result)
 
-      with {:ok, value} <-
-             Ash.Type.cast_input(
-               action.returns,
-               value,
-               action.constraints
-             ),
-           {:ok, value} <-
-             Ash.Type.apply_constraints(
-               action.returns,
-               value,
-               action.constraints
-             ) do
+      with {:ok, value} <- Ash.Type.cast_input(returns, value, constraints),
+           {:ok, value} <- Ash.Type.apply_constraints(returns, value, constraints) do
         {:ok, value}
       else
         {:error, error} ->

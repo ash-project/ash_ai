@@ -28,6 +28,8 @@ if Code.ensure_loaded?(ReqLLM) do
       question's instructions.
     - `{:array, answer_type}` asks a runtime-sized list of questions, one per entry
       returned by the `questions` option, and returns the answers in the same order.
+    - `AshAi.Actions.Result` wrapping any of the above also returns the model that
+      answered, token usage, and provider metadata.
 
     ## Example
 
@@ -89,6 +91,7 @@ if Code.ensure_loaded?(ReqLLM) do
     """
     use Ash.Resource.Actions.Implementation
 
+    alias AshAi.Actions.Result
     alias AshAi.Evaluate.Answer
 
     @impl true
@@ -97,14 +100,21 @@ if Code.ensure_loaded?(ReqLLM) do
       req_llm = Keyword.get(opts, :req_llm, ReqLLM)
       req_llm_opts = Keyword.get(opts, :req_llm_opts, [])
 
-      with {:ok, plan} <- plan(input.action),
+      action = input.action
+      {returns, constraints} = Result.unwrap(action.returns, action.constraints)
+
+      with {:ok, plan} <- plan(action, returns, constraints),
            {:ok, state} <- build_state(input, opts, context),
            {:ok, specs} <- resolve_questions(plan, opts, input, context),
            {:ok, questions} <- build_questions(specs),
-           {:ok, answers} <- evaluate(req_llm, model, state, questions, req_llm_opts),
+           {:ok, answers, response} <- evaluate(req_llm, model, state, questions, req_llm_opts),
            {:ok, result} <- collect(plan, specs, answers),
-           {:ok, casted} <- cast_result(result, input.action) do
-        {:ok, casted}
+           {:ok, casted} <- cast(result, returns, constraints) do
+        if Result.wrapped?(action.returns) do
+          cast(Result.wrap(casted, response), action.returns, action.constraints)
+        else
+          {:ok, casted}
+        end
       else
         {:error, %{__exception__: true} = error} -> {:error, error}
         {:error, error} -> {:error, Ash.Error.Unknown.UnknownError.exception(error: error)}
@@ -122,19 +132,19 @@ if Code.ensure_loaded?(ReqLLM) do
 
     # A plan describes where questions come from and how answers map back onto the
     # return type: a single answer, one answer per map field, or a list of answers.
-    defp plan(%{returns: nil}) do
+    defp plan(_action, nil, _constraints) do
       {:error, "evaluate actions must declare a return type"}
     end
 
-    defp plan(%{returns: {:array, item_type}, constraints: constraints} = action) do
+    defp plan(_action, {:array, item_type} = returns, constraints) do
       if Answer.answer_type?(item_type) do
         {:ok, {:list, Ash.Type.get_type(item_type), constraints[:items] || []}}
       else
-        unsupported_return(action)
+        unsupported_return(returns)
       end
     end
 
-    defp plan(%{returns: returns, constraints: constraints} = action) do
+    defp plan(action, returns, constraints) do
       cond do
         Answer.answer_type?(returns) ->
           {:ok,
@@ -145,13 +155,13 @@ if Code.ensure_loaded?(ReqLLM) do
           plan_fields(action, fields)
 
         true ->
-          unsupported_return(action)
+          unsupported_return(returns)
       end
     end
 
-    defp unsupported_return(action) do
+    defp unsupported_return(returns) do
       {:error,
-       "evaluate actions must return an answer type (`AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`, `AshAi.Evaluate.Score`), an array of one, or `AshAi.Evaluate.Judgments`, got: #{inspect(action.returns)}"}
+       "evaluate actions must return an answer type (`AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`, `AshAi.Evaluate.Score`), an array of one, `AshAi.Evaluate.Judgments`, or `AshAi.Actions.Result` wrapping one of those, got: #{inspect(returns)}"}
     end
 
     defp plan_fields(_action, []) do
@@ -300,7 +310,7 @@ if Code.ensure_loaded?(ReqLLM) do
     # TypeSafe rejects an empty question map; an empty list of questions has an
     # empty answer.
     defp evaluate(_req_llm, _model, _state, questions, _opts) when map_size(questions) == 0,
-      do: {:ok, %{}}
+      do: {:ok, %{}, nil}
 
     defp evaluate(req_llm, model, state, questions, opts) do
       with {:ok, response} <- req_llm.evaluate(model, state, questions, opts) do
@@ -308,8 +318,10 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
-    defp extract_answers(%{object: answers}) when is_map(answers), do: {:ok, answers}
-    defp extract_answers(answers) when is_map(answers), do: {:ok, answers}
+    defp extract_answers(%{object: answers} = response) when is_map(answers),
+      do: {:ok, answers, response}
+
+    defp extract_answers(answers) when is_map(answers), do: {:ok, answers, nil}
 
     defp extract_answers(other),
       do: {:error, "unexpected evaluation response: #{inspect(other)}"}
@@ -347,9 +359,9 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
-    defp cast_result(result, action) do
-      with {:ok, value} <- Ash.Type.cast_input(action.returns, result, action.constraints),
-           {:ok, value} <- Ash.Type.apply_constraints(action.returns, value, action.constraints) do
+    defp cast(result, type, constraints) do
+      with {:ok, value} <- Ash.Type.cast_input(type, result, constraints),
+           {:ok, value} <- Ash.Type.apply_constraints(type, value, constraints) do
         {:ok, value}
       else
         {:error, error} ->

@@ -491,6 +491,30 @@ node). A Choice without `of:` returns string values. For `Judgments`, `questions
 map of field name to question and overrides only those fields' descriptions. For a single
 answer type it overrides the action description.
 
+## Model Metadata for Prompt and Evaluate Actions
+
+Both action kinds return only the model's value by default. To also get the model that
+answered and token usage, wrap the return type in `AshAi.Actions.Result` with `of:` naming
+the real return type. The action plans against the inner type as usual.
+
+```elixir
+action :triage, AshAi.Actions.Result do
+  argument :ticket, :string, allow_nil?: false
+
+  constraints of: AshAi.Evaluate.Judgments,
+              constraints: [fields: [urgent: [type: :boolean, description: "Does `ticket` convey urgency?"]]]
+
+  run evaluate("typesafe:jev-latest")
+end
+
+%AshAi.Actions.Result{result: %{urgent: %AshAi.Evaluate.Noul{}}, model: "jev-1.13.0", usage: %{...}}
+```
+
+Use this when the program needs the metadata, for example storing the versioned Jev model
+next to a judgment so thresholds can be re-tuned when the alias moves. For logging and cost
+accounting across all calls, subscribe to ReqLLM telemetry (`[:req_llm, :token_usage]`,
+`[:req_llm, :request, :stop]`) instead of changing return types.
+
 ## Model Context Protocol (MCP) Server
 
 ### Development MCP Server
