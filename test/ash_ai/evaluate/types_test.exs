@@ -31,7 +31,10 @@ defmodule AshAi.Evaluate.TypesTest do
       assert {:ok, constraints} =
                Ash.Type.init(Choice, of: :atom, constraints: [one_of: [:a, :b]])
 
-      assert Choice.options(constraints) == [:a, :b]
+      assert constraints[:fields][:value][:type] == Ash.Type.Atom
+
+      assert {:ok, %{criteria: %{"a" => nil, "b" => nil}}} =
+               Choice.to_question("Which?", nil, constraints)
     end
 
     test "init rejects types that do not define options" do
@@ -55,15 +58,17 @@ defmodule AshAi.Evaluate.TypesTest do
     test "to_question uses enum descriptions as criteria and honors overrides" do
       {:ok, constraints} = Ash.Type.init(Choice, of: Department, descriptions: [sales: "Sales"])
 
-      assert Choice.to_question("Which team?", constraints) == %{
-               type: :choice,
-               instructions: "Which team?",
-               criteria: %{
-                 "billing" => "Payments, invoicing, refunds",
-                 "technical" => "Bugs, outages, integrations",
-                 "sales" => "Sales"
-               }
-             }
+      assert Choice.to_question("Which team?", nil, constraints) ==
+               {:ok,
+                %{
+                  type: :choice,
+                  instructions: "Which team?",
+                  criteria: %{
+                    "billing" => "Payments, invoicing, refunds",
+                    "technical" => "Bugs, outages, integrations",
+                    "sales" => "Sales"
+                  }
+                }}
     end
 
     test "from_answer casts the choice and probability keys, then casts into the struct" do
@@ -94,7 +99,7 @@ defmodule AshAi.Evaluate.TypesTest do
                  constraints
                )
 
-      assert message =~ "outside the defined set"
+      assert message =~ "outside the set"
     end
 
     test "introspects as a struct NewType" do
@@ -114,11 +119,8 @@ defmodule AshAi.Evaluate.TypesTest do
 
       assert {:ok, casted} = Ash.Type.cast_input(Noul, %{probability: 0.6}, constraints)
 
-      assert {:ok, %Noul{probability: 0.6} = noul} =
+      assert {:ok, %Noul{probability: 0.6}} =
                Ash.Type.apply_constraints(Noul, casted, constraints)
-
-      assert Noul.yes?(noul)
-      refute Noul.yes?(noul, 0.7)
     end
 
     test "rejects a threshold constraint" do
@@ -129,18 +131,18 @@ defmodule AshAi.Evaluate.TypesTest do
     test "to_question sends criteria when given" do
       {:ok, constraints} = Ash.Type.init(Noul, criteria: [true: "Time-sensitive", false: "Not"])
 
-      assert Noul.to_question("Urgent?", constraints) == %{
-               type: :boolean,
-               instructions: "Urgent?",
-               criteria: %{"true" => "Time-sensitive", "false" => "Not"}
-             }
+      assert Noul.to_question("Urgent?", nil, constraints) ==
+               {:ok,
+                %{
+                  type: :boolean,
+                  instructions: "Urgent?",
+                  criteria: %{"true" => "Time-sensitive", "false" => "Not"}
+                }}
 
       {:ok, constraints} = Ash.Type.init(Noul, [])
 
-      assert Noul.to_question("Urgent?", constraints) == %{
-               type: :boolean,
-               instructions: "Urgent?"
-             }
+      assert Noul.to_question("Urgent?", nil, constraints) ==
+               {:ok, %{type: :boolean, instructions: "Urgent?"}}
     end
   end
 
@@ -170,11 +172,13 @@ defmodule AshAi.Evaluate.TypesTest do
       assert score.probabilities == %{0 => 0.05, 1 => 0.3, 2 => 0.65}
       assert score.confidence == 0.78
 
-      assert Score.to_question("How frustrated?", constraints) == %{
-               type: :score,
-               instructions: "How frustrated?",
-               criteria: ["Calm", "Frustrated", "Very angry"]
-             }
+      assert Score.to_question("How frustrated?", nil, constraints) ==
+               {:ok,
+                %{
+                  type: :score,
+                  instructions: "How frustrated?",
+                  criteria: ["Calm", "Frustrated", "Very angry"]
+                }}
     end
   end
 

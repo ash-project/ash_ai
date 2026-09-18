@@ -18,13 +18,16 @@ if Code.ensure_loaded?(ReqLLM) do
 
     ## Return types
 
-    The return type must be an answer type or a map of answer types:
+    The return type must be an answer type, a map of answer types, or an array of
+    an answer type:
 
     - `AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`, or `AshAi.Evaluate.Score` asks
       one question. The action `description` is the question's instructions.
     - `AshAi.Evaluate.Judgments` (or `:map` whose fields are all answer types) asks one
       question per field in a single request. Each field's `description` is that
       question's instructions.
+    - `{:array, answer_type}` asks a runtime-sized list of questions, one per entry
+      returned by the `questions` option, and returns the answers in the same order.
 
     ## Example
 
@@ -39,8 +42,41 @@ if Code.ensure_loaded?(ReqLLM) do
           run evaluate("typesafe:jev-latest")
         end
 
+    ## Dynamic questions
+
+    The `questions` option supplies instructions (and optionally criteria) at
+    runtime. It is a function `fn input, context -> questions end`, or a static
+    value, shaped like the return type:
+
+    - single answer type: one question
+    - `Judgments` or map: a map of field name to question, overriding those fields'
+      descriptions; unnamed fields keep their description
+    - `{:array, answer_type}`: a list of questions, one per element
+
+    A question is either instructions (a string, or a map or list for structured
+    instructions), or a map with `:instructions` and `:criteria`. Criteria are the
+    options of a Choice (a list, or a map of option to description), the levels of a
+    Score, or the `true`/`false` descriptions of a Noul. Runtime criteria let the
+    options differ per question; a Choice with an `of` constraint requires them to be
+    a subset of its options, and a Choice without `of` returns string values.
+
+        action :rerank, {:array, AshAi.Evaluate.Score} do
+          argument :query, :string, allow_nil?: false
+          argument :candidates, {:array, :string}, allow_nil?: false
+          constraints items: [levels: ["Irrelevant", "Partially relevant", "Answers the query"]]
+
+          run evaluate("typesafe:jev-latest",
+            questions: fn input, _ctx ->
+              input.arguments.candidates
+              |> Enum.with_index()
+              |> Enum.map(fn {_candidate, i} -> "How well does `candidates[\#{i}]` answer `query`?" end)
+            end
+          )
+        end
+
     ## Options
 
+    - `:questions` - Runtime questions, see above.
     - `:state` - Override the state. A string, map, or list, or a function
       `fn input, context -> state end` returning one.
     - `:req_llm` - Override the ReqLLM module (useful for testing with mocks).
@@ -63,10 +99,10 @@ if Code.ensure_loaded?(ReqLLM) do
 
       with {:ok, plan} <- plan(input.action),
            {:ok, state} <- build_state(input, opts, context),
-           {:ok, questions} <- questions(plan),
-           {:ok, response} <- req_llm.evaluate(model, state, questions, req_llm_opts),
-           {:ok, answers} <- extract_answers(response),
-           {:ok, result} <- collect(plan, answers),
+           {:ok, specs} <- resolve_questions(plan, opts, input, context),
+           {:ok, questions} <- build_questions(specs),
+           {:ok, answers} <- evaluate(req_llm, model, state, questions, req_llm_opts),
+           {:ok, result} <- collect(plan, specs, answers),
            {:ok, casted} <- cast_result(result, input.action) do
         {:ok, casted}
       else
@@ -84,32 +120,38 @@ if Code.ensure_loaded?(ReqLLM) do
     defp resolve_model_spec(model, _input, _context) when is_function(model, 0), do: model.()
     defp resolve_model_spec(model, _input, _context), do: model
 
-    # A plan is either a single answer keyed by the action name, or one answer per
-    # field of a map return type.
+    # A plan describes where questions come from and how answers map back onto the
+    # return type: a single answer, one answer per map field, or a list of answers.
     defp plan(%{returns: nil}) do
       {:error, "evaluate actions must declare a return type"}
+    end
+
+    defp plan(%{returns: {:array, item_type}, constraints: constraints} = action) do
+      if Answer.answer_type?(item_type) do
+        {:ok, {:list, Ash.Type.get_type(item_type), constraints[:items] || []}}
+      else
+        unsupported_return(action)
+      end
     end
 
     defp plan(%{returns: returns, constraints: constraints} = action) do
       cond do
         Answer.answer_type?(returns) ->
-          case action.description do
-            nil ->
-              {:error,
-               "action `#{action.name}` needs a `description`; it is sent to the model as the question's instructions"}
-
-            description ->
-              {:ok, {:single, action.name, description, Ash.Type.get_type(returns), constraints}}
-          end
+          {:ok,
+           {:single, action.name, Ash.Type.get_type(returns), constraints, action.description}}
 
         Ash.Type.NewType.subtype_of(returns) == Ash.Type.Map ->
           fields = Ash.Type.NewType.constraints(returns, constraints)[:fields] || []
           plan_fields(action, fields)
 
         true ->
-          {:error,
-           "evaluate actions must return an answer type (`AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`, `AshAi.Evaluate.Score`) or `AshAi.Evaluate.Judgments`, got: #{inspect(returns)}"}
+          unsupported_return(action)
       end
+    end
+
+    defp unsupported_return(action) do
+      {:error,
+       "evaluate actions must return an answer type (`AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`, `AshAi.Evaluate.Score`), an array of one, or `AshAi.Evaluate.Judgments`, got: #{inspect(action.returns)}"}
     end
 
     defp plan_fields(_action, []) do
@@ -117,44 +159,153 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     defp plan_fields(action, fields) do
-      fields
-      |> Enum.reduce_while({:ok, []}, fn {name, config}, {:ok, acc} ->
-        cond do
-          not Answer.answer_type?(config[:type]) ->
-            {:halt,
-             {:error,
-              "field `#{name}` of action `#{action.name}` is not an answer type; use `AshAi.Evaluate.Judgments` to derive answer types from plain field types"}}
-
-          is_nil(config[:description]) ->
-            {:halt,
-             {:error,
-              "field `#{name}` of action `#{action.name}` needs a `description`; it is sent to the model as the question's instructions"}}
-
-          true ->
-            {:cont,
-             {:ok,
-              [
-                {name, config[:description], Ash.Type.get_type(config[:type]),
-                 config[:constraints] || []}
-                | acc
-              ]}}
+      Enum.reduce_while(fields, {:ok, []}, fn {name, config}, {:ok, acc} ->
+        if Answer.answer_type?(config[:type]) do
+          {:cont,
+           {:ok,
+            [
+              {name, Ash.Type.get_type(config[:type]), config[:constraints] || [],
+               config[:description]}
+              | acc
+            ]}}
+        else
+          {:halt,
+           {:error,
+            "field `#{name}` of action `#{action.name}` is not an answer type; use `AshAi.Evaluate.Judgments` to derive answer types from plain field types"}}
         end
       end)
       |> case do
-        {:ok, questions} -> {:ok, {:fields, Enum.reverse(questions)}}
+        {:ok, fields} -> {:ok, {:fields, Enum.reverse(fields)}}
         {:error, error} -> {:error, error}
       end
     end
 
-    defp questions({:single, name, instructions, type, constraints}) do
-      {:ok, %{name => type.to_question(instructions, constraints)}}
+    # Question specs are `{id, type, constraints, instructions, criteria}`.
+    defp resolve_questions(plan, opts, input, context) do
+      given = resolve_option(opts[:questions], input, context)
+
+      case {plan, given} do
+        {{:single, name, type, constraints, description}, given} ->
+          with {:ok, {instructions, criteria}} <-
+                 question_spec(given, description, "action `#{name}`") do
+            {:ok, [{name, type, constraints, instructions, criteria}]}
+          end
+
+        {{:fields, fields}, given} when is_nil(given) or is_map(given) or is_list(given) ->
+          overrides = Map.new(given || [])
+          field_names = Enum.map(fields, &elem(&1, 0))
+
+          case Map.keys(overrides) -- field_names do
+            [] ->
+              Enum.reduce_while(fields, {:ok, []}, fn {name, type, constraints, description},
+                                                      {:ok, acc} ->
+                case question_spec(Map.get(overrides, name), description, "field `#{name}`") do
+                  {:ok, {instructions, criteria}} ->
+                    {:cont, {:ok, [{name, type, constraints, instructions, criteria} | acc]}}
+
+                  {:error, error} ->
+                    {:halt, {:error, error}}
+                end
+              end)
+              |> case do
+                {:ok, specs} -> {:ok, Enum.reverse(specs)}
+                {:error, error} -> {:error, error}
+              end
+
+            unknown ->
+              {:error,
+               "`questions` names fields that are not in the return type: #{inspect(unknown)}"}
+          end
+
+        {{:fields, _}, given} ->
+          {:error,
+           "`questions` for a map return type must be a map of field name to question, got: #{inspect(given)}"}
+
+        {{:list, _type, _constraints}, nil} ->
+          {:error,
+           "an array return type requires the `questions` option to supply one question per element"}
+
+        {{:list, type, constraints}, given} when is_list(given) ->
+          given
+          |> Enum.with_index()
+          |> Enum.reduce_while({:ok, []}, fn {question, index}, {:ok, acc} ->
+            case question_spec(question, nil, "question #{index}") do
+              {:ok, {instructions, criteria}} ->
+                {:cont, {:ok, [{index, type, constraints, instructions, criteria} | acc]}}
+
+              {:error, error} ->
+                {:halt, {:error, error}}
+            end
+          end)
+          |> case do
+            {:ok, specs} -> {:ok, Enum.reverse(specs)}
+            {:error, error} -> {:error, error}
+          end
+
+        {{:list, _, _}, given} ->
+          {:error, "`questions` for an array return type must be a list, got: #{inspect(given)}"}
+      end
     end
 
-    defp questions({:fields, fields}) do
-      {:ok,
-       Map.new(fields, fn {name, instructions, type, constraints} ->
-         {name, type.to_question(instructions, constraints)}
-       end)}
+    defp resolve_option(value, input, context) when is_function(value, 2),
+      do: value.(input, context)
+
+    defp resolve_option(value, input, _context) when is_function(value, 1), do: value.(input)
+    defp resolve_option(value, _input, _context) when is_function(value, 0), do: value.()
+    defp resolve_option(value, _input, _context), do: value
+
+    # A question is instructions, or a map with :instructions and optional :criteria.
+    defp question_spec(nil, nil, subject) do
+      {:error,
+       "#{subject} needs a `description` or an entry in `questions`; it is sent to the model as the question's instructions"}
+    end
+
+    defp question_spec(nil, description, _subject), do: {:ok, {description, nil}}
+
+    defp question_spec(%{instructions: instructions} = question, _default, _subject),
+      do: {:ok, {instructions, Map.get(question, :criteria)}}
+
+    defp question_spec(%{"instructions" => instructions} = question, _default, _subject),
+      do: {:ok, {instructions, Map.get(question, "criteria")}}
+
+    defp question_spec(question, _default, _subject) when is_list(question) do
+      if Keyword.keyword?(question) and Keyword.has_key?(question, :instructions) do
+        {:ok, {question[:instructions], question[:criteria]}}
+      else
+        {:ok, {question, nil}}
+      end
+    end
+
+    defp question_spec(instructions, _default, _subject)
+         when is_binary(instructions) or is_map(instructions),
+         do: {:ok, {instructions, nil}}
+
+    defp question_spec(other, _default, subject) do
+      {:error, "#{subject} has invalid question: #{inspect(other)}"}
+    end
+
+    defp build_questions(specs) do
+      Enum.reduce_while(specs, {:ok, %{}}, fn {id, type, constraints, instructions, criteria},
+                                              {:ok, acc} ->
+        case type.to_question(instructions, criteria, constraints) do
+          {:ok, question} -> {:cont, {:ok, Map.put(acc, question_id(id), question)}}
+          {:error, error} -> {:halt, {:error, "question `#{id}`: #{error}"}}
+        end
+      end)
+    end
+
+    defp question_id(id) when is_integer(id), do: "q#{id}"
+    defp question_id(id), do: to_string(id)
+
+    # TypeSafe rejects an empty question map; an empty list of questions has an
+    # empty answer.
+    defp evaluate(_req_llm, _model, _state, questions, _opts) when map_size(questions) == 0,
+      do: {:ok, %{}}
+
+    defp evaluate(req_llm, model, state, questions, opts) do
+      with {:ok, response} <- req_llm.evaluate(model, state, questions, opts) do
+        extract_answers(response)
+      end
     end
 
     defp extract_answers(%{object: answers}) when is_map(answers), do: {:ok, answers}
@@ -163,30 +314,36 @@ if Code.ensure_loaded?(ReqLLM) do
     defp extract_answers(other),
       do: {:error, "unexpected evaluation response: #{inspect(other)}"}
 
-    defp collect({:single, name, _instructions, type, constraints}, answers) do
-      fetch_answer(answers, name, type, constraints)
-    end
+    defp collect({:single, _, _, _, _}, [spec], answers), do: fetch_answer(spec, answers)
 
-    defp collect({:fields, fields}, answers) do
-      Enum.reduce_while(fields, {:ok, %{}}, fn {name, _instructions, type, constraints},
-                                               {:ok, acc} ->
-        case fetch_answer(answers, name, type, constraints) do
+    defp collect({:fields, _}, specs, answers) do
+      Enum.reduce_while(specs, {:ok, %{}}, fn {name, _, _, _, _} = spec, {:ok, acc} ->
+        case fetch_answer(spec, answers) do
           {:ok, answer} -> {:cont, {:ok, Map.put(acc, name, answer)}}
           {:error, error} -> {:halt, {:error, error}}
         end
       end)
     end
 
-    defp fetch_answer(answers, name, type, constraints) do
-      case Map.fetch(answers, to_string(name)) do
-        {:ok, answer} ->
-          type.from_answer(answer, constraints)
+    defp collect({:list, _, _}, specs, answers) do
+      Enum.reduce_while(specs, {:ok, []}, fn spec, {:ok, acc} ->
+        case fetch_answer(spec, answers) do
+          {:ok, answer} -> {:cont, {:ok, [answer | acc]}}
+          {:error, error} -> {:halt, {:error, error}}
+        end
+      end)
+      |> case do
+        {:ok, list} -> {:ok, Enum.reverse(list)}
+        {:error, error} -> {:error, error}
+      end
+    end
 
-        :error ->
-          case Map.fetch(answers, name) do
-            {:ok, answer} -> type.from_answer(answer, constraints)
-            :error -> {:error, "no answer returned for question `#{name}`"}
-          end
+    defp fetch_answer({id, type, constraints, _, _}, answers) do
+      key = question_id(id)
+
+      case Map.fetch(answers, key) do
+        {:ok, answer} -> type.from_answer(answer, constraints)
+        :error -> {:error, "no answer returned for question `#{key}`"}
       end
     end
 
@@ -207,10 +364,7 @@ if Code.ensure_loaded?(ReqLLM) do
     defp build_state(input, opts, context) do
       case Keyword.get(opts, :state) do
         nil -> default_state(input)
-        fun when is_function(fun, 2) -> validate_state(fun.(input, context))
-        fun when is_function(fun, 1) -> validate_state(fun.(input))
-        fun when is_function(fun, 0) -> validate_state(fun.())
-        state -> validate_state(state)
+        state -> validate_state(resolve_option(state, input, context))
       end
     end
 

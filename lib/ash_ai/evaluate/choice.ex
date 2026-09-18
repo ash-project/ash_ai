@@ -6,13 +6,19 @@ defmodule AshAi.Evaluate.Choice do
   @moduledoc """
   An evaluation answer selecting one option from a defined set.
 
-  The `of` constraint names the type that defines the options: an
-  `Ash.Type.Enum`, or `:atom` with a `one_of` constraint. Enum value
-  descriptions become the criteria sent to the model.
+  The options come from one of two places:
+
+  - the `of` constraint: an `Ash.Type.Enum`, or `:atom` with a `one_of`
+    constraint. `value` is cast to that type and enum value descriptions become
+    the criteria sent to the model.
+  - criteria supplied per question through the `questions` option of
+    `AshAi.Actions.Evaluate`. Without `of`, `value` is a string. With `of`, the
+    runtime criteria must be a subset of its options, which is how options can
+    depend on earlier answers (for example, the children of a taxonomy node).
 
   ## Fields
 
-  - `value` - the selected option, cast to the `of` type
+  - `value` - the selected option
   - `probabilities` - every option mapped to its probability
   - `confidence` - how concentrated the distribution is, from 0 to 1
 
@@ -39,8 +45,8 @@ defmodule AshAi.Evaluate.Choice do
     constraints: [
       of: [
         type: :any,
-        required: true,
-        doc: "An `Ash.Type.Enum` module, or `:atom` used with a `one_of` constraint."
+        doc:
+          "An `Ash.Type.Enum` module, or `:atom` used with a `one_of` constraint. Omit to supply criteria per question; `value` is then a string."
       ],
       constraints: [
         type: :keyword_list,
@@ -56,8 +62,7 @@ defmodule AshAi.Evaluate.Choice do
 
   @impl AshAi.Evaluate.Answer
   def answer_fields(constraints) do
-    with {:ok, type, inner} <- resolve_of(constraints),
-         {:ok, _options} <- options(type, inner) do
+    with {:ok, type, inner} <- value_type(constraints) do
       {:ok,
        [
          value: [type: type, constraints: inner, allow_nil?: false],
@@ -68,18 +73,22 @@ defmodule AshAi.Evaluate.Choice do
   end
 
   @impl AshAi.Evaluate.Answer
-  def to_question(instructions, constraints) do
-    {:ok, type, inner} = resolve_of(constraints)
-    {:ok, options} = options(type, inner)
-    overrides = Map.new(constraints[:descriptions] || [], fn {k, v} -> {to_string(k), v} end)
+  def to_question(instructions, nil, constraints) do
+    case constraints[:of] do
+      nil ->
+        {:error,
+         "#{inspect(__MODULE__)} without an `of` constraint needs criteria supplied per question through the `questions` option"}
 
-    criteria =
-      Map.new(options, fn option ->
-        key = to_string(option)
-        {key, Map.get(overrides, key) || default_description(type, option)}
-      end)
+      _ ->
+        options = options(constraints)
+        {:ok, question(instructions, criteria_for(options, constraints))}
+    end
+  end
 
-    %{type: :choice, instructions: instructions, criteria: criteria}
+  def to_question(instructions, criteria, constraints) do
+    with {:ok, criteria} <- normalize_criteria(criteria, constraints) do
+      {:ok, question(instructions, criteria)}
+    end
   end
 
   @impl AshAi.Evaluate.Answer
@@ -88,10 +97,8 @@ defmodule AshAi.Evaluate.Choice do
         constraints
       )
       when is_map(probabilities) do
-    {:ok, type, inner} = resolve_of(constraints)
-
-    with {:ok, value} <- cast_option(type, choice, inner),
-         {:ok, probabilities} <- cast_probabilities(type, probabilities, inner) do
+    with {:ok, value} <- cast_option(choice, constraints),
+         {:ok, probabilities} <- cast_probabilities(probabilities, constraints) do
       {:ok, %{value: value, probabilities: probabilities, confidence: confidence}}
     end
   end
@@ -100,21 +107,28 @@ defmodule AshAi.Evaluate.Choice do
     {:error, "expected a choice answer, got: #{inspect(other)}"}
   end
 
-  @doc "Returns the options defined by the `of` type."
-  @spec options(Keyword.t()) :: [term()]
-  def options(constraints) do
-    {:ok, type, inner} = resolve_of(constraints)
+  defp options(constraints) do
+    {:ok, type, inner} = value_type(constraints)
     {:ok, options} = options(type, inner)
     options
   end
 
-  defp resolve_of(constraints) do
+  defp question(instructions, criteria) do
+    %{type: :choice, instructions: instructions, criteria: criteria}
+  end
+
+  defp value_type(constraints) do
     case constraints[:of] do
       nil ->
-        {:error, "the `of` constraint is required"}
+        {:ok, Ash.Type.String, []}
 
       of ->
-        {:ok, Ash.Type.get_type(of), constraints[:constraints] || []}
+        type = Ash.Type.get_type(of)
+        inner = constraints[:constraints] || []
+
+        with {:ok, _options} <- options(type, inner) do
+          {:ok, type, inner}
+        end
     end
   end
 
@@ -132,22 +146,76 @@ defmodule AshAi.Evaluate.Choice do
     end
   end
 
+  # Criteria may be a list of options, or a map/keyword of option => description.
+  defp normalize_criteria(criteria, constraints) when is_list(criteria) do
+    if Keyword.keyword?(criteria) and criteria != [] do
+      normalize_criteria(Map.new(criteria), constraints)
+    else
+      normalize_criteria(Map.new(criteria, &{&1, nil}), constraints)
+    end
+  end
+
+  defp normalize_criteria(criteria, constraints) when is_map(criteria) do
+    cond do
+      map_size(criteria) == 0 ->
+        {:error, "choice criteria must not be empty"}
+
+      is_nil(constraints[:of]) ->
+        {:ok, criteria_for(Map.keys(criteria), constraints, criteria)}
+
+      true ->
+        criteria
+        |> Map.keys()
+        |> Enum.reduce_while({:ok, []}, fn option, {:ok, acc} ->
+          case cast_option(option, constraints) do
+            {:ok, value} -> {:cont, {:ok, [value | acc]}}
+            {:error, error} -> {:halt, {:error, error}}
+          end
+        end)
+        |> case do
+          {:ok, options} -> {:ok, criteria_for(Enum.reverse(options), constraints, criteria)}
+          {:error, error} -> {:error, error}
+        end
+    end
+  end
+
+  defp normalize_criteria(other, _constraints) do
+    {:error,
+     "choice criteria must be a list of options or a map of option => description, got: #{inspect(other)}"}
+  end
+
+  defp criteria_for(options, constraints, given \\ %{}) do
+    given = Map.new(given, fn {k, v} -> {to_string(k), v} end)
+    overrides = Map.new(constraints[:descriptions] || [], fn {k, v} -> {to_string(k), v} end)
+    {:ok, type, _inner} = value_type(constraints)
+
+    Map.new(options, fn option ->
+      key = to_string(option)
+      {key, Map.get(given, key) || Map.get(overrides, key) || default_description(type, option)}
+    end)
+  end
+
   defp default_description(type, option) do
     if Spark.implements_behaviour?(type, Ash.Type.Enum) do
       type.description(option)
     end
   end
 
-  defp cast_option(type, option, inner) do
+  defp cast_option(option, constraints) do
+    {:ok, type, inner} = value_type(constraints)
+
     case Ash.Type.cast_input(type, option, inner) do
-      {:ok, value} -> {:ok, value}
-      _ -> {:error, "model returned an option outside the defined set: #{inspect(option)}"}
+      {:ok, value} when not is_nil(value) ->
+        {:ok, value}
+
+      _ ->
+        {:error, "option is outside the set defined by `of`: #{inspect(option)}"}
     end
   end
 
-  defp cast_probabilities(type, probabilities, inner) do
+  defp cast_probabilities(probabilities, constraints) do
     Enum.reduce_while(probabilities, {:ok, %{}}, fn {option, probability}, {:ok, acc} ->
-      case cast_option(type, option, inner) do
+      case cast_option(option, constraints) do
         {:ok, value} -> {:cont, {:ok, Map.put(acc, value, probability)}}
         {:error, error} -> {:halt, {:error, error}}
       end

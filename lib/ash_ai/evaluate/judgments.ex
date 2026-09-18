@@ -61,9 +61,7 @@ defmodule AshAi.Evaluate.Judgments do
     end
   end
 
-  @doc "Expands a single field definition into its answer type."
-  @spec expand_field({atom(), Keyword.t()}) :: {atom(), Keyword.t()}
-  def expand_field({name, config}) do
+  defp expand_field({name, config}) do
     type = Ash.Type.get_type(config[:type])
     inner = config[:constraints] || []
 

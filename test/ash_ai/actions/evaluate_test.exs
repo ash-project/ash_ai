@@ -16,6 +16,11 @@ defmodule AshAi.Actions.EvaluateTest do
       ]
   end
 
+  defmodule Taxonomy do
+    use Ash.Type.Enum,
+      values: [animals: "Living creatures", plants: "Flora", dogs: "Canines", cats: "Felines"]
+  end
+
   defmodule FakeReqLLM do
     @moduledoc "Fake ReqLLM that captures the request and answers every question"
 
@@ -119,6 +124,97 @@ defmodule AshAi.Actions.EvaluateTest do
             )
       end
 
+      action :rerank, {:array, AshAi.Evaluate.Score} do
+        argument(:query, :string, allow_nil?: false)
+        argument(:candidates, {:array, :string}, allow_nil?: false)
+        constraints(items: [levels: ["Irrelevant", "Partially relevant", "Answers the query"]])
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn input, _ctx ->
+                input.arguments.candidates
+                |> Enum.with_index()
+                |> Enum.map(fn {_candidate, i} ->
+                  "How well does `candidates[#{i}]` answer `query`?"
+                end)
+              end
+            )
+      end
+
+      action :classify_children, {:array, AshAi.Evaluate.Choice} do
+        argument(:documents, {:array, :string}, allow_nil?: false)
+        argument(:parents, {:array, :atom}, allow_nil?: false)
+        constraints(items: [of: Taxonomy])
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn input, _ctx ->
+                input.arguments.parents
+                |> Enum.with_index()
+                |> Enum.map(fn {parent, i} ->
+                  children = if parent == :animals, do: [:dogs, :cats], else: [:plants]
+                  %{instructions: "Classify `documents[#{i}]`", criteria: children}
+                end)
+              end
+            )
+      end
+
+      action :free_choice, {:array, AshAi.Evaluate.Choice} do
+        argument(:texts, {:array, :string}, allow_nil?: false)
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn input, _ctx ->
+                Enum.map(input.arguments.texts, fn _ ->
+                  %{instructions: "Pick", criteria: %{"alpha" => "First", "beta" => nil}}
+                end)
+              end
+            )
+      end
+
+      action :triage_overrides, AshAi.Evaluate.Judgments do
+        argument(:ticket, :string, allow_nil?: false)
+
+        constraints fields: [
+                      department: [type: Department, description: "Which team?"],
+                      urgent: [type: :boolean, description: "Urgent?"]
+                    ]
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn _input, _ctx ->
+                %{urgent: %{instructions: ["Is it urgent?", %{urgent: "needs action today"}]}}
+              end
+            )
+      end
+
+      action :bad_override, AshAi.Evaluate.Judgments do
+        argument(:ticket, :string, allow_nil?: false)
+        constraints fields: [urgent: [type: :boolean, description: "Urgent?"]]
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn _input, _ctx -> %{nope: "?"} end
+            )
+      end
+
+      action :bad_subset, {:array, AshAi.Evaluate.Choice} do
+        argument(:documents, {:array, :string}, allow_nil?: false)
+        constraints(items: [of: Taxonomy])
+
+        run evaluate("typesafe:jev-latest",
+              req_llm: FakeReqLLM,
+              questions: fn _input, _ctx -> [%{instructions: "?", criteria: [:rocks]}] end
+            )
+      end
+
+      action :no_questions, {:array, AshAi.Evaluate.Choice} do
+        argument(:documents, {:array, :string}, allow_nil?: false)
+        constraints(items: [of: Taxonomy])
+
+        run evaluate("typesafe:jev-latest", req_llm: FakeReqLLM)
+      end
+
       action :missing_answer, AshAi.Evaluate.Noul do
         description("Anything?")
         argument(:ticket, :string)
@@ -169,7 +265,7 @@ defmodule AshAi.Actions.EvaluateTest do
       assert opts == [receive_timeout: 5]
 
       assert questions == %{
-               department: %{
+               "department" => %{
                  type: :choice,
                  instructions: "Which team should handle `ticket`?",
                  criteria: %{
@@ -178,8 +274,8 @@ defmodule AshAi.Actions.EvaluateTest do
                    "sales" => "Pricing, upgrades, new accounts"
                  }
                },
-               urgent: %{type: :boolean, instructions: "Does `ticket` convey urgency?"},
-               frustration: %{
+               "urgent" => %{type: :boolean, instructions: "Does `ticket` convey urgency?"},
+               "frustration" => %{
                  type: :score,
                  instructions: "How frustrated is the customer in `ticket`?",
                  criteria: ["Calm", "Frustrated but civil", "Very angry"]
@@ -205,7 +301,7 @@ defmodule AshAi.Actions.EvaluateTest do
 
       assert_receive {:evaluate_called, "typesafe:jev-1.13.0", %{ticket: "refund please"},
                       %{
-                        department: %{
+                        "department" => %{
                           type: :choice,
                           instructions: "Which team should handle `ticket`?"
                         }
@@ -222,8 +318,102 @@ defmodule AshAi.Actions.EvaluateTest do
 
       assert_receive {:evaluate_called, _, "HELP NOW", _, _}
       assert %Noul{probability: 0.92} = result
-      assert Noul.yes?(result)
-      refute Noul.yes?(result, 0.95)
+    end
+  end
+
+  describe "dynamic questions" do
+    test "an array return type asks one question per element and returns answers in order" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:rerank, %{
+          query: "refund policy",
+          candidates: ["a", "b", "c"]
+        })
+        |> Ash.run_action!()
+
+      assert_receive {:evaluate_called, _, state, questions, _}
+      assert state == %{query: "refund policy", candidates: ["a", "b", "c"]}
+
+      assert Map.keys(questions) |> Enum.sort() == ["q0", "q1", "q2"]
+      assert questions["q1"].instructions == "How well does `candidates[1]` answer `query`?"
+      assert questions["q1"].criteria == ["Irrelevant", "Partially relevant", "Answers the query"]
+
+      assert [%Score{}, %Score{}, %Score{}] = result
+      assert Enum.all?(result, &(&1.level == "Answers the query"))
+    end
+
+    test "per-question criteria restrict an enum-backed choice to a subset" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:classify_children, %{
+          documents: ["woof", "fern"],
+          parents: [:animals, :plants]
+        })
+        |> Ash.run_action!()
+
+      assert_receive {:evaluate_called, _, _, questions, _}
+      assert questions["q0"].criteria == %{"dogs" => "Canines", "cats" => "Felines"}
+      assert questions["q1"].criteria == %{"plants" => "Flora"}
+
+      assert [%Choice{value: :cats}, %Choice{value: :plants}] = result
+      assert Enum.at(result, 0).probabilities == %{cats: 0.9, dogs: 0.05}
+    end
+
+    test "a choice without `of` returns string values from runtime criteria" do
+      [answer] =
+        TestResource
+        |> Ash.ActionInput.for_action(:free_choice, %{texts: ["x"]})
+        |> Ash.run_action!()
+
+      assert_receive {:evaluate_called, _, _, %{"q0" => %{criteria: criteria}}, _}
+      assert criteria == %{"alpha" => "First", "beta" => nil}
+      assert %Choice{value: "alpha", probabilities: %{"alpha" => 0.9, "beta" => 0.05}} = answer
+    end
+
+    test "an empty question list never calls the model" do
+      assert [] =
+               TestResource
+               |> Ash.ActionInput.for_action(:rerank, %{query: "q", candidates: []})
+               |> Ash.run_action!()
+
+      refute_receive {:evaluate_called, _, _, _, _}
+    end
+
+    test "judgments questions override only the named fields and allow structured instructions" do
+      TestResource
+      |> Ash.ActionInput.for_action(:triage_overrides, %{ticket: "x"})
+      |> Ash.run_action!()
+
+      assert_receive {:evaluate_called, _, _, questions, _}
+      assert questions["department"].instructions == "Which team?"
+
+      assert questions["urgent"].instructions == [
+               "Is it urgent?",
+               %{urgent: "needs action today"}
+             ]
+    end
+
+    test "questions naming unknown fields, criteria outside `of`, and missing questions are errors" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:bad_override, %{ticket: "x"})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "not in the return type: [:nope]"
+
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:bad_subset, %{documents: ["x"]})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "outside the set defined by `of`"
+
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:no_questions, %{documents: ["x"]})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "requires the `questions` option"
     end
   end
 

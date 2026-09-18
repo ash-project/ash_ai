@@ -11,7 +11,7 @@ defmodule AshAi.Evaluate.Noul do
   not mean "medium". A noul has no separate confidence.
 
   No threshold is applied here. Decide what counts as a yes in your code, where
-  the threshold can depend on the stakes. `yes?/2` is a convenience for that.
+  the threshold can depend on the stakes.
 
   ## Fields
 
@@ -27,7 +27,7 @@ defmodule AshAi.Evaluate.Noul do
       end
 
       urgent = Ash.run_action!(input)
-      if AshAi.Evaluate.Noul.yes?(urgent, 0.8), do: page_on_call()
+      if urgent.probability >= 0.8, do: page_on_call()
   """
 
   defstruct [:probability]
@@ -47,26 +47,24 @@ defmodule AshAi.Evaluate.Noul do
       ]
     ]
 
-  @doc "Returns true if the probability is at or above `threshold`, which defaults to 0.5."
-  @spec yes?(t(), float()) :: boolean()
-  def yes?(%__MODULE__{probability: probability}, threshold \\ 0.5),
-    do: probability >= threshold
-
   @impl AshAi.Evaluate.Answer
   def answer_fields(_constraints) do
     {:ok, [probability: [type: :float, allow_nil?: false]]}
   end
 
   @impl AshAi.Evaluate.Answer
-  def to_question(instructions, constraints) do
+  def to_question(instructions, criteria, constraints) do
     question = %{type: :boolean, instructions: instructions}
 
-    case constraints[:criteria] do
+    case criteria || constraints[:criteria] do
       criteria when criteria in [nil, []] ->
-        question
+        {:ok, question}
 
-      criteria ->
-        Map.put(question, :criteria, Map.new(criteria, fn {k, v} -> {to_string(k), v} end))
+      criteria when is_list(criteria) or is_map(criteria) ->
+        {:ok, Map.put(question, :criteria, Map.new(criteria, fn {k, v} -> {to_string(k), v} end))}
+
+      other ->
+        {:error, "noul criteria must describe `true` and `false`, got: #{inspect(other)}"}
     end
   end
 

@@ -21,8 +21,22 @@ defmodule AshAi.Evaluate.Answer do
   - `AshAi.Evaluate.Score` - a position along ordered, described levels
 
   Use `AshAi.Evaluate.Judgments` to ask several questions about the same state
-  in one request.
+  in one request, or a `{:array, answer_type}` return with the `questions`
+  option of `AshAi.Actions.Evaluate` for a runtime-sized set of questions.
+
+  ## Criteria
+
+  Criteria define the possible answers: the options of a Choice, the levels of a
+  Score, or what yes and no mean for a Noul. They can be fixed in the type's
+  constraints, or supplied per question at runtime through the `questions`
+  option, which is how the options of one question can differ from the next.
   """
+
+  @typedoc """
+  Instructions for a question. TypeSafe accepts a string, or JSON structure
+  (a map or list) carrying definitions, contrasts, or examples.
+  """
+  @type instructions :: String.t() | map() | list()
 
   @doc """
   Returns the struct fields for the answer, derived from the custom constraints.
@@ -31,8 +45,12 @@ defmodule AshAi.Evaluate.Answer do
 
   @doc """
   Builds the question sent to the evaluation model.
+
+  `criteria` is `nil` when the question carries no runtime criteria, in which
+  case they come from the constraints.
   """
-  @callback to_question(instructions :: term(), constraints :: Keyword.t()) :: map()
+  @callback to_question(instructions(), criteria :: term() | nil, constraints :: Keyword.t()) ::
+              {:ok, map()} | {:error, term()}
 
   @doc """
   Converts the raw answer returned by the model into a map castable to the answer struct.

@@ -430,7 +430,7 @@ The return type declares the questions and keeps the full answer:
   question and returns `value`, `probabilities`, and `confidence`. Enum value descriptions
   become the criteria.
 - `AshAi.Evaluate.Noul` asks a yes/no question and returns only `probability`. Threshold in
-  your code (`AshAi.Evaluate.Noul.yes?(answer, 0.8)`); the threshold depends on the stakes.
+  your code; the right threshold depends on the stakes.
 - `AshAi.Evaluate.Score` with `levels: [...]` returns `value`, `level`, `probabilities`, and `confidence`.
 - `AshAi.Evaluate.Judgments` asks several questions about the same state in one request. Fields
   typed as an enum or `:boolean` expand to Choice or Noul automatically.
@@ -461,6 +461,35 @@ Ask every question you might need in one Judgments action; extra questions are c
 in parallel. Do not derive a Noul from a `:float` field; use `AshAi.Evaluate.Noul` explicitly.
 Evaluation actions work as tools and MCP tools like any other generic action, and their
 results serialize with probabilities and confidence intact.
+
+### Dynamic questions
+
+When the number of questions or their options depend on the input, return
+`{:array, answer_type}` and supply the questions at runtime with the `questions:` option.
+Each entry is instructions (a string, or a map/list for structured instructions) or a map
+with `:instructions` and `:criteria`. Answers come back as a list in the same order.
+
+```elixir
+action :rerank, {:array, AshAi.Evaluate.Score} do
+  argument :query, :string, allow_nil?: false
+  argument :candidates, {:array, :string}, allow_nil?: false
+  constraints items: [levels: ["Irrelevant", "Partially relevant", "Answers the query"]]
+
+  run evaluate("typesafe:jev-latest",
+    questions: fn input, _ctx ->
+      input.arguments.candidates
+      |> Enum.with_index()
+      |> Enum.map(fn {_candidate, i} -> "How well does `candidates[#{i}]` answer `query`?" end)
+    end
+  )
+end
+```
+
+Runtime `criteria` let options differ per question. A Choice with `of:` requires them to be a
+subset of its options (hierarchical classification: offer only the children of the current
+node). A Choice without `of:` returns string values. For `Judgments`, `questions:` returns a
+map of field name to question and overrides only those fields' descriptions. For a single
+answer type it overrides the action description.
 
 ## Model Context Protocol (MCP) Server
 
