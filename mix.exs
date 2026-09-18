@@ -156,10 +156,10 @@ defmodule AshAi.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:ash, ash_version("~> 3.33 and >= 3.33.1")},
+      {:ash, ash_version("~> 3.33 and >= 3.33.6")},
       {:ash_json_api, "~> 1.4 and >= 1.4.27"},
       {:open_api_spex, "~> 3.0"},
-      {:req_llm, "~> 1.18", optional: true},
+      {:req_llm, "~> 1.24", optional: true},
       {:ash_postgres, "~> 2.5", optional: true},
       {:ash_oban, "~> 0.5", optional: true},
       {:ash_phoenix, "~> 2.0", optional: true},

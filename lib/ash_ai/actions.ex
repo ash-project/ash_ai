@@ -51,11 +51,45 @@ defmodule AshAi.Actions do
       )
   """
 
+  @doc """
+  Configures an evaluation action backed by `AshAi.Actions.Evaluate`.
+
+  Evaluation models such as TypeSafe's Jev answer typed questions about the
+  action's inputs instead of generating text. The return type must be an
+  answer type (`AshAi.Evaluate.Choice`, `AshAi.Evaluate.Noul`,
+  `AshAi.Evaluate.Score`) or `AshAi.Evaluate.Judgments`.
+
+      action :urgent, AshAi.Evaluate.Noul do
+        description "Does `ticket` convey urgency?"
+        argument :ticket, :string, allow_nil?: false
+
+        run evaluate("typesafe:jev-latest")
+      end
+  """
+  defmacro evaluate(model, opts \\ []) do
+    {model, lifted_model} =
+      Spark.CodeHelpers.lift_functions(model, :ash_ai_evaluate_model, __CALLER__)
+
+    {opts, lifted_functions} =
+      Spark.CodeHelpers.lift_functions(opts, :ash_ai_evaluate_opts, __CALLER__)
+
+    quote do
+      unquote(lifted_model)
+      unquote(lifted_functions)
+
+      {AshAi.Actions.Evaluate, Keyword.merge(unquote(opts), model: unquote(model))}
+    end
+  end
+
   defmacro prompt(model, opts \\ []) do
+    {model, lifted_model} =
+      Spark.CodeHelpers.lift_functions(model, :ash_ai_prompt_model, __CALLER__)
+
     {opts, lifted_functions} =
       Spark.CodeHelpers.lift_functions(opts, :ash_ai_prompt_opts, __CALLER__)
 
     quote do
+      unquote(lifted_model)
       unquote(lifted_functions)
 
       {AshAi.Actions.Prompt, Keyword.merge(unquote(opts), model: unquote(model))}

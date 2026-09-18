@@ -15,7 +15,7 @@ defmodule AshAi.Dependencies do
 
     Add it to your `mix.exs`:
 
-        {:req_llm, "~> 1.18"}
+        {:req_llm, "~> 1.24"}
 
     then run:
 

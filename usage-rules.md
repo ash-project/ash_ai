@@ -15,6 +15,7 @@ Ash AI is an extension for the Ash framework that integrates AI capabilities wit
 - **Vectorization**: Convert text attributes into vector embeddings for semantic search
 - **AI Tools**: Expose Ash actions as tools for LLMs
 - **Prompt-backed Actions**: Create actions where the implementation is handled by an LLM
+- **Evaluation Actions**: Ask typed questions of System One models such as TypeSafe's Jev
 - **MCP Server**: Expose your tools to Machine Context Protocol clients
 
 ## Vectorization
@@ -56,7 +57,21 @@ end
 
 ### Embedding Models
 
-Create a module that implements the `AshAi.EmbeddingModel` behaviour to generate embeddings:
+Prefer the built-in ReqLLM embedding model, which works with any provider ReqLLM supports:
+
+```elixir
+vectorize do
+  embedding_model {AshAi.EmbeddingModels.ReqLLM,
+    model: "openai:text-embedding-3-small",
+    dimensions: 1536}
+end
+```
+
+`:model` and `:dimensions` are required; `:req_opts` passes provider options and
+`:max_batch_size` (default 100) controls chunking. Provider keys come from the `:req_llm`
+config, the same as for tools and prompt-backed actions.
+
+To call a provider directly, implement the `AshAi.EmbeddingModel` behaviour yourself:
 
 ```elixir
 defmodule MyApp.OpenAiEmbeddingModel do
@@ -237,23 +252,57 @@ List-style read tools (no `get_by`) mirror `Ash.read/2`:
 - Actions supporting both offset and keyset pagination (including `defaults [:read]`) use keyset by default; a positive `offset` switches to offset pagination for that call.
 - `count`, `exists`, aggregate result types, and `get_by` tools return their value directly, never a page.
 
-### Using Tools in LangChain
+### Using Tools with an LLM (ReqLLM)
 
-Add your Ash AI tools to a LangChain chain:
+Ash AI is built on [ReqLLM](https://hexdocs.pm/req_llm). Models are referenced by
+spec string, `"provider:model"`, for example `"openai:gpt-4o"` or
+`"anthropic:claude-haiku-4-5"`. Provider keys are configured under `:req_llm`
+in `runtime.exs`:
 
 ```elixir
-chain =
-  %{
-    llm: LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o"}),
-    verbose: true
-  }
-  |> LangChain.Chains.LLMChain.new!()
-  |> AshAi.setup_ash_ai(otp_app: :my_app, tools: [:list, :of, :tools])
+config :req_llm, openai_api_key: System.fetch_env!("OPENAI_API_KEY")
+config :req_llm, anthropic_api_key: System.fetch_env!("ANTHROPIC_API_KEY")
 ```
+
+`AshAi.ToolLoop.run/2` runs the full model + tool loop and returns an
+`AshAi.ToolLoop.Result` with `messages`, `final_text`, `iterations`, `tool_calls_made`,
+and `usage`. `AshAi.ToolLoop.stream/2` does the same with streaming.
+
+```elixir
+messages = [ReqLLM.Context.user("List my recent posts")]
+
+{:ok, %AshAi.ToolLoop.Result{final_text: text}} =
+  AshAi.ToolLoop.run(messages,
+    model: "openai:gpt-4o",
+    otp_app: :my_app,          # discover tools from all domains in the app
+    tools: [:read_posts],      # or `true` for every exposed tool
+    actor: current_user,
+    tenant: tenant,
+    max_iterations: 10,
+    on_tool_start: fn %AshAi.ToolStartEvent{} = event -> IO.inspect(event.tool_name) end,
+    on_tool_end: fn %AshAi.ToolEndEvent{} = event -> IO.inspect(event.result) end
+  )
+```
+
+Options to know:
+
+- `otp_app:` or `actions: [{Resource, [:action]}]` decides where tools are discovered from.
+- `tools:` is `true`, `false`, or a list of tool names.
+- `extra_tools:` adds arbitrary `ReqLLM.Tool`s alongside Ash tools.
+- `req_llm_opts:` passes provider options through (temperature, reasoning, and so on).
+- `req_llm:` swaps in a module implementing the ReqLLM functions, for tests.
+- `max_iterations:` defaults to 10 for the tool loop and `:infinity` for prompt actions.
+- `strict:` (default `true`) emits OpenAI strict tool schemas; set `false` for providers that reject them.
+
+To integrate with your own loop instead, `AshAi.build_tools_and_registry/1` returns
+ReqLLM tools plus the execution callbacks. `AshAi.iex_chat/1` starts an interactive chat
+in IEx for trying tools out.
 
 ## Structured Outputs (Prompt-Backed Actions)
 
-Create actions that use LLMs for their implementation:
+Create actions whose implementation is an LLM call. The action's return type becomes the
+JSON schema for structured output, and the default prompt is derived from the action
+description and arguments. Requires the optional `req_llm` dependency.
 
 ```elixir
 action :analyze_sentiment, :atom do
@@ -268,9 +317,8 @@ action :analyze_sentiment, :atom do
     description "The text for analysis"
   end
 
-  run prompt(
-    LangChain.ChatModels.ChatOpenAI.new!(%{model: "gpt-4o"}),
-    # Allow the model to use tools
+  run prompt("openai:gpt-4o",
+    # Allow the model to use all exposed tools while answering
     tools: true,
     # Or restrict to specific tools
     # tools: [:list, :of, :tool, :names],
@@ -282,10 +330,11 @@ end
 
 ### Structured Outputs with Custom Types
 
-The action's return type provides the JSON schema automatically. For complex structured outputs, you can use any Ash type, including `Ash.TypedStruct`:
+Any Ash type works as the return type, including `Ash.TypedStruct`, embedded resources,
+and maps with `fields` constraints. Unconstrained `:map` returns use a permissive object
+schema.
 
 ```elixir
-# Example using Ash.TypedStruct
 defmodule JobListing do
   use Ash.TypedStruct
 
@@ -293,190 +342,125 @@ defmodule JobListing do
     field :title, :string, allow_nil?: false
     field :company, :string, allow_nil?: false
     field :location, :string
-    field :salary_range, :string
     field :requirements, {:array, :string}
   end
 end
 
-# Use it as the return type for your action
 action :parse_raw, JobListing do
   argument :raw_content, :string, allow_nil?: false
 
-  run prompt(
-    fn _input, _context ->
-      LangChain.ChatModels.ChatOpenAI.new!(%{
-        model: "gpt-4o-mini",
-        api_key: System.get_env("OPENAI_API_KEY"),
-        temperature: 0.1
-      })
-    end,
-    prompt: """
-    Parse this job listing into structured data following the exact schema.
-    Extract all available information and return as JSON:
-
-    <%= @input.arguments.raw_content %>
-    """,
+  run prompt("openai:gpt-4o-mini",
+    prompt: "Parse this job listing into structured data: <%= @input.arguments.raw_content %>",
     tools: false
   )
 end
 ```
 
-### Dynamic LLM Configuration
+### Dynamic Model Configuration
 
-For runtime configuration (like environment variables), use a function to define the LLM:
+The model can be a function of the input and context, for per-tenant or per-request models:
 
 ```elixir
-action :analyze_sentiment, :atom do
-  argument :text, :string, allow_nil?: false
-
-  run prompt(
-    fn _input, _context ->
-      LangChain.ChatModels.ChatOpenAI.new!(%{
-        model: "gpt-4o",
-        # this can also be configured in application config, see langchain docs for more.
-        api_key: System.get_env("OPENAI_API_KEY"),
-        endpoint: System.get_env("OPENAI_ENDPOINT")
-      })
-    end,
-    tools: false
-  )
-end
+run prompt(
+  fn input, _context -> input.arguments.model || "openai:gpt-4o-mini" end,
+  tools: false
+)
 ```
 
-The function receives:
-1. `input` - The action input
-2. `context` - The execution context
+Provider options such as temperature go through `req_llm_opts:`:
+
+```elixir
+run prompt("openai:gpt-4o", req_llm_opts: [temperature: 0.1], tools: false)
+```
 
 ### Prompt Format Options
 
-The `prompt` option supports multiple formats for maximum flexibility:
+The `prompt` option accepts:
 
-#### 1. String (EEx Template)
-Simple string templates with access to `@input` and `@context`:
+1. **String (EEx template)** with `@input` and `@context`:
+   `prompt: "Analyze: <%= @input.arguments.text %>"`
+2. **System/user tuple**, both templated:
+   `prompt: {"You are a sentiment analyzer", "Analyze: <%= @input.arguments.text %>"}`
+3. **`ReqLLM.Context`**, the canonical form:
 
-```elixir
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  prompt: "Analyze the sentiment of: <%= @input.arguments.text %>"
-)
-```
+   ```elixir
+   import ReqLLM.Context
 
-#### 2. System/User Tuple
-Separate system and user messages (both support EEx templates):
+   prompt: fn input, _ctx ->
+     ReqLLM.Context.new([
+       system("You are an OCR expert"),
+       user([
+         ReqLLM.Message.ContentPart.text("Extract the text from this image"),
+         ReqLLM.Message.ContentPart.image_url(input.arguments.image_url)
+       ])
+     ])
+   end
+   ```
 
-```elixir
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  prompt: {"You are a sentiment analyzer", "Analyze: <%= @input.arguments.text %>"}
-)
-```
+4. **List of messages**: `ReqLLM.Message` structs or loose `%{role: "user", content: "..."}` maps.
+   String content in statically configured lists is EEx-templated.
+5. **Function** `fn input, context -> ... end` returning any of the above. Content returned
+   from a function is used verbatim and is *not* EEx-evaluated, so user-supplied text is
+   never compiled as a template.
 
-#### 3. LangChain Messages List
-For complex multi-turn conversations or image analysis:
+Other prompt action options: `extra_tools:`, `max_iterations:`, `verbose?: true` for tool
+loop debug logging, `req_llm:` to inject a fake module in tests, and `transform_flow:` to
+customize the `AshAi.Actions.Prompt.FlowState` before the request.
 
-```elixir
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  prompt: [
-    Message.new_system!("You are an expert assistant"),
-    Message.new_user!("Hello, how can you help me?"),
-    Message.new_assistant!("I can help with various tasks"),
-    Message.new_user!("Great! Please analyze this data")
-  ]
-)
-```
-
-For image analysis with templates:
-
-```elixir
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  prompt: [
-    Message.new_system!("You are an expert at image analysis"),
-    Message.new_user!([
-      PromptTemplate.from_template!("Extra context: <%= @input.arguments.context %>"),
-      ContentPart.image!("<%= @input.arguments.image_data %>", media: :jpg, detail: "low")
-    ])
-  ]
-)
-```
-
-#### 4. Dynamic Function
-Return any of the above formats dynamically based on input:
-
-```elixir
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  prompt: fn input, context ->
-    base = [Message.new_system!("You are helpful")]
-
-    history = input.arguments.conversation_history
-    |> Enum.map(fn %{"role" => role, "content" => content} ->
-      case role do
-        "user" -> Message.new_user!(content)
-        "assistant" -> Message.new_assistant!(content)
-      end
-    end)
-
-    base ++ history
-  end
-)
-```
-
-#### Template Processing
-
-- **String prompts**: Processed as EEx templates with `@input` and `@context` variables
-- **Messages with PromptTemplate**: Processed using LangChain's `apply_prompt_templates`
-- **Functions**: Can return any supported format for dynamic generation
-
-If no custom prompt is provided, a default template is used that includes the action name, description, and argument details.
-
-### Adapters
-
-Adapters control how the LLM is called to generate structured outputs. AshAi automatically selects the appropriate adapter based on your LLM, but you can override this with the `:adapter` option.
-
-#### Default Adapter Selection
-
-- **OpenAI API endpoints**: Uses `AshAi.Actions.Prompt.Adapter.StructuredOutput` (leverages OpenAI's structured output features)
-- **Non-OpenAI endpoints**: Uses `AshAi.Actions.Prompt.Adapter.RequestJson` (requests JSON in the prompt)
-- **Anthropic**: Uses `AshAi.Actions.Prompt.Adapter.CompletionTool` (uses tool calling for structured outputs)
-
-#### Custom Adapter Configuration
-
-You can specify a custom adapter or adapter options:
-
-```elixir
-# Use a specific adapter
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  adapter: AshAi.Actions.Prompt.Adapter.RequestJson,
-  tools: false
-)
-
-# Use an adapter with custom options
-run prompt(
-  ChatOpenAI.new!(%{model: "gpt-4o"}),
-  adapter: {AshAi.Actions.Prompt.Adapter.StructuredOutput, [some_option: :value]},
-  tools: false
-)
-```
-
-#### Available Adapters
-
-- **`StructuredOutput`**: Best for OpenAI models, uses native structured output capabilities
-- **`RequestJson`**: Works with any model, requests JSON format in the prompt
-- **`CompletionTool`**: Uses tool calling to generate structured outputs, good for models that support function calling
+Tool loop failures are returned as action errors rather than raised.
 
 ### Best Practices for Prompt-Backed Actions
 
-- Write clear, detailed descriptions for the action and its arguments
-- Use constraints when appropriate to restrict outputs
-- Choose the appropriate prompt format for your use case:
-  - Simple string templates for basic prompts
-  - System/user tuples for role-based interactions
-  - Message lists for complex conversations or multi-modal inputs
-  - Functions for dynamic prompt generation
-- Test thoroughly with different inputs to ensure reliable results
+- Write clear, detailed descriptions for the action and its arguments; they form the default prompt.
+- Use constraints (`one_of`, `fields`, `min`/`max`) to narrow outputs.
+- Keep prompts that include user input in a function, not a static EEx template.
+- Set `max_iterations` when `tools:` is enabled so a looping model cannot run forever.
+
+## Evaluation Actions (Jev and other System One models)
+
+Evaluation models such as TypeSafe's Jev do not generate text. They take a `state` and a map
+of typed questions and return one typed answer per question with probabilities and
+confidence. Use `evaluate/2` instead of `prompt/2` for these models; `prompt/2` will fail
+because the provider does not support object generation. Requires `req_llm >= 1.24` and
+`TYPESAFE_API_KEY`.
+
+The return type declares the questions and keeps the full answer:
+
+- `AshAi.Evaluate.Choice` with `of: SomeEnum` (or `:atom` with `one_of`) asks one choice
+  question and returns `value`, `probabilities`, and `confidence`. Enum value descriptions
+  become the criteria.
+- `AshAi.Evaluate.Noul` asks a yes/no question and returns only `probability`. Threshold in
+  your code (`AshAi.Evaluate.Noul.yes?(answer, 0.8)`); the threshold depends on the stakes.
+- `AshAi.Evaluate.Score` with `levels: [...]` returns `value`, `level`, `probabilities`, and `confidence`.
+- `AshAi.Evaluate.Judgments` asks several questions about the same state in one request. Fields
+  typed as an enum or `:boolean` expand to Choice or Noul automatically.
+
+The action arguments are sent as the state. The action description (single answer) or each
+field's `description` (Judgments) is the question's instructions. Reference arguments with
+backticked paths such as `` `ticket` ``.
+
+```elixir
+action :triage, AshAi.Evaluate.Judgments do
+  argument :ticket, :string, allow_nil?: false
+
+  constraints fields: [
+    department: [type: MyApp.Department, description: "Which team should handle `ticket`?"],
+    urgent: [type: :boolean, description: "Does `ticket` convey urgency?"],
+    frustration: [
+      type: AshAi.Evaluate.Score,
+      constraints: [levels: ["Calm", "Frustrated but civil", "Very angry"]],
+      description: "How frustrated is the customer in `ticket`?"
+    ]
+  ]
+
+  run evaluate("typesafe:jev-latest")
+end
+```
+
+Ask every question you might need in one Judgments action; extra questions are cheap and run
+in parallel. Do not derive a Noul from a `:float` field; use `AshAi.Evaluate.Noul` explicitly.
+Evaluation actions work as tools and MCP tools like any other generic action, and their
+results serialize with probabilities and confidence intact.
 
 ## Model Context Protocol (MCP) Server
 
@@ -530,5 +514,6 @@ end
 When testing AI components:
 - Mock embedding model responses for consistent test results
 - Test vector search with known embeddings
-- For prompt-backed actions, consider using deterministic test models
+- For prompt-backed and evaluation actions, pass `req_llm: MyApp.FakeReqLLM` to inject a module that implements `generate_object/4`, `stream_text/3`, or `evaluate/4` and returns canned results
+- Live LLM tests are tagged `:live_llm` and excluded by default
 - Verify tool access and permissions work as expected
