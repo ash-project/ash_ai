@@ -11,6 +11,29 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.1.0](https://github.com/ash-project/ash_ai/compare/v1.0.3...v1.1.0) (2026-09-18)
+
+
+
+
+### Features:
+
+* support `jev` style models by [@zachdaniel](https://github.com/zachdaniel)
+
+### Improvements:
+
+* add `AshAi.Actions.Result` type for extracting model metadata by [@zachdaniel](https://github.com/zachdaniel)
+
+* rework read results and inputs for proper pagination by [@zachdaniel](https://github.com/zachdaniel)
+
+### Bug Fixes:
+
+* make the aggregate result_type callable and reject unknown ones cleanly (#232) by Daniel Gollings [(#232)](https://github.com/ash-project/ash_ai/pull/232)
+
+* render Ash.Type.UtcDatetimeUsec and TimeUsec in tool schemas (#231) by Daniel Gollings [(#231)](https://github.com/ash-project/ash_ai/pull/231)
+
+* stop echoing the request body in the Invalid Request message (#234) by grempe [(#234)](https://github.com/ash-project/ash_ai/pull/234)
+
 ## [v1.0.3](https://github.com/ash-project/ash_ai/compare/v1.0.2...v1.0.3) (2026-09-08)
 
 
