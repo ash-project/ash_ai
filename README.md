@@ -36,10 +36,10 @@ Add `AshAi` to your list of dependencies:
 ```elixir
 def deps do
   [
-    {:ash_ai, "~> 0.2"},
-    # Optional: required for prompt-backed actions, `AshAi.ToolLoop`,
+    {:ash_ai, "~> 1.0"},
+    # Optional: required for prompt-backed and evaluation actions, `AshAi.ToolLoop`,
     # `mix ash_ai.gen.chat` and ReqLLM embeddings. Not needed for MCP only.
-    {:req_llm, "~> 1.18"}
+    {:req_llm, "~> 1.24"}
   ]
 end
 ```
@@ -478,6 +478,110 @@ config :req_llm, google_api_key: System.fetch_env!("GOOGLE_API_KEY")
 For AshAi-specific model notes:
 - [Google Gemini 2.5](/documentation/models/gemini.md)
 - [LangChain to ReqLLM Migration Guide](https://github.com/ash-project/ash_ai/blob/main/documentation/topics/langchain-to-reqllm-migration.md)
+
+## Evaluation actions
+
+Evaluation models such as TypeSafe's [Jev](https://docs.typesafe.ai) do not generate text.
+They take a `state` and a map of typed questions and return one typed answer per question,
+each with a probability distribution and confidence. `evaluate/2` maps an Ash action onto
+one such request: the action's arguments are the state, the return type defines the
+questions, and the result keeps the full answers rather than a collapsed value.
+
+```elixir
+defmodule MyApp.Department do
+  use Ash.Type.Enum,
+    values: [
+      billing: "Payments, invoicing, refunds",
+      technical: "Bugs, outages, integrations",
+      sales: "Pricing, upgrades, new accounts"
+    ]
+end
+
+action :triage, AshAi.Evaluate.Judgments do
+  argument :ticket, :string, allow_nil?: false
+
+  constraints fields: [
+    department: [type: MyApp.Department, description: "Which team should handle `ticket`?"],
+    urgent: [type: :boolean, description: "Does `ticket` convey urgency?"],
+    frustration: [
+      type: AshAi.Evaluate.Score,
+      constraints: [levels: ["Calm", "Frustrated but civil", "Very angry"]],
+      description: "How frustrated is the customer in `ticket`?"
+    ]
+  ]
+
+  run evaluate("typesafe:jev-latest")
+end
+```
+
+```elixir
+%{
+  department: %AshAi.Evaluate.Choice{value: :technical, confidence: 0.82, probabilities: %{technical: 0.85, billing: 0.08, sales: 0.07}},
+  urgent: %AshAi.Evaluate.Noul{probability: 0.92},
+  frustration: %AshAi.Evaluate.Score{value: 1.6, level: "Frustrated but civil", confidence: 0.78, probabilities: %{0 => 0.05, 1 => 0.3, 2 => 0.65}}
+}
+```
+
+The answer types are:
+
+- `AshAi.Evaluate.Choice` - one option from a set. `of:` names an `Ash.Type.Enum` (whose
+  value descriptions become the criteria) or `:atom` with `one_of`.
+- `AshAi.Evaluate.Noul` - a yes/no question, returning only the probability of yes.
+  Threshold it in your code; the right threshold depends on the stakes.
+- `AshAi.Evaluate.Score` - a position along ordered, described `levels:`.
+- `AshAi.Evaluate.Judgments` - several questions about the same state in one request.
+  Fields typed as an enum or `:boolean` expand to Choice or Noul automatically.
+
+Ask every question you might need in one action; extra questions are cheap and run in
+parallel. Evaluation actions work as tools and MCP tools like any other generic action.
+
+### Dynamic questions
+
+When the number of questions or their options depend on the input, return
+`{:array, answer_type}` and supply the questions at runtime:
+
+```elixir
+action :rerank, {:array, AshAi.Evaluate.Score} do
+  argument :query, :string, allow_nil?: false
+  argument :candidates, {:array, :string}, allow_nil?: false
+  constraints items: [levels: ["Irrelevant", "Partially relevant", "Answers the query"]]
+
+  run evaluate("typesafe:jev-latest",
+    questions: fn input, _ctx ->
+      input.arguments.candidates
+      |> Enum.with_index()
+      |> Enum.map(fn {_candidate, i} -> "How well does `candidates[#{i}]` answer `query`?" end)
+    end
+  )
+end
+```
+
+Each question may also carry its own `criteria`, so the options of a Choice can differ per
+question. See `AshAi.Actions.Evaluate` for the full set of options.
+
+### Model metadata
+
+Wrap the return type in `AshAi.Actions.Result` to also receive the model that answered and
+token usage. This works for prompt-backed actions too.
+
+```elixir
+action :triage, AshAi.Actions.Result do
+  argument :ticket, :string, allow_nil?: false
+
+  constraints of: AshAi.Evaluate.Judgments,
+              constraints: [fields: [urgent: [type: :boolean, description: "Does `ticket` convey urgency?"]]]
+
+  run evaluate("typesafe:jev-latest")
+end
+```
+
+### Setting up TypeSafe
+
+Set `TYPESAFE_API_KEY`, or configure it under `:req_llm` in `runtime.exs`:
+
+```elixir
+config :req_llm, typesafe_api_key: System.fetch_env!("TYPESAFE_API_KEY")
+```
 
 ## Vectorization
 
