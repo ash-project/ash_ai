@@ -8,7 +8,9 @@ defmodule AshAi.ToolLoopStreamingTest do
   alias AshAi.ToolLoop
   alias ReqLLM.{Context, StreamChunk}
 
-  defmodule ControlledReqLLM do
+  defmodule FakeReqLLM do
+    @moduledoc "The test releases each chunk and final metadata independently."
+
     def stream_text(model, messages, opts) do
       owner = Keyword.fetch!(opts, :owner)
       ref = Keyword.fetch!(opts, :ref)
@@ -51,7 +53,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     end
   end
 
-  test "delivers each content chunk while the producer and metadata are still pending" do
+  test "stream/2 emits content before the response and metadata finish" do
     {ref, consumer} = start_consumer()
     assert_receive {^ref, :started, ^consumer, handle, _}, 1_000
     assert_receive {^ref, :metadata_waiting, metadata}, 1_000
@@ -77,7 +79,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {^ref, :event, _}
   end
 
-  test "taking one content event halts the producer and closes pending metadata" do
+  test "stream/2 closes the response when the caller stops after one event" do
     {ref, consumer} = start_consumer(&Stream.take(&1, 1))
     assert_receive {^ref, :started, ^consumer, handle, _}, 1_000
     monitor = Process.monitor(handle)
@@ -93,7 +95,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {^ref, :event, _}
   end
 
-  test "a consumer exception closes the suspended upstream stream" do
+  test "stream/2 closes the response when the consumer raises" do
     {ref, consumer} =
       start_consumer(fn events ->
         Stream.map(events, fn _event -> raise "consumer failed" end)
@@ -111,7 +113,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {^ref, :upstream_closed, _}
   end
 
-  test "an upstream exception after partial content closes metadata and propagates once" do
+  test "stream/2 cleans up once and reraises when the provider fails after content" do
     {ref, consumer} = start_consumer()
     assert_receive {^ref, :started, ^consumer, handle, _}, 1_000
     monitor = Process.monitor(handle)
@@ -129,7 +131,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {^ref, :event, _}
   end
 
-  test "response assembly errors follow partial content without a successful result" do
+  test "stream/2 emits error and done events when response assembly fails after content" do
     {ref, consumer} = start_consumer()
     assert_receive {^ref, :started, ^consumer, handle, _}, 1_000
     assert_receive {^ref, :metadata_waiting, metadata}, 1_000
@@ -148,21 +150,8 @@ defmodule AshAi.ToolLoopStreamingTest do
     assert_receive {:DOWN, ^monitor, :process, ^handle, :normal}, 1_000
   end
 
-  test "streams across tool rounds with complete history, final usage, and one consumption" do
-    owner = self()
-
-    tool =
-      ReqLLM.Tool.new!(
-        name: "lookup",
-        description: "Look up a test value",
-        parameter_schema: [],
-        callback: fn _ ->
-          send(owner, {:tool_executed, self()})
-          {:ok, "found"}
-        end
-      )
-
-    {ref, consumer} = start_consumer(&Function.identity/1, extra_tools: [tool])
+  test "stream/2 preserves history and sums usage across incrementally consumed tool rounds" do
+    {ref, consumer} = start_consumer(&Function.identity/1, extra_tools: [lookup_tool()])
     assert_receive {^ref, :started, ^consumer, first_handle, initial}, 1_000
     assert_receive {^ref, :metadata_waiting, first_metadata}, 1_000
     first_monitor = Process.monitor(first_handle)
@@ -215,21 +204,8 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {:tool_executed, _}
   end
 
-  test "halting at a tool call does not execute the tool or request another model turn" do
-    owner = self()
-
-    tool =
-      ReqLLM.Tool.new!(
-        name: "lookup",
-        description: "Look up a test value",
-        parameter_schema: [],
-        callback: fn _ ->
-          send(owner, :unexpected_tool_execution)
-          {:ok, "found"}
-        end
-      )
-
-    {ref, consumer} = start_consumer(&Stream.take(&1, 1), extra_tools: [tool])
+  test "stream/2 does not run tools or start another turn after the caller halts" do
+    {ref, consumer} = start_consumer(&Stream.take(&1, 1), extra_tools: [lookup_tool()])
     assert_receive {^ref, :started, ^consumer, _handle, _}, 1_000
     assert_receive {^ref, :metadata_waiting, metadata}, 1_000
     assert_receive {^ref, :demand}, 1_000
@@ -238,7 +214,7 @@ defmodule AshAi.ToolLoopStreamingTest do
 
     assert_receive {^ref, :event, {:tool_call, %{id: "call_1"}}}, 1_000
     assert_receive {^ref, :finished}, 1_000
-    refute_receive :unexpected_tool_execution
+    refute_receive {:tool_executed, _}
     refute_receive {^ref, :started, _, _, _}
   end
 
@@ -262,7 +238,7 @@ defmodule AshAi.ToolLoopStreamingTest do
                [
                  model: %LLMDB.Model{provider: :openai, id: "stream-test"},
                  tools: false,
-                 req_llm: ControlledReqLLM,
+                 req_llm: FakeReqLLM,
                  req_llm_opts: [owner: owner, ref: ref]
                ],
                opts
@@ -281,5 +257,19 @@ defmodule AshAi.ToolLoopStreamingTest do
       )
 
     {ref, consumer}
+  end
+
+  defp lookup_tool do
+    owner = self()
+
+    ReqLLM.Tool.new!(
+      name: "lookup",
+      description: "Look up a test value",
+      parameter_schema: [],
+      callback: fn _arguments ->
+        send(owner, {:tool_executed, self()})
+        {:ok, "found"}
+      end
+    )
   end
 end

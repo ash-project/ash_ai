@@ -176,6 +176,7 @@ if Code.ensure_loaded?(ReqLLM) do
                req_llm_stream_opts(state.req_llm_opts, state.tools)
              ) do
           {:ok, stream_response} ->
+            # Suspend after each chunk so the caller can consume it before we pull another.
             continuation = fn command ->
               Enumerable.reduce(stream_response.stream, command, fn chunk, _acc ->
                 {:suspend, normalize_chunk_tool_call_id(chunk)}
