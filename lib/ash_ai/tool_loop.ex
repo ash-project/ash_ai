@@ -64,6 +64,10 @@ if Code.ensure_loaded?(ReqLLM) do
     @doc """
     Streams events from the tool loop.
 
+    Content events are emitted as chunks arrive. Complete assistant messages and
+    usage are assembled after each provider response ends. Halting enumeration
+    closes the active provider stream without starting another iteration.
+
     Events:
     - `{:content, text}`
     - `{:tool_call, %{id: id, name: name, arguments: args}}`
@@ -98,137 +102,169 @@ if Code.ensure_loaded?(ReqLLM) do
         max_iterations: opts.max_iterations,
         tool_calls_made: [],
         usage_acc: %{},
+        stream_response: nil,
+        continuation: nil,
+        chunks: [],
+        pending_tool_calls: [],
         state: :running
       }
     end
 
     defp next_stream_chunk(%{state: :done} = state), do: {:halt, state}
 
-    defp next_stream_chunk(state) do
-      case stream_iteration(state) do
-        {:continue, events, new_state} ->
-          {events, new_state}
+    defp next_stream_chunk(%{state: :streaming} = state) do
+      case resume_stream(state.continuation) do
+        {:suspended, chunk, continuation} ->
+          events = if chunk.type == :content, do: [{:content, chunk.text || ""}], else: []
+          {events, %{state | continuation: continuation, chunks: [chunk | state.chunks]}}
 
-        {:done, events, result} ->
-          {events ++ [{:done, result}], %{state | state: :done}}
+        {status, _} when status in [:done, :halted] ->
+          {[], %{state | state: :finalizing, continuation: nil}}
+
+        {:raised, kind, reason, stacktrace} ->
+          # The upstream enumerable has already unwound. Clear its consumed
+          # continuation before reraising so cleanup cannot invoke it twice.
+          {[], %{state | state: {:raised, kind, reason, stacktrace}, continuation: nil}}
       end
     end
 
-    defp cleanup_stream(_state), do: :ok
+    defp next_stream_chunk(%{state: {:raised, kind, reason, stacktrace}}) do
+      :erlang.raise(kind, reason, stacktrace)
+    end
 
-    defp stream_iteration(state) do
-      %{
-        req_llm: req_llm,
-        model: model,
-        messages: messages,
-        tools: tools,
-        registry: registry,
-        req_llm_opts: req_llm_opts,
-        context: context,
-        iteration: iteration,
-        max_iterations: max_iterations,
-        tool_calls_made: tool_calls_made,
-        usage_acc: usage_acc
-      } = state
+    defp next_stream_chunk(%{state: :finalizing} = state) do
+      chunks = Enum.reverse(state.chunks)
+      stream_response = %{state.stream_response | stream: chunks, model: state.model}
+      usage = StreamResponse.usage(stream_response)
 
-      if max_iterations_reached?(iteration, max_iterations) do
-        result = %Result{
-          messages: messages,
-          final_text: "",
-          iterations: iteration - 1,
-          tool_calls_made: tool_calls_made,
-          usage: usage_acc
-        }
+      case StreamResponse.to_response(stream_response) do
+        {:ok, response} ->
+          finish_stream_iteration(
+            %{state | stream_response: nil, chunks: []},
+            response.message,
+            StreamResponse.classify(stream_response),
+            usage
+          )
 
-        {:done, [{:error, :max_iterations_reached}], result}
+        {:error, reason} ->
+          stream_error(%{state | stream_response: nil, chunks: []}, reason)
+      end
+    end
+
+    defp next_stream_chunk(%{state: :tools, pending_tool_calls: []} = state) do
+      iteration = state.iteration + 1
+
+      {[{:iteration, %IterationEvent{iteration: iteration}}],
+       %{state | state: :running, iteration: iteration}}
+    end
+
+    defp next_stream_chunk(%{state: :tools, pending_tool_calls: [call | rest]} = state) do
+      {result, content} = run_single_tool(call, state.registry, state.context)
+      messages = state.messages ++ [Context.tool_result(call.id, content)]
+
+      {[{:tool_result, %{id: call.id, result: result}}],
+       %{state | messages: messages, pending_tool_calls: rest}}
+    end
+
+    defp next_stream_chunk(%{state: :running} = state) do
+      if max_iterations_reached?(state.iteration, state.max_iterations) do
+        stream_error(state, :max_iterations_reached)
       else
-        case request_response(req_llm, model, messages, req_llm_opts, tools) do
-          {:ok, stream_response, chunks, response, usage} ->
-            content_events = content_events(chunks)
-            assistant = response.message
-            usage_acc = accumulate_usage(usage_acc, usage)
-
-            classification =
-              stream_response
-              |> Map.put(:stream, chunks)
-              |> ReqLLM.StreamResponse.classify()
-
-            tool_calls =
-              if classification.type == :tool_calls do
-                classification.tool_calls
-                |> normalize_tool_calls()
-                |> unprocessed_tool_calls(messages)
-              else
-                []
-              end
-
-            # An empty post-filter list means the model returned only invalid or
-            # already-processed tool calls, so `messages` would not advance.
-            # Recursing would re-send a byte-identical request forever (a
-            # no-progress loop, unbounded under `max_iterations: :infinity`), so
-            # treat it as terminal.
-            if tool_calls != [] do
-              messages =
-                append_tool_call_turn(
-                  messages,
-                  assistant,
-                  tool_calls
-                )
-
-              {messages, tool_events} =
-                run_tools_streaming(tool_calls, messages, registry, context)
-
-              new_state = %{
-                state
-                | messages: messages,
-                  iteration: iteration + 1,
-                  tool_calls_made: tool_calls_made ++ tool_calls,
-                  usage_acc: usage_acc
-              }
-
-              {:continue,
-               content_events ++
-                 Enum.map(tool_calls, &{:tool_call, &1}) ++
-                 tool_events ++
-                 [{:iteration, %IterationEvent{iteration: iteration + 1}}], new_state}
-            else
-              messages =
-                maybe_append_assistant_message(
-                  messages,
-                  assistant,
-                  classification.text,
-                  model
-                )
-
-              result = %Result{
-                messages: messages,
-                final_text: classification.text,
-                iterations: iteration,
-                tool_calls_made: tool_calls_made,
-                usage: usage_acc
-              }
-
-              {:done, content_events, result}
+        case state.req_llm.stream_text(
+               state.model,
+               state.messages,
+               req_llm_stream_opts(state.req_llm_opts, state.tools)
+             ) do
+          {:ok, stream_response} ->
+            continuation = fn command ->
+              Enumerable.reduce(stream_response.stream, command, fn chunk, _acc ->
+                {:suspend, normalize_chunk_tool_call_id(chunk)}
+              end)
             end
 
-          {:error, reason} ->
-            result = %Result{
-              messages: messages,
-              final_text: "",
-              iterations: iteration - 1,
-              tool_calls_made: tool_calls_made,
-              usage: usage_acc
-            }
+            {[],
+             %{
+               state
+               | state: :streaming,
+                 stream_response: stream_response,
+                 continuation: continuation
+             }}
 
-            {:done, [{:error, reason}], result}
+          {:error, reason} ->
+            stream_error(state, reason)
         end
       end
     end
 
-    defp content_events(chunks) do
-      chunks
-      |> Enum.filter(&(&1.type == :content))
-      |> Enum.map(fn chunk -> {:content, chunk.text || ""} end)
+    defp resume_stream(continuation) do
+      continuation.({:cont, nil})
+    catch
+      kind, reason -> {:raised, kind, reason, __STACKTRACE__}
+    end
+
+    defp cleanup_stream(state) do
+      if state.continuation, do: state.continuation.({:halt, nil})
+    after
+      if state.stream_response, do: StreamResponse.close(state.stream_response)
+    end
+
+    defp finish_stream_iteration(state, assistant, classification, usage) do
+      usage_acc = accumulate_usage(state.usage_acc, usage)
+
+      tool_calls =
+        if classification.type == :tool_calls do
+          classification.tool_calls
+          |> normalize_tool_calls()
+          |> unprocessed_tool_calls(state.messages)
+        else
+          []
+        end
+
+      # No new calls means no progress is possible, including when the provider
+      # only replays previously processed calls. Finish instead of looping.
+      if tool_calls != [] do
+        messages = append_tool_call_turn(state.messages, assistant, tool_calls)
+
+        {Enum.map(tool_calls, &{:tool_call, &1}),
+         %{
+           state
+           | state: :tools,
+             messages: messages,
+             pending_tool_calls: tool_calls,
+             tool_calls_made: state.tool_calls_made ++ tool_calls,
+             usage_acc: usage_acc
+         }}
+      else
+        messages =
+          maybe_append_assistant_message(
+            state.messages,
+            assistant,
+            classification.text,
+            state.model
+          )
+
+        result = %Result{
+          messages: messages,
+          final_text: classification.text,
+          iterations: state.iteration,
+          tool_calls_made: state.tool_calls_made,
+          usage: usage_acc
+        }
+
+        {[{:done, result}], %{state | state: :done}}
+      end
+    end
+
+    defp stream_error(state, reason) do
+      result = %Result{
+        messages: state.messages,
+        final_text: "",
+        iterations: state.iteration - 1,
+        tool_calls_made: state.tool_calls_made,
+        usage: state.usage_acc
+      }
+
+      {[{:error, reason}, {:done, result}], %{state | state: :done}}
     end
 
     # Sums per-iteration usage maps into a running accumulator. Numeric
@@ -258,18 +294,6 @@ if Code.ensure_loaded?(ReqLLM) do
           {:ok, stream_response, chunks, response, usage}
         end
       end
-    end
-
-    defp run_tools_streaming(tool_calls, messages, registry, ctx) do
-      Enum.reduce(tool_calls, {messages, []}, fn tool_call, {msgs, events} ->
-        case run_single_tool(tool_call, registry, ctx) do
-          {result, content} ->
-            {
-              msgs ++ [Context.tool_result(tool_call.id, content)],
-              events ++ [{:tool_result, %{id: tool_call.id, result: result}}]
-            }
-        end
-      end)
     end
 
     defp build_context(opts) do
