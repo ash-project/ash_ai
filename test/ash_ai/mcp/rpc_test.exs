@@ -197,6 +197,83 @@ defmodule AshAi.Mcp.ServerTest do
     end
   end
 
+  describe "malformed envelopes" do
+    defp rpc(body) do
+      response = conn(:post, "/", body) |> Router.call(@opts)
+      {response.status, response.resp_body != "" && Jason.decode!(response.resp_body)}
+    end
+
+    defp call(method, params),
+      do: rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => method, "params" => params})
+
+    test "an empty batch is an Invalid Request" do
+      # Plug.Parsers wraps a JSON array body under "_json"
+      assert {200, %{"id" => nil, "error" => %{"code" => -32_600, "message" => message}}} =
+               rpc(%{"_json" => []})
+
+      assert message =~ "batch must not be empty"
+    end
+
+    test "a batch is answered with one response per request" do
+      batch = [
+        %{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"},
+        5,
+        %{"jsonrpc" => "2.0", "method" => "notifications/initialized"}
+      ]
+
+      assert {200, [%{"id" => "1", "result" => %{}}, %{"error" => %{"code" => -32_600}}]} =
+               rpc(%{"_json" => batch})
+    end
+
+    test "a batch of notifications needs no response" do
+      assert {202, false} =
+               rpc(%{"_json" => [%{"jsonrpc" => "2.0", "method" => "notifications/initialized"}]})
+    end
+
+    test "tools/call params that are not an object are Invalid Params" do
+      for params <- ["x", [], 5, nil] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 call("tools/call", params)
+
+        assert message == "Invalid params: params must be an object"
+      end
+    end
+
+    test "tools/call arguments that are not an object are Invalid Params" do
+      for arguments <- ["x", [], 5] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 call("tools/call", %{"name" => "list_artists", "arguments" => arguments})
+
+        assert message == "Invalid params: arguments must be an object"
+      end
+    end
+
+    test "initialize params and capabilities that are not objects are Invalid Params" do
+      assert {200, %{"id" => "1", "error" => %{"code" => -32_602}}} = call("initialize", "x")
+
+      for capabilities <- ["x", []] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 call("initialize", %{"capabilities" => capabilities})
+
+        assert message == "Invalid params: capabilities must be an object"
+      end
+    end
+
+    test "initialize tolerates malformed nesting inside capabilities" do
+      for capabilities <- [
+            %{"extensions" => "x"},
+            %{"extensions" => %{"io.modelcontextprotocol/ui" => []}}
+          ] do
+        assert {200, %{"id" => "1", "result" => %{"serverInfo" => _}}} =
+                 call("initialize", %{"capabilities" => capabilities})
+      end
+    end
+
+    test "a method that does not read params still answers when they are not an object" do
+      assert {200, %{"id" => "1", "result" => %{"tools" => _}}} = call("tools/list", [])
+    end
+  end
+
   describe "send_sse_event/4" do
     test "writes the event chunks to an open connection" do
       conn =

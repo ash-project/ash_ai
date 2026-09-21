@@ -291,6 +291,63 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert response.status == 202
     end
 
+    test "params that are not an object are Invalid Params" do
+      for params <- ["x", [], 5] do
+        response =
+          conn(:post, "/", %{
+            "jsonrpc" => "2.0",
+            "id" => "req_1",
+            "method" => "tools/list",
+            "params" => params
+          })
+          |> put_req_header("mcp-protocol-version", @protocol_version)
+          |> put_req_header("mcp-method", "tools/list")
+          |> Router.call(@tool_opts)
+
+        assert response.status == 400
+
+        assert %{
+                 "id" => "req_1",
+                 "error" => %{
+                   "code" => -32_602,
+                   "message" => "Invalid params: missing required _meta"
+                 }
+               } = Jason.decode!(response.resp_body)
+      end
+    end
+
+    test "tools/call arguments that are not an object are Invalid Params" do
+      for arguments <- ["x", [], 5] do
+        response =
+          versioned_request(
+            "tools/call",
+            %{"name" => "list_artists", "arguments" => arguments},
+            %{"mcp-name" => "list_artists"}
+          )
+
+        assert response.status == 400
+
+        assert %{
+                 "id" => "req_1",
+                 "error" => %{
+                   "code" => -32_602,
+                   "message" => "Invalid params: arguments must be an object"
+                 }
+               } = Jason.decode!(response.resp_body)
+      end
+    end
+
+    test "malformed nesting inside client capabilities is tolerated" do
+      meta =
+        Map.put(request_meta(), "io.modelcontextprotocol/clientCapabilities", %{
+          "extensions" => "x"
+        })
+
+      response = versioned_request("server/discover", %{"_meta" => meta})
+      assert response.status == 200
+      assert %{"result" => %{}} = Jason.decode!(response.resp_body)
+    end
+
     test "a non-object body is rejected without echoing the parsed term" do
       # Plug.Parsers wraps a non-object JSON body under "_json"
       conn =
