@@ -168,6 +168,9 @@ defmodule AshAi.Mcp.Server do
       error = validate_request_meta(message) ->
         error_response_2026_07_28(conn, 400, id, -32_602, error)
 
+      error = invalid_params(method, message["params"]) ->
+        error_response_2026_07_28(conn, 400, id, -32_602, error)
+
       # Header/body consistency comes before version support: a request whose
       # header disagrees with its `_meta` is a HeaderMismatch even when one
       # of the two names an unsupported version
@@ -209,7 +212,11 @@ defmodule AshAi.Mcp.Server do
   # Every request must carry `_meta` with the protocol version and client
   # capabilities. `clientInfo` is a SHOULD and MUST NOT be required.
   defp validate_request_meta(message) do
-    meta = get_in(message, ["params", "_meta"])
+    meta =
+      case message["params"] do
+        %{} = params -> params["_meta"]
+        _not_an_object -> nil
+      end
 
     cond do
       not is_map(meta) ->
@@ -653,6 +660,13 @@ defmodule AshAi.Mcp.Server do
         # Process a single message
         process_message(message, session_id, opts)
 
+      {:ok, []} ->
+        # JSON-RPC 2.0: an empty batch array is an Invalid Request
+        response =
+          json_rpc_error_response(nil, -32_600, "Invalid Request: a batch must not be empty")
+
+        {:json_response, response, session_id}
+
       {:ok, batch} when is_list(batch) ->
         # Handle batch requests
         responses = Enum.map(batch, fn item -> process_message(item, session_id, opts) end)
@@ -681,7 +695,42 @@ defmodule AshAi.Mcp.Server do
   @doc """
   Process a single JSON-RPC message
   """
+  def process_message(
+        %{"method" => method, "id" => id, "params" => params} = message,
+        session_id,
+        opts
+      ) do
+    case invalid_params(method, params) do
+      nil ->
+        do_process_message(message, session_id, opts)
+
+      error ->
+        {:json_response, json_rpc_error_response(id, -32_602, error), session_id}
+    end
+  end
+
   def process_message(message, session_id, opts) do
+    do_process_message(message, session_id, opts)
+  end
+
+  # The shapes of the `params` members the handlers read with `Access`. Only
+  # the methods that read `params` are checked, so a method that ignores them
+  # keeps answering whatever a client sends there.
+  defp invalid_params(method, params)
+       when method in ["initialize", "tools/call"] and not is_map(params),
+       do: "Invalid params: params must be an object"
+
+  defp invalid_params("tools/call", %{"arguments" => arguments})
+       when not is_map(arguments) and not is_nil(arguments),
+       do: "Invalid params: arguments must be an object"
+
+  defp invalid_params("initialize", %{"capabilities" => capabilities})
+       when not is_map(capabilities) and not is_nil(capabilities),
+       do: "Invalid params: capabilities must be an object"
+
+  defp invalid_params(_method, _params), do: nil
+
+  defp do_process_message(message, session_id, opts) do
     case message do
       %{"method" => "initialize", "id" => id, "params" => params} ->
         # Handle initialize request (initialize-based revisions only; from
@@ -880,14 +929,13 @@ defmodule AshAi.Mcp.Server do
     get_in(params, ["_meta", @meta_client_capabilities]) || %{}
   end
 
-  defp ui_capable?(client_capabilities) do
-    client_capabilities
-    |> get_in(["extensions", @ui_extension, "mimeTypes"])
-    |> case do
-      mime_types when is_list(mime_types) -> @ui_mime_type in mime_types
-      _ -> false
-    end
-  end
+  # Matched rather than read with `get_in/2`, which raises when a client sends
+  # a scalar or a list anywhere along the path
+  defp ui_capable?(%{"extensions" => %{@ui_extension => %{"mimeTypes" => mime_types}}})
+       when is_list(mime_types),
+       do: @ui_mime_type in mime_types
+
+  defp ui_capable?(_client_capabilities), do: false
 
   defp mcp_resources(opts) do
     mcp_action_resources(opts) ++ mcp_ui_resources(opts)
@@ -1346,6 +1394,12 @@ defmodule AshAi.Mcp.Server do
   end
 
   def parse_json_rpc(request) when is_map(request) do
+    {:ok, request}
+  end
+
+  # A batch body arrives as a list once `unwrap_json_params/1` has removed the
+  # `_json` wrapper that Plug.Parsers puts around a JSON array
+  def parse_json_rpc(request) when is_list(request) do
     {:ok, request}
   end
 
