@@ -98,7 +98,9 @@ defmodule AshAi.OpenApi do
           }
           |> Map.put(:description, config[:description] || nil)
 
-        resource_write_attribute_type(fake_attr, resource, action_type)
+        fake_attr
+        |> resource_write_attribute_type(resource, action_type)
+        |> with_union_type_tag(config)
       end)
 
     %{
@@ -149,6 +151,32 @@ defmodule AshAi.OpenApi do
     end
     |> with_attribute_description(attr)
   end
+
+  # Include the tag before deduplicating anyOf branches, or fieldless variants
+  # collapse into identical objects that Ash cannot cast without a discriminator.
+  defp with_union_type_tag(%{properties: properties} = schema, config) do
+    case config[:tag] do
+      nil ->
+        schema
+
+      tag ->
+        tag_schema =
+          case config[:tag_value] do
+            nil -> %{type: :null, enum: [nil]}
+            value when is_boolean(value) -> %{type: :boolean, enum: [value]}
+            value when is_number(value) -> %{type: :number, enum: [value]}
+            value -> %{type: :string, enum: [to_string(value)]}
+          end
+
+        %{
+          schema
+          | properties: Map.put(properties, tag, tag_schema),
+            required: Enum.uniq([tag | Map.get(schema, :required, [])])
+        }
+    end
+  end
+
+  defp with_union_type_tag(schema, _config), do: schema
 
   defp add_null_for_non_required(%{required: required} = schema)
        when is_list(required) do
