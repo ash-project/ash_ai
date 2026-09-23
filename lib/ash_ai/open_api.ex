@@ -808,6 +808,7 @@ defmodule AshAi.OpenApi do
     Map.put(schema, key, new_description)
   end
 
+  defp with_attribute_nullability(schema, _) when not is_map_key(schema, :type), do: schema
   defp with_attribute_nullability(%{type: nil} = schema, _), do: schema
 
   defp with_attribute_nullability(%{} = schema, attr) do

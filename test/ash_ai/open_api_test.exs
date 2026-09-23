@@ -121,18 +121,48 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule GadgetSettings do
+    use Ash.Resource, data_layer: :embedded
+
+    attributes do
+      attribute :label, :string, public?: true
+      attribute :extra, :term, public?: true, description: "Arbitrary extra data"
+    end
+  end
+
+  defmodule Gadget do
+    use Ash.Resource,
+      domain: Music,
+      data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id, writable?: true
+      attribute :settings, GadgetSettings, public?: true
+    end
+
+    actions do
+      defaults [:read]
+    end
+  end
+
   defmodule Music do
     use Ash.Domain,
       extensions: [AshAi]
 
     tools do
       tool :list_widgets, Widget, :read
+      tool :list_gadgets, Gadget, :read
     end
 
     resources do
       resource Artist
       resource Album
       resource Widget
+      resource Gadget
     end
   end
 
@@ -403,6 +433,30 @@ defmodule AshAi.OpenApiTest do
       refute Map.has_key?(properties, "payload")
       refute Map.has_key?(properties, "raw_payload")
       refute Map.has_key?(properties, "payloads")
+    end
+  end
+
+  describe "embedded attributes with unmapped types" do
+    test "build filter schemas without crashing" do
+      tool =
+        [actions: [{Gadget, [:read]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      relaxed = AshAi.Tools.parameter_schema(tool, strict: false)
+      assert relaxed["properties"]["filter"]["description"] =~ "settings"
+
+      full =
+        tool
+        |> struct(full_filter_schema?: true)
+        |> AshAi.Tools.parameter_schema(strict: false)
+
+      assert Map.has_key?(
+               full["properties"]["filter"]["properties"]["settings"]["properties"]["eq"][
+                 "properties"
+               ],
+               "extra"
+             )
     end
   end
 
