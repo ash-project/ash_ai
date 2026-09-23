@@ -11,6 +11,21 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.1.1](https://github.com/ash-project/ash_ai/compare/v1.1.0...v1.1.1) (2026-09-23)
+
+
+
+
+### Bug Fixes:
+
+* handle nilability check for fields w/o type by [@zachdaniel](https://github.com/zachdaniel)
+
+* answer malformed JSON-RPC envelopes with an error instead of raising (#238) by grempe [(#238)](https://github.com/ash-project/ash_ai/pull/238)
+
+* include tagged union discriminators in input schemas (#237) by [@Munksgaard](https://github.com/Munksgaard) [(#237)](https://github.com/ash-project/ash_ai/pull/237)
+
+* stream tool loop content as chunks arrive (#235) by Rodolfo Torres [(#235)](https://github.com/ash-project/ash_ai/pull/235)
+
 ## [v1.1.0](https://github.com/ash-project/ash_ai/compare/v1.0.3...v1.1.0) (2026-09-18)
 
 
