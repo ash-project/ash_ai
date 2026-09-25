@@ -421,6 +421,10 @@ if Code.ensure_loaded?(ReqLLM) do
           "required" => ["result"],
           "additionalProperties" => false
         }
+        # The return type's schema has atom keys, but providers post-process the
+        # schema by string key (e.g. stripping unsupported `minimum`/`maximum`).
+        |> Jason.encode!()
+        |> Jason.decode!()
       else
         %{
           "type" => "object",

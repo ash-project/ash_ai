@@ -98,6 +98,15 @@ defmodule AshAi.Actions.PromptTest do
     end
   end
 
+  defmodule FakeReqLLMWithConstrainedMapSchema do
+    @moduledoc "Fake ReqLLM that captures schema used for constrained :map outputs"
+
+    def generate_object(_model, _context, schema, _opts \\ []) do
+      send(self(), {:constrained_map_schema, schema})
+      {:ok, %{object: %{"result" => %{"label" => "positive", "score" => 7}}}}
+    end
+  end
+
   defmodule FakeReqLLMWithNullSchema do
     @moduledoc "Fake ReqLLM that captures schema used for nil outputs"
 
@@ -377,6 +386,25 @@ defmodule AshAi.Actions.PromptTest do
         run prompt("openai:gpt-4o",
               prompt: "Return a map for: <%= @input.arguments.text %>",
               req_llm: FakeReqLLMWithMapSchema
+            )
+      end
+
+      action :analyze_with_constrained_map_return, :map do
+        description("Test constrained map return schema")
+        argument(:text, :string, allow_nil?: false)
+
+        constraints fields: [
+                      label: [type: :string, allow_nil?: false],
+                      score: [
+                        type: :integer,
+                        allow_nil?: false,
+                        constraints: [min: 1, max: 10]
+                      ]
+                    ]
+
+        run prompt("openai:gpt-4o",
+              prompt: "Score: <%= @input.arguments.text %>",
+              req_llm: FakeReqLLMWithConstrainedMapSchema
             )
       end
 
@@ -666,6 +694,26 @@ defmodule AshAi.Actions.PromptTest do
 
       assert_receive {:map_schema, schema}
       assert schema["properties"]["result"] in [%{"type" => "object"}, %{type: :object}]
+    end
+  end
+
+  describe "constrained returns" do
+    test "sends a JSON schema with string keys throughout" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:analyze_with_constrained_map_return, %{text: "great"})
+        |> Ash.run_action!()
+
+      assert result == %{label: "positive", score: 7}
+
+      assert_receive {:constrained_map_schema, schema}
+
+      # Providers normalize schemas (e.g. stripping unsupported `minimum`/`maximum`)
+      # by string key, so atom keys from the return type must not leak through.
+      assert schema == schema |> Jason.encode!() |> Jason.decode!()
+
+      assert %{"type" => "integer", "minimum" => 1, "maximum" => 10} =
+               schema["properties"]["result"]["properties"]["score"]
     end
   end
 
