@@ -15,6 +15,20 @@ defmodule Mix.Tasks.AshAi.InstallTest do
     """)
   end
 
+  test "installs the dev MCP without pinning an old protocol version" do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.install", ["--yes"])
+
+    endpoint_diff =
+      igniter.rewrite.sources
+      |> Map.take(["lib/test_web/endpoint.ex"])
+      |> Igniter.diff(color?: false)
+
+    assert endpoint_diff =~ "plug AshAi.Mcp.Dev"
+    refute endpoint_diff =~ "protocol_version_statement"
+  end
+
   test "--no-req-llm skips adding the req_llm dependency" do
     igniter =
       phx_test_project()

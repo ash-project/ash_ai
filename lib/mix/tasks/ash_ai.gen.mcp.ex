@@ -94,8 +94,6 @@ if Code.ensure_loaded?(Igniter) do
               # :tool1,
               # :tool2,
             ],
-            # For many tools, you will need to set the `protocol_version_statement` to the older version.
-            protocol_version_statement: "2024-11-05",
             otp_app: :#{otp_app}
           """,
           router: router
@@ -114,8 +112,6 @@ if Code.ensure_loaded?(Igniter) do
              zipper,
              """
              plug AshAi.Mcp.Dev,
-               # For many tools, you will need to set the `protocol_version_statement` to the older version.
-               protocol_version_statement: "2024-11-05",
                otp_app: :#{otp_app},
                path: "/ash_ai/mcp"
              """,

@@ -66,8 +66,6 @@ mcp server will be available under `http://localhost:4000/ash_ai/mcp`.
     socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
 
     plug AshAi.Mcp.Dev,
-      # see the note below on protocol versions below
-      protocol_version_statement: "2024-11-05",
       otp_app: :your_app
 ```
 
@@ -77,9 +75,7 @@ We are still experimenting to see what tools (if any) are useful while developin
 
 AshAi provides a pre-built MCP server that can be used to expose your tool definitions to an MCP client (typically some kind of IDE, or Claude Desktop for example).
 
-The protocol version we implement is 2025-03-26. As of this writing, many tools have not yet been updated to support this version. You will generally need to use some kind of proxy until tools have been updated accordingly. We suggest this one, provided by tidewave. https://github.com/tidewave-ai/mcp_proxy_rust#installation
-
-However, as of the writing of this guide, it requires setting a previous protocol version as noted above.
+The server supports MCP protocol versions `2026-07-28`, `2025-06-18`, and `2025-03-26`.
 
 #### Roadmap
 
@@ -174,8 +170,6 @@ scope "/mcp" do
       :of,
       :tools
     ],
-    # For many tools, you will need to set the `protocol_version_statement` to the older version.
-    protocol_version_statement: "2024-11-05",
     otp_app: :my_app
 end
 ```
