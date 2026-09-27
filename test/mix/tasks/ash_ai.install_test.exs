@@ -8,11 +8,14 @@ defmodule Mix.Tasks.AshAi.InstallTest do
   import Igniter.Test
 
   test "adds req_llm as a dependency by default" do
-    phx_test_project()
-    |> Igniter.compose_task("ash_ai.install", ["--yes"])
-    |> assert_has_patch("mix.exs", """
-    + |      {:req_llm, "~> 1.18"},
-    """)
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.install", ["--yes"])
+      |> assert_has_patch("mix.exs", """
+      + |      {:req_llm, "~> 1.18"},
+      """)
+
+    assert {"deps.get", []} in igniter.tasks
   end
 
   test "--no-req-llm skips adding the req_llm dependency" do
@@ -21,5 +24,6 @@ defmodule Mix.Tasks.AshAi.InstallTest do
       |> Igniter.compose_task("ash_ai.install", ["--yes", "--no-req-llm"])
 
     assert_unchanged(igniter, "mix.exs")
+    refute {"deps.get", []} in igniter.tasks
   end
 end
