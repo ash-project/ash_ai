@@ -68,7 +68,13 @@ if Code.ensure_loaded?(Igniter) do
     # opt out with `--no-req-llm`.
     defp maybe_add_req_llm(igniter) do
       if igniter.args.options[:req_llm] do
-        Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.18"})
+        igniter = Igniter.Project.Deps.add_dep(igniter, {:req_llm, "~> 1.18"})
+
+        if Igniter.changed?(igniter, "mix.exs") do
+          Igniter.add_task(igniter, "deps.get")
+        else
+          igniter
+        end
       else
         igniter
       end
