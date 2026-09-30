@@ -399,7 +399,7 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp dispatch_2026_07_28(conn, "tools/call", id, params, opts) do
-    case execute_tool_call(params, nil, opts) do
+    case execute_tool_call(params, nil, opts, structured_lists?: true) do
       {:ok, result} ->
         response_2026_07_28(conn, 200, id, result_2026_07_28(result, opts))
 
@@ -1138,7 +1138,9 @@ defmodule AshAi.Mcp.Server do
     Enum.sort_by(action_resources ++ ui_resources, & &1["uri"])
   end
 
-  defp execute_tool_call(params, session_id, opts) do
+  # 2025-06-18 types `structuredContent` as an object; 2026-07-28 allows any
+  # JSON value, so only that revision receives list results as structured content
+  defp execute_tool_call(params, session_id, opts, call_opts \\ []) do
     tool_name = params["name"]
     tool_args = params["arguments"] || %{}
 
@@ -1148,7 +1150,7 @@ defmodule AshAi.Mcp.Server do
 
         case transform_tool_arguments(tool, tool_args, context, opts) do
           {:ok, transformed_args} ->
-            execute_resolved_tool(tool, transformed_args, context)
+            execute_resolved_tool(tool, transformed_args, context, call_opts)
 
           {:error, error_text} ->
             {:ok, tool_error_result(error_text)}
@@ -1183,7 +1185,7 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  defp execute_resolved_tool(tool, arguments, context) do
+  defp execute_resolved_tool(tool, arguments, context, call_opts) do
     case AshAi.Tools.execute(tool, arguments, context, encode?: false) do
       {:ok, result, _} ->
         case encode_tool_result(tool, result) do
@@ -1193,7 +1195,11 @@ defmodule AshAi.Mcp.Server do
                 "isError" => false,
                 "content" => [%{"type" => "text", "text" => encoded_result}]
               }
-              |> maybe_put_structured_content(result)
+              |> maybe_put_structured_content(
+                result,
+                encoded_result,
+                Keyword.get(call_opts, :structured_lists?, false)
+              )
 
             if Tool.has_meta?(tool) do
               {:ok, Map.put(result, "_meta", tool._meta)}
@@ -1218,11 +1224,19 @@ defmodule AshAi.Mcp.Server do
     error -> {:error, AshAi.Tool.Errors.format(error)}
   end
 
-  defp maybe_put_structured_content(result, structured_content)
+  # `is_map/1` also holds for structs such as DateTime, which Jason encodes as
+  # a string, so the encoded text decides whether the result is an object or
+  # an array
+  defp maybe_put_structured_content(result, structured_content, "{" <> _, _lists?)
        when is_map(structured_content),
        do: Map.put(result, "structuredContent", structured_content)
 
-  defp maybe_put_structured_content(result, _structured_content), do: result
+  defp maybe_put_structured_content(result, structured_content, "[" <> _, true)
+       when is_list(structured_content),
+       do: Map.put(result, "structuredContent", structured_content)
+
+  defp maybe_put_structured_content(result, _structured_content, _encoded, _lists?),
+    do: result
 
   defp tool_error_result(error_text) do
     %{

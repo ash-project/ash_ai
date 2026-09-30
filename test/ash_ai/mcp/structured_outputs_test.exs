@@ -60,6 +60,10 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
         run fn _input, _context -> {:ok, "scalar"} end
       end
 
+      action :datetime_result, :utc_datetime do
+        run fn _input, _context -> {:ok, ~U[2026-08-11 12:30:00Z]} end
+      end
+
       action :array_result, {:array, :integer} do
         run fn _input, _context -> {:ok, [1, 2]} end
       end
@@ -112,6 +116,7 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
       tool :create_record, Resource, :create_record
       tool :map_result, Resource, :map_result
       tool :scalar_result, Resource, :scalar_result
+      tool :datetime_result, Resource, :datetime_result
       tool :array_result, Resource, :array_result
       tool :nil_result, Resource, :nil_result
       tool :unencodable_result, Resource, :unencodable_result
@@ -157,7 +162,7 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
     test "preserves text-only behavior for non-object results" do
       session_id = initialize()
 
-      for name <- ["scalar_result", "array_result", "nil_result"] do
+      for name <- ["scalar_result", "datetime_result", "array_result", "nil_result"] do
         call_result = call_tool(session_id, name)
 
         assert call_result["isError"] == false
@@ -188,6 +193,27 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
   end
 
   describe "2026-07-28 public router" do
+    test "returns list results as structured content" do
+      call_result =
+        per_request("tools/call", %{"name" => "array_result", "arguments" => %{}})
+        |> result()
+
+      [%{"text" => text}] = call_result["content"]
+      assert call_result["structuredContent"] == [1, 2]
+      assert call_result["structuredContent"] == Jason.decode!(text)
+    end
+
+    test "keeps scalar and nil results text-only" do
+      for name <- ["scalar_result", "datetime_result", "nil_result"] do
+        call_result =
+          per_request("tools/call", %{"name" => name, "arguments" => %{}})
+          |> result()
+
+        assert call_result["isError"] == false
+        refute Map.has_key?(call_result, "structuredContent")
+      end
+    end
+
     test "returns the same structured content without a session" do
       call_result =
         per_request("tools/call", %{"name" => "map_result", "arguments" => %{}})
