@@ -36,12 +36,7 @@ if Code.ensure_loaded?(Plug) do
     # Origin header (non-browser MCP clients) always pass.
     plug(:validate_origin)
 
-    # Parse the request body for JSON
-    plug(Plug.Parsers,
-      parsers: [:json],
-      pass: ["application/json"],
-      json_decoder: Jason
-    )
+    plug(:parse_body)
 
     plug(:match)
     plug(:dispatch)
@@ -67,6 +62,21 @@ if Code.ensure_loaded?(Plug) do
     # Default route
     match _ do
       send_resp(conn, 404, "Not found")
+    end
+
+    @parsers_opts Plug.Parsers.init(
+                    parsers: [:json],
+                    pass: ["application/json"],
+                    json_decoder: Jason
+                  )
+
+    defp parse_body(conn, _opts) do
+      Plug.Parsers.call(conn, @parsers_opts)
+    rescue
+      Plug.Parsers.ParseError ->
+        conn
+        |> Server.handle_parse_error()
+        |> halt()
     end
 
     # sobelow_skip ["XSS.SendResp"]

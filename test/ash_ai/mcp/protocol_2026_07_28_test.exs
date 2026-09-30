@@ -421,6 +421,21 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       {response.status, Jason.decode!(response.resp_body)}
     end
 
+    test "a body that is not valid JSON is a Parse error without an id" do
+      response =
+        conn(:post, "/", ~s({"jsonrpc": "2.0", "id": 1, "method": ))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-protocol-version", @protocol_version)
+        |> Router.call(@tool_opts)
+
+      assert response.status == 400
+
+      assert %{"jsonrpc" => "2.0", "error" => %{"code" => -32_700}} =
+               body = Jason.decode!(response.resp_body)
+
+      refute Map.has_key?(body, "id")
+    end
+
     test "a request without jsonrpc 2.0 is an Invalid Request" do
       for body <- [
             %{"id" => "req_1", "method" => "tools/list"},

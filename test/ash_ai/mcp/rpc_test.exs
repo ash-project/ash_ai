@@ -240,6 +240,19 @@ defmodule AshAi.Mcp.ServerTest do
       refute Map.has_key?(body, "id")
     end
 
+    test "a body that is not valid JSON is a Parse error with a null id" do
+      response =
+        conn(:post, "/", ~s({"jsonrpc": "2.0", "id": 1, "method": ))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      assert response.status == 400
+      assert get_resp_header(response, "content-type") == ["application/json"]
+
+      assert %{"jsonrpc" => "2.0", "id" => nil, "error" => %{"code" => -32_700}} =
+               Jason.decode!(response.resp_body)
+    end
+
     test "a request without jsonrpc 2.0 is an Invalid Request" do
       for version <- [nil, "1.0", 2] do
         body = %{"jsonrpc" => version, "id" => "1", "method" => "ping"}

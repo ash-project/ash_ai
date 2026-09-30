@@ -552,6 +552,23 @@ defmodule AshAi.Mcp.Server do
   defp trim_ows(value), do: String.replace(value, ~r/^[ \t]+|[ \t]+$/, "")
 
   @doc """
+  Respond to a request body that is not valid JSON with a JSON-RPC `-32700`
+  Parse error. 2026-07-28 omits the unreadable `id`; the initialize-based
+  revisions follow JSON-RPC 2.0 and send `null`.
+  """
+  def handle_parse_error(conn) do
+    payload = %{"jsonrpc" => "2.0", "error" => %{"code" => -32_700, "message" => "Parse error"}}
+
+    payload =
+      case req_header(conn, "mcp-protocol-version") do
+        version when is_binary(version) and version >= hd(@per_request_versions) -> payload
+        _initialize_based_or_absent -> Map.put(payload, "id", nil)
+      end
+
+    send_json(conn, 400, payload)
+  end
+
+  @doc """
   Validate the `Origin` header of a request per the Streamable HTTP
   transport's DNS-rebinding protection requirement.
 
