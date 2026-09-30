@@ -768,15 +768,15 @@ defmodule AshAi.Mcp.Server do
   Process a single JSON-RPC message
   """
   def process_message(%{"method" => _method} = message, session_id, opts) do
-    case invalid_envelope(message) do
+    case invalid_message(message) do
       nil ->
-        process_valid_message(message, session_id, opts)
+        do_process_message(message, session_id, opts)
 
-      error ->
+      {code, error} ->
         response =
           if is_map_key(message, "id"),
-            do: json_rpc_error_response(request_id(message), -32_600, error),
-            else: notification_error_response(-32_600, error)
+            do: json_rpc_error_response(request_id(message), code, error),
+            else: notification_error_response(code, error)
 
         {:json_response, response, session_id}
     end
@@ -791,19 +791,19 @@ defmodule AshAi.Mcp.Server do
     do: Jason.encode!(%{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}})
 
   # `params` is optional in JSON-RPC; `invalid_params` rejects a missing
-  # `params` for the methods that require it.
-  defp process_valid_message(%{"method" => method, "id" => id} = message, session_id, opts) do
-    case invalid_params(method, message["params"]) do
-      nil ->
-        do_process_message(message, session_id, opts)
+  # `params` for the methods that require it. Only requests are checked,
+  # because the handlers read no notification params.
+  defp invalid_message(message) do
+    cond do
+      error = invalid_envelope(message) ->
+        {-32_600, error}
 
-      error ->
-        {:json_response, json_rpc_error_response(id, -32_602, error), session_id}
+      error = is_map_key(message, "id") && invalid_params(message["method"], message["params"]) ->
+        {-32_602, error}
+
+      true ->
+        nil
     end
-  end
-
-  defp process_valid_message(message, session_id, opts) do
-    do_process_message(message, session_id, opts)
   end
 
   # The shapes of the `params` members the handlers read with `Access`. Only
