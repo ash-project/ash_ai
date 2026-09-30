@@ -211,7 +211,13 @@ defmodule AshAi.Mcp.Server do
       error = validate_request_meta(message) ->
         error_response_2026_07_28(conn, 400, id, -32_602, error)
 
-      error = invalid_params(method, message["params"]) ->
+      # Params follow this revision's schema, so a request declaring another
+      # version skips them and gets UnsupportedProtocolVersion below.
+      # initialize is a removed method here; dispatch answers it with Method
+      # not found naming the supported versions, whatever its params.
+      error =
+          request_meta_version(message) in @per_request_versions && method != "initialize" &&
+            invalid_params(method, message["params"]) ->
         error_response_2026_07_28(conn, 400, id, -32_602, error)
 
       # Header/body consistency comes before version support: a request whose
@@ -431,10 +437,6 @@ defmodule AshAi.Mcp.Server do
           "error" => error
         })
     end
-  end
-
-  defp dispatch_2026_07_28(conn, "resources/read", id, _params, _opts) do
-    error_response_2026_07_28(conn, 200, id, -32_602, "Missing required parameter: uri")
   end
 
   # This server's tool and resource lists are derived from compile-time DSL
@@ -796,12 +798,10 @@ defmodule AshAi.Mcp.Server do
   defp notification_error_response(code, message),
     do: Jason.encode!(%{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}})
 
-  defp process_valid_message(
-         %{"method" => method, "id" => id, "params" => params} = message,
-         session_id,
-         opts
-       ) do
-    case invalid_params(method, params) do
+  # `params` is optional in JSON-RPC; `invalid_params` rejects a missing
+  # `params` for the methods that require it.
+  defp process_valid_message(%{"method" => method, "id" => id} = message, session_id, opts) do
+    case invalid_params(method, message["params"]) do
       nil ->
         do_process_message(message, session_id, opts)
 
@@ -818,12 +818,20 @@ defmodule AshAi.Mcp.Server do
   # the methods that read `params` are checked, so a method that ignores them
   # keeps answering whatever a client sends there.
   defp invalid_params(method, params)
-       when method in ["initialize", "tools/call"] and not is_map(params),
+       when method in ["initialize", "tools/call", "resources/read"] and not is_map(params),
        do: "Invalid params: params must be an object"
+
+  defp invalid_params("tools/call", params)
+       when not is_map_key(params, "name") or not is_binary(:erlang.map_get("name", params)),
+       do: "Invalid params: name must be a string"
 
   defp invalid_params("tools/call", %{"arguments" => arguments})
        when not is_map(arguments) and not is_nil(arguments),
        do: "Invalid params: arguments must be an object"
+
+  defp invalid_params("resources/read", %{"uri" => uri}) when is_binary(uri), do: nil
+
+  defp invalid_params("resources/read", _params), do: "Invalid params: uri must be a string"
 
   defp invalid_params("initialize", %{"capabilities" => capabilities})
        when not is_map(capabilities) and not is_nil(capabilities),
@@ -868,7 +876,7 @@ defmodule AshAi.Mcp.Server do
         response = %{"jsonrpc" => "2.0", "id" => id, "result" => %{}}
         {:json_response, Jason.encode!(response), session_id}
 
-      %{"method" => "shutdown", "id" => id, "params" => _params} ->
+      %{"method" => "shutdown", "id" => id} ->
         # Return success
         response = %{
           "jsonrpc" => "2.0",
@@ -969,7 +977,7 @@ defmodule AshAi.Mcp.Server do
             {:json_response, Jason.encode!(response), session_id}
         end
 
-      %{"method" => method, "id" => id, "params" => _params} ->
+      %{"method" => method, "id" => id} ->
         # Handle other requests with IDs (requiring responses)
         response = %{
           "jsonrpc" => "2.0",

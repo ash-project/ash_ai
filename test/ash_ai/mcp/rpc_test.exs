@@ -335,6 +335,36 @@ defmodule AshAi.Mcp.ServerTest do
       end
     end
 
+    test "tools/call without a string name is Invalid Params" do
+      for params <- [%{}, %{"name" => 5}, %{"name" => nil}] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 call("tools/call", params)
+
+        assert message == "Invalid params: name must be a string"
+      end
+    end
+
+    test "resources/read without a string uri is Invalid Params" do
+      for params <- [%{}, %{"uri" => 5}, "x"] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602}}} =
+                 call("resources/read", params)
+      end
+    end
+
+    test "initialize, tools/call, and resources/read without params are Invalid Params" do
+      for method <- ["initialize", "tools/call", "resources/read"] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => method})
+
+        assert message == "Invalid params: params must be an object"
+      end
+    end
+
+    test "an unknown method without params is Method not found" do
+      assert {200, %{"id" => "1", "error" => %{"code" => -32_601}}} =
+               rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => "unknown/method"})
+    end
+
     test "tools/call arguments that are not an object are Invalid Params" do
       for arguments <- ["x", [], 5] do
         assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =

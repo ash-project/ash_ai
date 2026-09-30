@@ -268,6 +268,13 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert error["message"] =~ "2025-03-26"
     end
 
+    test "initialize with per-request _meta is a removed method whatever its params" do
+      response = versioned_request("initialize", %{"capabilities" => 5})
+
+      assert response.status == 404
+      assert Jason.decode!(response.resp_body)["error"]["code"] == -32_601
+    end
+
     test "whitespace-padded header values are accepted" do
       response =
         versioned_request("tools/call", %{"name" => "list_artists", "arguments" => %{}}, %{
@@ -410,6 +417,31 @@ defmodule AshAi.Mcp.Protocol20260728Test do
     end
   end
 
+  describe "required params" do
+    test "tools/call without a string name is Invalid Params" do
+      for params <- [%{}, %{"name" => 5}] do
+        response = versioned_request("tools/call", params, %{"mcp-name" => "list_artists"})
+
+        assert response.status == 400
+
+        assert %{"error" => %{"code" => -32_602, "message" => "Invalid params: name" <> _}} =
+                 Jason.decode!(response.resp_body)
+      end
+    end
+
+    test "resources/read without a string uri is Invalid Params" do
+      for params <- [%{}, %{"uri" => 5}] do
+        response =
+          versioned_request("resources/read", params, %{"mcp-name" => "file://x"}, @resource_opts)
+
+        assert response.status == 400
+
+        assert %{"error" => %{"code" => -32_602, "message" => "Invalid params: uri" <> _}} =
+                 Jason.decode!(response.resp_body)
+      end
+    end
+  end
+
   describe "JSON-RPC envelope" do
     defp envelope_request(body) do
       response =
@@ -484,6 +516,22 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       error = Jason.decode!(response.resp_body)["error"]
       assert error["code"] == -32_022
       assert error["data"]["requested"] == "2030-01-01"
+      assert @protocol_version in error["data"]["supported"]
+    end
+
+    test "unsupported versions are rejected before params are checked" do
+      # `arguments` is not an object, which this revision's params reject
+      response =
+        versioned_request(
+          "tools/call",
+          %{"name" => "list_artists", "arguments" => "x", "_meta" => request_meta("2030-01-01")},
+          %{"mcp-protocol-version" => "2030-01-01", "mcp-name" => "list_artists"}
+        )
+
+      assert response.status == 400
+
+      error = Jason.decode!(response.resp_body)["error"]
+      assert error["code"] == -32_022
       assert @protocol_version in error["data"]["supported"]
     end
 
