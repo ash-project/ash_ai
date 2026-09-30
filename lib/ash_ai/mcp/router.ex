@@ -75,12 +75,10 @@ if Code.ensure_loaded?(Plug) do
     rescue
       Plug.Parsers.ParseError ->
         conn
-        |> Server.handle_parse_error()
+        |> Server.send_error_without_id(400, -32_700, "Parse error")
         |> halt()
     end
 
-    # sobelow_skip ["XSS.SendResp"]
-    # The 403 body is a static JSON literal; no user input is reflected.
     defp validate_origin(conn, _opts) do
       case Server.check_origin(conn, conn.assigns[:router_opts] || []) do
         :ok ->
@@ -88,15 +86,7 @@ if Code.ensure_loaded?(Plug) do
 
         :forbidden ->
           conn
-          |> put_resp_header("content-type", "application/json")
-          |> send_resp(
-            403,
-            Jason.encode!(%{
-              "jsonrpc" => "2.0",
-              "id" => nil,
-              "error" => %{"code" => -32_600, "message" => "Origin not allowed"}
-            })
-          )
+          |> Server.send_error_without_id(403, -32_600, "Origin not allowed")
           |> halt()
       end
     end

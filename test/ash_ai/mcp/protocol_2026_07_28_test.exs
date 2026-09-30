@@ -716,6 +716,20 @@ defmodule AshAi.Mcp.Protocol20260728Test do
         |> Router.call(@tool_opts)
 
       assert response.status == 403
+
+      body = Jason.decode!(response.resp_body)
+      assert body["error"]["message"] == "Origin not allowed"
+      refute Map.has_key?(body, "id")
+    end
+
+    test "initialize-based requests from a forbidden origin get a null id" do
+      response =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "init_1", "method" => "initialize"})
+        |> put_req_header("origin", "http://evil.example.com")
+        |> Router.call(@tool_opts)
+
+      assert response.status == 403
+      assert %{"id" => nil, "error" => %{"code" => -32_600}} = Jason.decode!(response.resp_body)
     end
 
     test "localhost origins are accepted" do
