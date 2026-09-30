@@ -144,36 +144,27 @@ defmodule AshAi.Mcp.Server do
   defp per_request_version?(%{"method" => "initialize"} = body, _header_version),
     do: is_binary(request_meta_version(body))
 
-  defp per_request_version?(body, header_version) when is_map(body) do
-    cond do
-      is_binary(request_meta_version(body)) ->
-        true
-
-      is_nil(header_version) ->
-        false
-
-      # Every dated revision before 2026-07-28 negotiates via `initialize` —
-      # including ones this server doesn't itself advertise (e.g. a client
-      # sending `2025-11-25` before initialize downgrades it). Route them all
-      # to initialize-based semantics rather than demanding per-request
-      # `_meta` they cannot know about. Revision dates are ISO-8601, so
-      # string comparison orders them correctly.
-      header_version < hd(@per_request_versions) ->
-        false
-
-      true ->
-        true
-    end
-  end
+  defp per_request_version?(body, header_version) when is_map(body),
+    do: is_binary(request_meta_version(body)) or per_request_header?(header_version)
 
   # Batches are only defined for initialize-based protocol versions. A batch
   # carrying a current/future per-request version must still enter the current
   # handler so it can return one bounded Invalid Request response rather than
   # accidentally using the initialize-era batch path.
   defp per_request_version?(body, header_version) when is_list(body),
-    do: is_binary(header_version) and header_version >= hd(@per_request_versions)
+    do: per_request_header?(header_version)
 
   defp per_request_version?(_body, _header_version), do: false
+
+  # Every dated revision before 2026-07-28 negotiates via `initialize`,
+  # including ones this server doesn't itself advertise (e.g. a client
+  # sending `2025-11-25` before initialize downgrades it). Route them all to
+  # initialize-based semantics rather than demanding per-request `_meta` they
+  # cannot know about. Any other header value selects per-request semantics,
+  # which reject an unsupported version with UnsupportedProtocolVersion.
+  # Revision dates are ISO-8601, so string comparison orders them correctly.
+  defp per_request_header?(header_version),
+    do: is_binary(header_version) and header_version >= hd(@per_request_versions)
 
   defp request_meta_version(%{"params" => %{"_meta" => %{@meta_protocol_version => version}}}),
     do: version
@@ -570,10 +561,9 @@ defmodule AshAi.Mcp.Server do
     payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}}
 
     payload =
-      case req_header(conn, "mcp-protocol-version") do
-        version when is_binary(version) and version >= hd(@per_request_versions) -> payload
-        _initialize_based_or_absent -> Map.put(payload, "id", nil)
-      end
+      if per_request_header?(req_header(conn, "mcp-protocol-version")),
+        do: payload,
+        else: Map.put(payload, "id", nil)
 
     send_json(conn, status, payload)
   end
@@ -639,29 +629,23 @@ defmodule AshAi.Mcp.Server do
   """
   def handle_get(conn, _session_id) do
     conn
-    |> Plug.Conn.put_resp_header("allow", "POST, DELETE")
+    |> Plug.Conn.put_resp_header("allow", "POST")
     |> Plug.Conn.send_resp(405, "")
   end
 
   @doc """
-  Handle HTTP DELETE request for session termination
-  """
-  def handle_delete(conn, session_id) do
-    case req_header(conn, "mcp-protocol-version") do
-      version when version in @per_request_versions ->
-        conn
-        |> Plug.Conn.put_resp_header("allow", "POST")
-        |> Plug.Conn.send_resp(405, "")
+  Process an HTTP DELETE request.
 
-      _initialize_based_or_absent ->
-        if session_id do
-          conn
-          |> Plug.Conn.send_resp(200, "")
-        else
-          conn
-          |> Plug.Conn.send_resp(400, "")
-        end
-    end
+  Responds `405 Method Not Allowed` for every protocol version. 2026-07-28
+  removed sessions, and the initialize-based revisions let a server refuse
+  client-initiated session termination this way. The server keeps no session
+  state, so a terminated session would keep answering requests, while those
+  revisions require `404` for every request after termination.
+  """
+  def handle_delete(conn, _session_id) do
+    conn
+    |> Plug.Conn.put_resp_header("allow", "POST")
+    |> Plug.Conn.send_resp(405, "")
   end
 
   @doc """

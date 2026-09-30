@@ -117,19 +117,28 @@ defmodule AshAi.Mcp.ServerTest do
 
       response = Router.call(conn, @opts)
       assert response.status == 405
-      assert get_resp_header(response, "allow") == ["POST, DELETE"]
+      assert get_resp_header(response, "allow") == ["POST"]
     end
   end
 
   describe "DELETE" do
-    test "initialize-era session termination remains supported" do
-      response =
-        conn(:delete, "/")
-        |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> put_req_header("mcp-session-id", "initialize-era-session")
-        |> Router.call(@opts)
+    test "initialize-era session termination is refused with 405" do
+      for headers <- [
+            [
+              {"mcp-protocol-version", "2025-06-18"},
+              {"mcp-session-id", "initialize-era-session"}
+            ],
+            []
+          ] do
+        response =
+          Enum.reduce(headers, conn(:delete, "/"), fn {name, value}, conn ->
+            put_req_header(conn, name, value)
+          end)
+          |> Router.call(@opts)
 
-      assert response.status == 200
+        assert response.status == 405
+        assert get_resp_header(response, "allow") == ["POST"]
+      end
     end
   end
 

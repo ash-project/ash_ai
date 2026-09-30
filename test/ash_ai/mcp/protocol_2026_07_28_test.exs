@@ -415,6 +415,17 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert response.status == 405
       assert get_resp_header(response, "allow") == ["POST"]
     end
+
+    test "DELETE with a later protocol version is also removed" do
+      response =
+        conn(:delete, "/")
+        |> put_req_header("mcp-protocol-version", "2030-01-01")
+        |> put_req_header("mcp-session-id", "initialize-era-session")
+        |> Router.call(@tool_opts)
+
+      assert response.status == 405
+      assert get_resp_header(response, "allow") == ["POST"]
+    end
   end
 
   describe "required params" do
