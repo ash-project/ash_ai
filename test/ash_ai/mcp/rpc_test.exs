@@ -26,6 +26,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "initialize",
             id: "1",
             params: %{
@@ -57,6 +58,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "initialize",
             id: "1",
             params: %{
@@ -83,6 +85,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "tools/call",
             id: "2",
             params: %{
@@ -132,7 +135,7 @@ defmodule AshAi.Mcp.ServerTest do
 
   describe "ping" do
     test "responds with an empty result" do
-      conn = conn(:post, "/", %{method: "ping", id: "9"})
+      conn = conn(:post, "/", %{jsonrpc: "2.0", method: "ping", id: "9"})
 
       response = Router.call(conn, @opts)
       assert response.status == 200
@@ -228,6 +231,86 @@ defmodule AshAi.Mcp.ServerTest do
     test "a batch of notifications needs no response" do
       assert {202, false} =
                rpc(%{"_json" => [%{"jsonrpc" => "2.0", "method" => "notifications/initialized"}]})
+    end
+
+    test "a batch of notifications the server cannot accept is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{"_json" => [%{"jsonrpc" => "1.0", "method" => "notifications/initialized"}]})
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "a request without jsonrpc 2.0 is an Invalid Request" do
+      for version <- [nil, "1.0", 2] do
+        body = %{"jsonrpc" => version, "id" => "1", "method" => "ping"}
+
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_600}}} =
+                 rpc(Map.reject(body, fn {_key, value} -> is_nil(value) end))
+      end
+    end
+
+    test "a notification without jsonrpc 2.0 is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{"method" => "notifications/initialized"})
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "process_message/3 answers a rejected notification with an existing result type" do
+      assert {:json_response, json, nil} =
+               AshAi.Mcp.Server.process_message(
+                 %{"method" => "notifications/initialized"},
+                 nil,
+                 []
+               )
+
+      assert %{"error" => %{"code" => -32_600}} = Jason.decode!(json)
+    end
+
+    test "a client response is accepted with 202" do
+      for response <- [
+            %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}},
+            %{"jsonrpc" => "2.0", "id" => 7, "error" => %{"code" => -1, "message" => "no"}}
+          ] do
+        assert {202, false} = rpc(response)
+      end
+    end
+
+    test "a batch of client responses is accepted with 202" do
+      assert {202, false} = rpc(%{"_json" => [%{"jsonrpc" => "2.0", "id" => 7, "result" => %{}}]})
+    end
+
+    test "a batch of a client response and a rejected notification is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{
+                 "_json" => [
+                   %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}},
+                   %{"jsonrpc" => "1.0", "method" => "notifications/initialized"}
+                 ]
+               })
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "a method that is not a string is an Invalid Request" do
+      for method <- [%{}, [], 5, nil] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_600}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => method})
+      end
+    end
+
+    test "a request ID that is not a string or number is an Invalid Request" do
+      for id <- [nil, true, %{"a" => 1}, [1]] do
+        assert {200, %{"id" => nil, "error" => %{"code" => -32_600}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => id, "method" => "ping"})
+      end
+    end
+
+    test "a fractional request ID is accepted" do
+      # schema.ts types RequestId as `string | number`, though the prose says
+      # "string or integer"
+      assert {200, %{"id" => 1.5, "result" => %{}}} =
+               rpc(%{"jsonrpc" => "2.0", "id" => 1.5, "method" => "ping"})
     end
 
     test "tools/call params that are not an object are Invalid Params" do

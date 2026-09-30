@@ -245,6 +245,7 @@ defmodule AshAi.Mcp.ResourcesTest do
     test "session context is passed to action" do
       init_response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "initialize",
           "id" => "init_1",
           "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -266,6 +267,7 @@ defmodule AshAi.Mcp.ResourcesTest do
 
       response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "resources/read",
           "id" => "actor_read_1",
           "params" => %{"uri" => "file://test/actor"}
@@ -301,6 +303,7 @@ defmodule AshAi.Mcp.ResourcesTest do
 
       response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "resources/read",
           "id" => "tenant_read_1",
           "params" => %{"uri" => "file://test/actor"}
@@ -348,6 +351,7 @@ defmodule AshAi.Mcp.ResourcesTest do
     test "capabilities include resources when MCP resources are present" do
       init_response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "initialize",
           "id" => "init_1",
           "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -364,6 +368,7 @@ defmodule AshAi.Mcp.ResourcesTest do
     test "capabilities does not include resources when MCP resources not present" do
       init_response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "initialize",
           "id" => "init_1",
           "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -382,6 +387,7 @@ defmodule AshAi.Mcp.ResourcesTest do
     test "full flow: initialize -> list -> read" do
       init_response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "initialize",
           "id" => "init_1",
           "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -419,6 +425,7 @@ defmodule AshAi.Mcp.ResourcesTest do
   defp initialize_and_get_session_id(opts) do
     response =
       conn(:post, "/", %{
+        "jsonrpc" => "2.0",
         "method" => "initialize",
         "id" => "init_1",
         "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -429,7 +436,7 @@ defmodule AshAi.Mcp.ResourcesTest do
   end
 
   defp list_resources(session_id, opts) do
-    conn(:post, "/", %{"method" => "resources/list", "id" => "list_1"})
+    conn(:post, "/", %{"jsonrpc" => "2.0", "method" => "resources/list", "id" => "list_1"})
     |> put_req_header("mcp-session-id", session_id)
     |> Router.call(opts)
   end
@@ -441,7 +448,12 @@ defmodule AshAi.Mcp.ResourcesTest do
   defp read_resource(session_id, uri, params, opts) when is_map(params) do
     request_params = Map.put(params, "uri", uri)
 
-    conn(:post, "/", %{"method" => "resources/read", "id" => "read_1", "params" => request_params})
+    conn(:post, "/", %{
+      "jsonrpc" => "2.0",
+      "method" => "resources/read",
+      "id" => "read_1",
+      "params" => request_params
+    })
     |> put_req_header("mcp-session-id", session_id)
     |> Router.call(opts)
   end

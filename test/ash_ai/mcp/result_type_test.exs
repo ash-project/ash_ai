@@ -52,6 +52,7 @@ defmodule AshAi.Mcp.ResultTypeTest do
   defp initialize_and_get_session_id(opts) do
     :post
     |> conn("/", %{
+      "jsonrpc" => "2.0",
       "method" => "initialize",
       "id" => "init_1",
       "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -64,6 +65,7 @@ defmodule AshAi.Mcp.ResultTypeTest do
   defp call_tool(session_id, tool_name, params) do
     :post
     |> conn("/", %{
+      "jsonrpc" => "2.0",
       "method" => "tools/call",
       "id" => "call_1",
       "params" => Map.put(params, "name", tool_name)

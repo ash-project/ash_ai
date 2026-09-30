@@ -359,13 +359,14 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       assert %{
                "jsonrpc" => "2.0",
-               "id" => nil,
                "error" => %{
                  "code" => -32_600,
                  "message" =>
                    "Invalid Request: expected a JSON-RPC request object with a \"method\""
                }
-             } = Jason.decode!(response.resp_body)
+             } = body = Jason.decode!(response.resp_body)
+
+      refute Map.has_key?(body, "id")
     end
 
     test "top-level JSON-RPC batches return one bounded Invalid Request error" do
@@ -387,13 +388,14 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       assert %{
                "jsonrpc" => "2.0",
-               "id" => nil,
                "error" => %{
                  "code" => -32_600,
                  "message" =>
                    "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
                }
-             } = Jason.decode!(response.resp_body)
+             } = body = Jason.decode!(response.resp_body)
+
+      refute Map.has_key?(body, "id")
     end
 
     test "DELETE is removed even when a session header is present" do
@@ -405,6 +407,53 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       assert response.status == 405
       assert get_resp_header(response, "allow") == ["POST"]
+    end
+  end
+
+  describe "JSON-RPC envelope" do
+    defp envelope_request(body) do
+      response =
+        conn(:post, "/", Map.put(body, "params", %{"_meta" => request_meta()}))
+        |> put_req_header("mcp-protocol-version", @protocol_version)
+        |> put_req_header("mcp-method", "tools/list")
+        |> Router.call(@tool_opts)
+
+      {response.status, Jason.decode!(response.resp_body)}
+    end
+
+    test "a request without jsonrpc 2.0 is an Invalid Request" do
+      for body <- [
+            %{"id" => "req_1", "method" => "tools/list"},
+            %{"jsonrpc" => "1.0", "id" => "req_1", "method" => "tools/list"}
+          ] do
+        assert {400, %{"id" => "req_1", "error" => %{"code" => -32_600}}} =
+                 envelope_request(body)
+      end
+    end
+
+    test "a method that is not a string is an Invalid Request" do
+      for method <- [%{}, [], 5, nil] do
+        assert {400, %{"id" => "req_1", "error" => %{"code" => -32_600}}} =
+                 envelope_request(%{"jsonrpc" => "2.0", "id" => "req_1", "method" => method})
+      end
+    end
+
+    test "a request ID that is not a string or number is an Invalid Request without an id" do
+      for id <- [nil, true, %{"a" => 1}, [1]] do
+        assert {400, %{"error" => %{"code" => -32_600}} = body} =
+                 envelope_request(%{"jsonrpc" => "2.0", "id" => id, "method" => "tools/list"})
+
+        refute Map.has_key?(body, "id")
+      end
+    end
+
+    test "string, integer, and fractional request IDs are accepted" do
+      # schema.ts types RequestId as `string | number`, though the prose says
+      # "string or integer"
+      for id <- ["req_1", 7, 1.5] do
+        assert {200, %{"id" => ^id, "result" => %{"tools" => _}}} =
+                 envelope_request(%{"jsonrpc" => "2.0", "id" => id, "method" => "tools/list"})
+      end
     end
   end
 

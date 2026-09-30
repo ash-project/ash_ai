@@ -139,7 +139,7 @@ defmodule AshAi.Mcp.UiResourcesTest do
       session_id = extract_session_id(response)
 
       tool_response =
-        conn(:post, "/", %{"method" => "tools/list", "id" => "list_tools"})
+        conn(:post, "/", %{"jsonrpc" => "2.0", "method" => "tools/list", "id" => "list_tools"})
         |> put_req_header("mcp-session-id", session_id)
         |> Router.call(tools: [:list_artists_with_ui], otp_app: :ash_ai)
 
@@ -148,6 +148,7 @@ defmodule AshAi.Mcp.UiResourcesTest do
 
       call_response =
         conn(:post, "/", %{
+          "jsonrpc" => "2.0",
           "method" => "tools/call",
           "id" => "call_tool",
           "params" => %{"name" => "list_artists_with_ui", "arguments" => %{}}
@@ -186,6 +187,7 @@ defmodule AshAi.Mcp.UiResourcesTest do
   defp initialize_and_get_session_id(opts) do
     response =
       conn(:post, "/", %{
+        "jsonrpc" => "2.0",
         "method" => "initialize",
         "id" => "init_1",
         "params" => %{"client" => %{"name" => "test_client", "version" => "1.0.0"}}
@@ -197,6 +199,7 @@ defmodule AshAi.Mcp.UiResourcesTest do
 
   defp initialize_with_capabilities(opts, capabilities) do
     conn(:post, "/", %{
+      "jsonrpc" => "2.0",
       "method" => "initialize",
       "id" => "init_capabilities",
       "params" => %{
@@ -239,13 +242,14 @@ defmodule AshAi.Mcp.UiResourcesTest do
   end
 
   defp list_resources(session_id, opts) do
-    conn(:post, "/", %{"method" => "resources/list", "id" => "list_1"})
+    conn(:post, "/", %{"jsonrpc" => "2.0", "method" => "resources/list", "id" => "list_1"})
     |> put_req_header("mcp-session-id", session_id)
     |> Router.call(opts)
   end
 
   defp read_resource(session_id, uri, opts) do
     conn(:post, "/", %{
+      "jsonrpc" => "2.0",
       "method" => "resources/read",
       "id" => "read_1",
       "params" => %{"uri" => uri}

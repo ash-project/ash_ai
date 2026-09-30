@@ -95,10 +95,14 @@ defmodule AshAi.Mcp.Server do
         |> Plug.Conn.send_resp(200, response)
 
       {:json_response, response, _session_id} ->
-        # Regular JSON response
+        # The initialize-based transports answer a POST without requests with
+        # 202 or an HTTP error status, so an error for input the server
+        # cannot accept goes out with 400
+        status = if without_requests?(body), do: 400, else: 200
+
         conn
         |> Plug.Conn.put_resp_header("content-type", "application/json")
-        |> Plug.Conn.send_resp(200, response)
+        |> Plug.Conn.send_resp(status, response)
 
       {:batch_response, response, _session_id} ->
         # Batch response
@@ -111,6 +115,21 @@ defmodule AshAi.Mcp.Server do
         conn
         |> Plug.Conn.send_resp(202, "")
     end
+  end
+
+  # Notifications and client responses expect no answer
+  defp without_requests?([]), do: false
+  defp without_requests?(batch) when is_list(batch), do: Enum.all?(batch, &unanswered?/1)
+  defp without_requests?(message), do: unanswered?(message)
+
+  defp unanswered?(message), do: notification?(message) or response?(message)
+
+  defp notification?(message),
+    do: is_map(message) and is_map_key(message, "method") and not is_map_key(message, "id")
+
+  defp response?(message) do
+    is_map(message) and not is_map_key(message, "method") and
+      (is_map_key(message, "result") or is_map_key(message, "error"))
   end
 
   # Plug.Parsers wraps JSON array bodies (2025-03-26 batch requests) in a "_json" key
@@ -161,7 +180,31 @@ defmodule AshAi.Mcp.Server do
 
   defp request_meta_version(_body), do: nil
 
-  defp handle_post_2026_07_28(conn, %{"method" => method, "id" => id} = message, opts) do
+  defp handle_post_2026_07_28(conn, %{"method" => _method} = message, opts) do
+    case invalid_envelope(message) do
+      nil ->
+        handle_message_2026_07_28(conn, message, opts)
+
+      error ->
+        error_response_2026_07_28(conn, 400, request_id(message), -32_600, error)
+    end
+  end
+
+  defp handle_post_2026_07_28(conn, batch, _opts) when is_list(batch) do
+    error_response_2026_07_28(
+      conn,
+      400,
+      nil,
+      -32_600,
+      "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
+    )
+  end
+
+  defp handle_post_2026_07_28(conn, _other, _opts) do
+    error_response_2026_07_28(conn, 400, nil, -32_600, @invalid_request_message)
+  end
+
+  defp handle_message_2026_07_28(conn, %{"method" => method, "id" => id} = message, opts) do
     cond do
       # Structurally invalid `_meta` is Invalid Params, before any version or
       # header comparison (SEP-2575)
@@ -191,23 +234,33 @@ defmodule AshAi.Mcp.Server do
   # Notifications: the core 2026-07-28 protocol defines no client-to-server
   # notifications over Streamable HTTP, and defines no header requirements
   # for notification POSTs. Accept and ignore.
-  defp handle_post_2026_07_28(conn, %{"method" => _method}, _opts) do
+  defp handle_message_2026_07_28(conn, _notification, _opts) do
     Plug.Conn.send_resp(conn, 202, "")
   end
 
-  defp handle_post_2026_07_28(conn, batch, _opts) when is_list(batch) do
-    error_response_2026_07_28(
-      conn,
-      400,
-      nil,
-      -32_600,
-      "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
-    )
+  defp invalid_envelope(message) do
+    cond do
+      message["jsonrpc"] != "2.0" ->
+        ~s(Invalid Request: "jsonrpc" must be "2.0")
+
+      not is_binary(message["method"]) ->
+        ~s(Invalid Request: "method" must be a string)
+
+      is_map_key(message, "id") and is_nil(request_id(message)) ->
+        ~s(Invalid Request: "id" must be a string or number)
+
+      true ->
+        nil
+    end
   end
 
-  defp handle_post_2026_07_28(conn, _other, _opts) do
-    error_response_2026_07_28(conn, 400, nil, -32_600, @invalid_request_message)
-  end
+  # The spec prose asks for "a string or integer ID", but every revision's
+  # schema.ts, which the spec names its source of truth, types `RequestId` as
+  # `string | number`, and JSON-RPC 2.0 only discourages fractional ids
+  # (SHOULD NOT). The server follows the schema and accepts fractional ids;
+  # `null` stays rejected because the prose forbids it explicitly.
+  defp request_id(%{"id" => id}) when is_binary(id) or is_number(id), do: id
+  defp request_id(_message), do: nil
 
   # Every request must carry `_meta` with the protocol version and client
   # capabilities. `clientInfo` is a SHOULD and MUST NOT be required.
@@ -468,7 +521,7 @@ defmodule AshAi.Mcp.Server do
       %{"code" => code, "message" => message}
       |> maybe_put("data", data)
 
-    send_json(conn, status, %{"jsonrpc" => "2.0", "id" => id, "error" => error})
+    send_json(conn, status, put_if(%{"jsonrpc" => "2.0", "error" => error}, "id", id))
   end
 
   # sobelow_skip ["XSS.SendResp"]
@@ -669,18 +722,26 @@ defmodule AshAi.Mcp.Server do
 
       {:ok, batch} when is_list(batch) ->
         # Handle batch requests
-        responses = Enum.map(batch, fn item -> process_message(item, session_id, opts) end)
+        # Pair each item with its result and drop the ones needing no response
+        answered =
+          batch
+          |> Enum.map(fn item -> {item, process_message(item, session_id, opts)} end)
+          |> Enum.reject(&match?({_item, {:no_response, _, _}}, &1))
 
-        # Filter out no_response items and format the response
-        response_items = Enum.filter(responses, fn {type, _, _} -> type != :no_response end)
+        cond do
+          Enum.empty?(answered) ->
+            # All items were notifications, no response needed
+            {:no_response, nil, session_id}
 
-        if Enum.empty?(response_items) do
-          # All items were notifications, no response needed
-          {:no_response, nil, session_id}
-        else
-          # Convert each response to its JSON representation
-          json_responses = Enum.map(response_items, fn {_, json, _} -> json end)
-          {:batch_response, "[#{Enum.join(json_responses, ",")}]", session_id}
+          without_requests?(batch) ->
+            # A batch without requests gets 202 or an HTTP error status, never
+            # a batch body; handle_initialize_based_post picks the status
+            answered |> hd() |> elem(1)
+
+          true ->
+            # Convert each response to its JSON representation
+            json_responses = Enum.map(answered, fn {_item, {_, json, _}} -> json end)
+            {:batch_response, "[#{Enum.join(json_responses, ",")}]", session_id}
         end
 
       {:error, error} ->
@@ -695,11 +756,34 @@ defmodule AshAi.Mcp.Server do
   @doc """
   Process a single JSON-RPC message
   """
-  def process_message(
-        %{"method" => method, "id" => id, "params" => params} = message,
-        session_id,
-        opts
-      ) do
+  def process_message(%{"method" => _method} = message, session_id, opts) do
+    case invalid_envelope(message) do
+      nil ->
+        process_valid_message(message, session_id, opts)
+
+      error ->
+        response =
+          if is_map_key(message, "id"),
+            do: json_rpc_error_response(request_id(message), -32_600, error),
+            else: notification_error_response(-32_600, error)
+
+        {:json_response, response, session_id}
+    end
+  end
+
+  def process_message(message, session_id, opts) do
+    do_process_message(message, session_id, opts)
+  end
+
+  # The transports give the error for a rejected notification no id
+  defp notification_error_response(code, message),
+    do: Jason.encode!(%{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}})
+
+  defp process_valid_message(
+         %{"method" => method, "id" => id, "params" => params} = message,
+         session_id,
+         opts
+       ) do
     case invalid_params(method, params) do
       nil ->
         do_process_message(message, session_id, opts)
@@ -709,7 +793,7 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  def process_message(message, session_id, opts) do
+  defp process_valid_message(message, session_id, opts) do
     do_process_message(message, session_id, opts)
   end
 
@@ -883,6 +967,12 @@ defmodule AshAi.Mcp.Server do
 
       %{"method" => _method} ->
         # Handle other notifications (no id)
+        {:no_response, nil, session_id}
+
+      %{"jsonrpc" => "2.0", "id" => _id} = response
+      when is_map_key(response, "result") or is_map_key(response, "error") ->
+        # The server sends the client no requests, so a client response
+        # answers nothing; the transports accept it with 202
         {:no_response, nil, session_id}
 
       _other ->
