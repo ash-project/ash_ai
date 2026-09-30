@@ -1205,11 +1205,11 @@ defmodule AshAi.Mcp.Server do
   defp action_resource_to_map(%AshAi.McpResource{} = resource) do
     %{
       "name" => Atom.to_string(resource.name),
-      "description" => resource.description,
       "uri" => resource.uri,
       "title" => resource.title,
       "mimeType" => resource.mime_type
     }
+    |> put_if("description", resource.description)
   end
 
   defp ui_resource_to_map(%AshAi.McpUiResource{} = resource, opts) do
