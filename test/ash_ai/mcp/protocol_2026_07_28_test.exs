@@ -638,6 +638,27 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert error["message"] =~ "Mcp-Name"
     end
 
+    test "a plain Mcp-Name header with characters that need Base64 encoding is rejected" do
+      for name <- ["café", "tab\u0001tool"] do
+        response = versioned_request("tools/call", %{"name" => name}, %{"mcp-name" => name})
+
+        assert response.status == 400
+
+        error = Jason.decode!(response.resp_body)["error"]
+        assert error["code"] == -32_020
+        assert error["message"] =~ "require Base64 sentinel encoding"
+      end
+    end
+
+    test "a Base64 sentinel encoded non-ASCII Mcp-Name header passes validation" do
+      encoded = "=?base64?" <> Base.encode64("café") <> "?="
+
+      response = versioned_request("tools/call", %{"name" => "café"}, %{"mcp-name" => encoded})
+
+      assert response.status == 200
+      assert Jason.decode!(response.resp_body)["error"]["message"] == "Tool not found: café"
+    end
+
     test "an Mcp-Name header that does not match the body is rejected" do
       response =
         versioned_request("tools/call", %{"name" => "list_artists"}, %{"mcp-name" => "other_tool"})

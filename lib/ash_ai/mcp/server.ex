@@ -356,8 +356,8 @@ defmodule AshAi.Mcp.Server do
           {:ok, decoded} ->
             "Mcp-Name header value #{inspect(decoded)} does not match body value #{inspect(expected)}"
 
-          :error ->
-            "Mcp-Name header value is not valid Base64 sentinel encoding"
+          {:error, reason} ->
+            "Mcp-Name header value #{reason}"
         end
     end
   end
@@ -370,11 +370,18 @@ defmodule AshAi.Mcp.Server do
          {:ok, decoded} <- Base.decode64(encoded) do
       {:ok, decoded}
     else
-      _ -> :error
+      _ -> {:error, "is not valid Base64 sentinel encoding"}
     end
   end
 
-  defp decode_header_value(value), do: {:ok, value}
+  defp decode_header_value(value) do
+    if plain_header_value?(value),
+      do: {:ok, value},
+      else: {:error, "contains characters that require Base64 sentinel encoding"}
+  end
+
+  # RFC 9110 field values: visible ASCII, space, and horizontal tab
+  defp plain_header_value?(value), do: String.match?(value, ~r/\A[\x20-\x7E\t]*\z/)
 
   defp dispatch_2026_07_28(conn, "server/discover", id, params, opts) do
     result =
