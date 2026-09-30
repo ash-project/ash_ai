@@ -587,7 +587,7 @@ defmodule AshAi.Mcp.Server do
         :ok
 
       [origin] ->
-        if origin_allowed?(trim_ows(origin), conn, opts[:allowed_origins]) do
+        if origin_allowed?(trim_ows(origin), opts[:allowed_origins]) do
           :ok
         else
           :forbidden
@@ -598,7 +598,7 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  defp origin_allowed?(origin, _conn, nil) do
+  defp origin_allowed?(origin, nil) do
     # Without an explicit :allowed_origins allowlist, only same-machine
     # (localhost) origins are trusted. The request Host and X-Forwarded-Proto
     # headers are both attacker-controlled - and equal to the origin under DNS
@@ -608,9 +608,9 @@ defmodule AshAi.Mcp.Server do
     localhost_host?(URI.parse(origin).host)
   end
 
-  defp origin_allowed?(origin, _conn, allowed) when is_list(allowed), do: origin in allowed
+  defp origin_allowed?(origin, allowed) when is_list(allowed), do: origin in allowed
 
-  defp origin_allowed?(origin, _conn, allowed) when is_function(allowed, 1),
+  defp origin_allowed?(origin, allowed) when is_function(allowed, 1),
     do: allowed.(origin)
 
   defp localhost_host?(host), do: host in ["localhost", "127.0.0.1", "::1", "[::1]"]

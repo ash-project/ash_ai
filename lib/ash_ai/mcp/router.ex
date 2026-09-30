@@ -31,9 +31,9 @@ if Code.ensure_loaded?(Plug) do
 
     # DNS-rebinding protection: the transport requires Origin validation on
     # all incoming connections. Configure with `allowed_origins` (a list of
-    # origin strings or a 1-arity predicate); by default localhost origins
-    # and same-host HTTPS origins are accepted, and requests without an
-    # Origin header (non-browser MCP clients) always pass.
+    # origin strings or a 1-arity predicate); by default only localhost
+    # origins are accepted, and requests without an Origin header
+    # (non-browser MCP clients) always pass.
     plug(:validate_origin)
 
     plug(:parse_body)
