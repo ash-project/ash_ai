@@ -237,6 +237,32 @@ defmodule AshAi.Mcp.ServerTest do
                rpc(%{"_json" => batch})
     end
 
+    test "a batch is an Invalid Request from 2025-06-18 on" do
+      batch = [%{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"}]
+
+      response =
+        conn(:post, "/", %{"_json" => batch})
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> Router.call(@opts)
+
+      assert response.status == 400
+
+      assert %{"id" => nil, "error" => %{"code" => -32_600}} =
+               Jason.decode!(response.resp_body)
+    end
+
+    test "a batch is still answered for 2025-03-26" do
+      batch = [%{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"}]
+
+      response =
+        conn(:post, "/", %{"_json" => batch})
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
+        |> Router.call(@opts)
+
+      assert response.status == 200
+      assert [%{"id" => "1", "result" => %{}}] = Jason.decode!(response.resp_body)
+    end
+
     test "a batch of notifications needs no response" do
       assert {202, false} =
                rpc(%{"_json" => [%{"jsonrpc" => "2.0", "method" => "notifications/initialized"}]})

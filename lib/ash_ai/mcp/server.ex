@@ -76,13 +76,30 @@ defmodule AshAi.Mcp.Server do
       |> Keyword.merge(opts)
 
     body = unwrap_json_params(body)
+    header_version = req_header(conn, "mcp-protocol-version")
 
-    if per_request_version?(body, req_header(conn, "mcp-protocol-version")) do
-      handle_post_2026_07_28(conn, body, opts)
-    else
-      handle_initialize_based_post(conn, body, session_id, opts)
+    cond do
+      is_list(body) and not batching_version?(header_version) ->
+        send_error_without_id(
+          conn,
+          400,
+          -32_600,
+          "JSON-RPC batch requests are not supported for protocol version #{header_version}"
+        )
+
+      per_request_version?(body, header_version) ->
+        handle_post_2026_07_28(conn, body, opts)
+
+      true ->
+        handle_initialize_based_post(conn, body, session_id, opts)
     end
   end
+
+  # 2025-06-18 removed JSON-RPC batching, and 2026-07-28 kept it out. Earlier
+  # revisions allow it, and a request without an MCP-Protocol-Version header
+  # counts as 2025-03-26.
+  defp batching_version?(header_version),
+    do: is_nil(header_version) or header_version < "2025-06-18"
 
   # sobelow_skip ["XSS.SendResp"]
   defp handle_initialize_based_post(conn, body, session_id, opts) do
@@ -147,13 +164,6 @@ defmodule AshAi.Mcp.Server do
   defp per_request_version?(body, header_version) when is_map(body),
     do: is_binary(request_meta_version(body)) or per_request_header?(header_version)
 
-  # Batches are only defined for initialize-based protocol versions. A batch
-  # carrying a current/future per-request version must still enter the current
-  # handler so it can return one bounded Invalid Request response rather than
-  # accidentally using the initialize-era batch path.
-  defp per_request_version?(body, header_version) when is_list(body),
-    do: per_request_header?(header_version)
-
   defp per_request_version?(_body, _header_version), do: false
 
   # Every dated revision before 2026-07-28 negotiates via `initialize`,
@@ -179,16 +189,6 @@ defmodule AshAi.Mcp.Server do
       error ->
         error_response_2026_07_28(conn, 400, request_id(message), -32_600, error)
     end
-  end
-
-  defp handle_post_2026_07_28(conn, batch, _opts) when is_list(batch) do
-    error_response_2026_07_28(
-      conn,
-      400,
-      nil,
-      -32_600,
-      "JSON-RPC batch requests are not supported for protocol version 2026-07-28"
-    )
   end
 
   defp handle_post_2026_07_28(conn, _other, _opts) do
