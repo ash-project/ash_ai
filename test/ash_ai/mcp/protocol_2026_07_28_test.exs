@@ -546,22 +546,73 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert @protocol_version in error["data"]["supported"]
     end
 
-    test "initialize-based revisions this server doesn't advertise still route to initialize-based semantics" do
-      # e.g. claude.ai sends `MCP-Protocol-Version: 2025-11-25` on requests
-      # without per-request _meta; every dated revision before 2026-07-28
-      # negotiates via initialize and must not be asked for _meta.
-      for version <- ["2025-11-25", "2024-11-05"] do
+    test "a 2025-11-25 header gets initialize-based semantics" do
+      # claude.ai sends `MCP-Protocol-Version: 2025-11-25` on requests without
+      # per-request _meta
+      conn =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+
+      response = Router.call(conn, @tool_opts)
+      assert response.status == 200
+
+      result = Jason.decode!(response.resp_body)["result"]
+      assert is_list(result["tools"])
+      refute Map.has_key?(result, "resultType")
+    end
+
+    test "an unsupported initialize-based header version is rejected with 400" do
+      for version <- ["2024-11-05", "1999-01-01"] do
         conn =
           conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})
           |> put_req_header("mcp-protocol-version", version)
 
         response = Router.call(conn, @tool_opts)
-        assert response.status == 200
+        assert response.status == 400
 
-        result = Jason.decode!(response.resp_body)["result"]
-        assert is_list(result["tools"])
-        refute Map.has_key?(result, "resultType")
+        assert %{"id" => "1", "error" => %{"code" => -32_022, "data" => data}} =
+                 Jason.decode!(response.resp_body)
+
+        assert data == %{
+                 "supported" => ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
+                 "requested" => version
+               }
       end
+    end
+
+    test "an unsupported header version on a notification gets an error without an id" do
+      response =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "method" => "notifications/initialized"})
+        |> put_req_header("mcp-protocol-version", "2024-11-05")
+        |> Router.call(@tool_opts)
+
+      assert response.status == 400
+      body = Jason.decode!(response.resp_body)
+      assert body["error"]["code"] == -32_022
+      refute Map.has_key?(body, "id")
+    end
+
+    test "the configured protocol_version_statement is accepted in the header" do
+      opts = Keyword.put(@tool_opts, :protocol_version_statement, "2024-11-05")
+
+      initialize =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{"protocolVersion" => "2025-06-18"}
+        })
+        |> Router.call(opts)
+
+      assert Jason.decode!(initialize.resp_body)["result"]["protocolVersion"] == "2024-11-05"
+
+      response =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "2", "method" => "tools/list"})
+        |> put_req_header("mcp-protocol-version", "2024-11-05")
+        |> Router.call(opts)
+
+      assert response.status == 200
+      assert is_list(Jason.decode!(response.resp_body)["result"]["tools"])
     end
 
     test "initialize-based header versions still get initialize-based semantics" do
@@ -594,7 +645,22 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert result["protocolVersion"] == "2025-06-18"
     end
 
-    test "initialize downgrades unsupported requested versions" do
+    test "initialize answers an unsupported requested version with the latest one" do
+      conn =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "1",
+          "method" => "initialize",
+          "params" => %{"protocolVersion" => "2024-11-05"}
+        })
+        # initialize precedes negotiation, so its header is not checked
+        |> put_req_header("mcp-protocol-version", "2024-11-05")
+
+      response = Router.call(conn, @tool_opts)
+      assert Jason.decode!(response.resp_body)["result"]["protocolVersion"] == "2025-11-25"
+    end
+
+    test "initialize echoes 2025-11-25" do
       conn =
         conn(:post, "/", %{
           "jsonrpc" => "2.0",
@@ -604,7 +670,7 @@ defmodule AshAi.Mcp.Protocol20260728Test do
         })
 
       response = Router.call(conn, @tool_opts)
-      assert Jason.decode!(response.resp_body)["result"]["protocolVersion"] == "2025-03-26"
+      assert Jason.decode!(response.resp_body)["result"]["protocolVersion"] == "2025-11-25"
     end
   end
 
@@ -741,6 +807,35 @@ defmodule AshAi.Mcp.Protocol20260728Test do
 
       assert response.status == 403
       assert %{"id" => nil, "error" => %{"code" => -32_600}} = Jason.decode!(response.resp_body)
+    end
+
+    test "2025-11-25 requests from a forbidden origin get an error without an id" do
+      response =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> put_req_header("origin", "http://evil.example.com")
+        |> Router.call(@tool_opts)
+
+      assert response.status == 403
+      body = Jason.decode!(response.resp_body)
+      assert body["error"]["code"] == -32_600
+      refute Map.has_key?(body, "id")
+    end
+
+    test "2025-11-25 errors for an unreadable id omit the id" do
+      for message <- [
+            %{"jsonrpc" => "2.0", "id" => nil, "method" => "tools/list"},
+            %{"jsonrpc" => "2.0"}
+          ] do
+        response =
+          conn(:post, "/", message)
+          |> put_req_header("mcp-protocol-version", "2025-11-25")
+          |> Router.call(@tool_opts)
+
+        body = Jason.decode!(response.resp_body)
+        assert body["error"]["code"] == -32_600
+        refute Map.has_key?(body, "id")
+      end
     end
 
     test "localhost origins are accepted" do

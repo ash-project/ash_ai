@@ -18,8 +18,9 @@ defmodule AshAi.Mcp.Server do
   * `2026-07-28`, which carries the protocol version, client identity, and
     capabilities in each request's `_meta` and never performs an
     `initialize` handshake, and
-  * the initialize-based revisions (`2025-06-18` and `2025-03-26`), which
-    negotiate via `initialize` and may use the `Mcp-Session-Id` header.
+  * the initialize-based revisions (`2025-11-25`, `2025-06-18`, and
+    `2025-03-26`), which negotiate via `initialize` and may use the
+    `Mcp-Session-Id` header.
 
   The revision is selected per request: an `initialize` request (or a
   request carrying an initialize-based/absent `MCP-Protocol-Version` header
@@ -39,8 +40,9 @@ defmodule AshAi.Mcp.Server do
 
   # Protocol revisions that declare their version on every request
   @per_request_versions ["2026-07-28"]
-  # Protocol revisions that negotiate their version via `initialize`
-  @initialize_based_versions ["2025-06-18", "2025-03-26"]
+  # Protocol revisions that negotiate their version via `initialize`, newest
+  # first: `initialize` falls back to the head
+  @initialize_based_versions ["2025-11-25", "2025-06-18", "2025-03-26"]
   @supported_protocol_versions @per_request_versions ++ @initialize_based_versions
 
   @meta_protocol_version "io.modelcontextprotocol/protocolVersion"
@@ -90,9 +92,62 @@ defmodule AshAi.Mcp.Server do
       per_request_version?(body, header_version) ->
         handle_post_2026_07_28(conn, body, opts)
 
+      unsupported_header_version?(body, header_version, opts) ->
+        payload = %{
+          "jsonrpc" => "2.0",
+          "error" => %{
+            "code" => -32_022,
+            "message" => "Unsupported protocol version: #{header_version}",
+            "data" => %{
+              "supported" => @supported_protocol_versions,
+              "requested" => header_version
+            }
+          }
+        }
+
+        send_json(conn, 400, put_error_id(payload, body, header_version))
+
       true ->
+        opts = Keyword.put(opts, :protocol_version_header, header_version)
         handle_initialize_based_post(conn, body, session_id, opts)
     end
+  end
+
+  # From 2025-06-18 on, the header carries the version negotiated by
+  # `initialize`, and the server must answer an unsupported one with 400. The
+  # error uses 2026-07-28's UnsupportedProtocolVersionError, which satisfies
+  # the earlier revisions too, since they define no error body. The
+  # server skips the check for `initialize`, which precedes negotiation, and
+  # accepts a configured `:protocol_version_statement`, because `initialize`
+  # states that version and the client sends it back on every request.
+  defp unsupported_header_version?(%{"method" => "initialize"}, _header_version, _opts),
+    do: false
+
+  defp unsupported_header_version?(_body, header_version, opts) do
+    accepted = [opts[:protocol_version_statement] | @initialize_based_versions]
+    is_binary(header_version) and header_version not in accepted
+  end
+
+  # An error for a request echoes its id. The transports give the error for
+  # a rejected notification no id, and an unreadable id follows the revision's
+  # rule for an unknown id.
+  defp put_error_id(payload, %{"id" => _} = message, header_version) do
+    case request_id(message) do
+      nil -> put_unknown_id(payload, header_version)
+      id -> Map.put(payload, "id", id)
+    end
+  end
+
+  defp put_error_id(payload, %{"method" => _}, _header_version), do: payload
+  defp put_error_id(payload, _body, header_version), do: put_unknown_id(payload, header_version)
+
+  # From 2025-11-25 on, the schema types an error's id as an optional string
+  # or number, so the server leaves an unknown id out. Earlier revisions
+  # follow JSON-RPC 2.0 and send `null`.
+  defp put_unknown_id(payload, header_version) do
+    if is_binary(header_version) and header_version >= "2025-11-25",
+      do: payload,
+      else: Map.put(payload, "id", nil)
   end
 
   # 2025-06-18 removed JSON-RPC batching, and 2026-07-28 kept it out. Earlier
@@ -166,11 +221,10 @@ defmodule AshAi.Mcp.Server do
 
   defp per_request_version?(_body, _header_version), do: false
 
-  # Every dated revision before 2026-07-28 negotiates via `initialize`,
-  # including ones this server doesn't itself advertise (e.g. a client
-  # sending `2025-11-25` before initialize downgrades it). Route them all to
-  # initialize-based semantics rather than demanding per-request `_meta` they
-  # cannot know about. Any other header value selects per-request semantics,
+  # Every dated revision before 2026-07-28 negotiates via `initialize`, so
+  # route them all to initialize-based semantics rather than demanding
+  # per-request `_meta` they cannot know about; that path rejects the ones
+  # this server does not support. Any other header value selects per-request semantics,
   # which reject an unsupported version with UnsupportedProtocolVersion.
   # Revision dates are ISO-8601, so string comparison orders them correctly.
   defp per_request_header?(header_version),
@@ -553,19 +607,13 @@ defmodule AshAi.Mcp.Server do
 
   @doc """
   Send a JSON-RPC error for a request whose `id` the server cannot read, such
-  as a body that is not valid JSON or one from a forbidden origin. 2026-07-28
-  omits the `id`; the initialize-based revisions follow JSON-RPC 2.0 and send
-  `null`.
+  as a body that is not valid JSON or one from a forbidden origin. From
+  2025-11-25 on, the response omits the `id`; earlier revisions follow
+  JSON-RPC 2.0 and send `null`.
   """
   def send_error_without_id(conn, status, code, message) do
     payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}}
-
-    payload =
-      if per_request_header?(req_header(conn, "mcp-protocol-version")),
-        do: payload,
-        else: Map.put(payload, "id", nil)
-
-    send_json(conn, status, payload)
+    send_json(conn, status, put_unknown_id(payload, req_header(conn, "mcp-protocol-version")))
   end
 
   @doc """
@@ -727,7 +775,7 @@ defmodule AshAi.Mcp.Server do
       {:ok, []} ->
         # JSON-RPC 2.0: an empty batch array is an Invalid Request
         response =
-          json_rpc_error_response(nil, -32_600, "Invalid Request: a batch must not be empty")
+          unknown_id_error_response(opts, -32_600, "Invalid Request: a batch must not be empty")
 
         {:json_response, response, session_id}
 
@@ -758,7 +806,7 @@ defmodule AshAi.Mcp.Server do
       {:error, error} ->
         # Handle parsing errors
         response =
-          json_rpc_error_response(nil, -32_700, "Parse error", %{"details" => inspect(error)})
+          unknown_id_error_response(opts, -32_700, "Parse error", %{"details" => inspect(error)})
 
         {:json_response, response, session_id}
     end
@@ -773,12 +821,9 @@ defmodule AshAi.Mcp.Server do
         do_process_message(message, session_id, opts)
 
       {code, error} ->
-        response =
-          if is_map_key(message, "id"),
-            do: json_rpc_error_response(request_id(message), code, error),
-            else: notification_error_response(code, error)
-
-        {:json_response, response, session_id}
+        payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => error}}
+        response = put_error_id(payload, message, opts[:protocol_version_header])
+        {:json_response, Jason.encode!(response), session_id}
     end
   end
 
@@ -786,9 +831,15 @@ defmodule AshAi.Mcp.Server do
     do_process_message(message, session_id, opts)
   end
 
-  # The transports give the error for a rejected notification no id
-  defp notification_error_response(code, message),
-    do: Jason.encode!(%{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}})
+  # An error for a message whose id the server cannot read follows the
+  # revision's rule for an unknown id
+  defp unknown_id_error_response(opts, code, message, data \\ nil) do
+    error = maybe_put(%{"code" => code, "message" => message}, "data", data)
+
+    %{"jsonrpc" => "2.0", "error" => error}
+    |> put_unknown_id(opts[:protocol_version_header])
+    |> Jason.encode!()
+  end
 
   # `params` is optional in JSON-RPC; `invalid_params` rejects a missing
   # `params` for the methods that require it. Only requests are checked,
@@ -844,7 +895,7 @@ defmodule AshAi.Mcp.Server do
         protocol_version_statement =
           opts[:protocol_version_statement] ||
             if(requested_version in @initialize_based_versions, do: requested_version) ||
-            "2025-03-26"
+            hd(@initialize_based_versions)
 
         capabilities = capabilities(opts, params["capabilities"] || %{})
 
@@ -994,7 +1045,7 @@ defmodule AshAi.Mcp.Server do
 
       _other ->
         # Invalid message
-        {:json_response, json_rpc_error_response(nil, -32_600, @invalid_request_message),
+        {:json_response, unknown_id_error_response(opts, -32_600, @invalid_request_message),
          session_id}
     end
   end

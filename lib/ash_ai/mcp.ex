@@ -11,8 +11,9 @@ defmodule AshAi.Mcp do
 
   The server supports multiple protocol revisions in tandem on the same
   endpoint: `2026-07-28` (stateless, per-request `_meta`, `server/discover`,
-  mirrored `Mcp-Method`/`Mcp-Name` headers) as well as `2025-06-18` and
-  `2025-03-26` (the `initialize` handshake, `Mcp-Session-Id`). See
+  mirrored `Mcp-Method`/`Mcp-Name` headers) as well as `2025-11-25`,
+  `2025-06-18`, and `2025-03-26` (the `initialize` handshake,
+  `Mcp-Session-Id`). See
   `AshAi.Mcp.Server` for how the revision is selected per request.
 
   ## Overview

@@ -75,7 +75,7 @@ We are still experimenting to see what tools (if any) are useful while developin
 
 AshAi provides a pre-built MCP server that can be used to expose your tool definitions to an MCP client (typically some kind of IDE, or Claude Desktop for example).
 
-The server supports MCP protocol versions `2026-07-28`, `2025-06-18`, and `2025-03-26`.
+The server supports MCP protocol versions `2026-07-28`, `2025-11-25`, `2025-06-18`, and `2025-03-26`.
 
 #### Roadmap
 
