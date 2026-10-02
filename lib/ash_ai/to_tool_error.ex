@@ -118,6 +118,20 @@ defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidFilterReference do
   end
 end
 
+defimpl AshAi.ToToolError, for: Ash.Error.Unknown.UnknownError do
+  def to_tool_error(%{error: error}) when is_binary(error) and error != "" do
+    error
+  end
+
+  def to_tool_error(%{error: nil}) do
+    "is invalid"
+  end
+
+  def to_tool_error(error) do
+    Exception.message(error)
+  end
+end
+
 defimpl AshAi.ToToolError, for: Ash.Error.Invalid.InvalidPrimaryKey do
   def to_tool_error(_error) do
     "invalid primary key provided"
