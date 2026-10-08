@@ -360,13 +360,10 @@ defmodule AshAi.Tool.Execution do
     end
 
     aggregate_kind = String.to_existing_atom(aggregate_kind)
+    {field_type, field_constraints} = lookup_field_type(resource, aggregate["field"])
 
     {:ok, aggregate_type, aggregate_constraints} =
-      Ash.Query.Aggregate.kind_to_type(
-        aggregate_kind,
-        field.type,
-        field.constraints || []
-      )
+      Ash.Query.Aggregate.kind_to_type(aggregate_kind, field_type, field_constraints)
 
     query
     |> Ash.Query.unset([:limit, :offset])
