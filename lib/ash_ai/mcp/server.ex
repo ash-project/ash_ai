@@ -239,18 +239,10 @@ defmodule AshAi.Mcp.Server do
       error = validate_request_meta(message) ->
         error_response_2026_07_28(conn, 400, id, -32_602, error)
 
-      # Params follow this revision's schema, so a request declaring another
-      # version skips them and gets UnsupportedProtocolVersion below.
-      # initialize is a removed method here; dispatch answers it with Method
-      # not found naming the supported versions, whatever its params.
-      error =
-          request_meta_version(message) in @per_request_versions && method != "initialize" &&
-            invalid_params(method, message["params"]) ->
-        error_response_2026_07_28(conn, 400, id, -32_602, error)
-
-      # Header/body consistency comes before version support: a request whose
-      # header disagrees with its `_meta` is a HeaderMismatch even when one
-      # of the two names an unsupported version
+      # Header/body consistency comes before version support and params: the
+      # transport requires HeaderMismatch for any header validation failure,
+      # even when one of the two names an unsupported version or the params
+      # are invalid too
       error = validate_headers_2026_07_28(conn, message) ->
         error_response_2026_07_28(conn, 400, id, -32_020, error)
 
@@ -259,6 +251,11 @@ defmodule AshAi.Mcp.Server do
           "supported" => @supported_protocol_versions,
           "requested" => requested
         })
+
+      # initialize is a removed method here; dispatch answers it with Method
+      # not found naming the supported versions, whatever its params.
+      error = method != "initialize" && invalid_params(method, message["params"]) ->
+        error_response_2026_07_28(conn, 400, id, -32_602, error)
 
       true ->
         dispatch_2026_07_28(conn, method, id, message["params"] || %{}, opts)

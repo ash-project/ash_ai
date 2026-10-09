@@ -429,27 +429,52 @@ defmodule AshAi.Mcp.Protocol20260728Test do
   end
 
   describe "required params" do
-    test "tools/call without a string name is Invalid Params" do
+    # Mcp-Name mirrors params.name or params.uri, so a missing or non-string
+    # body value never matches the header and fails header validation first
+    test "tools/call without a string name is a HeaderMismatch" do
       for params <- [%{}, %{"name" => 5}] do
         response = versioned_request("tools/call", params, %{"mcp-name" => "list_artists"})
 
         assert response.status == 400
 
-        assert %{"error" => %{"code" => -32_602, "message" => "Invalid params: name" <> _}} =
+        assert %{"error" => %{"code" => -32_020, "message" => "Mcp-Name header value" <> _}} =
                  Jason.decode!(response.resp_body)
       end
     end
 
-    test "resources/read without a string uri is Invalid Params" do
+    test "resources/read without a string uri is a HeaderMismatch" do
       for params <- [%{}, %{"uri" => 5}] do
         response =
           versioned_request("resources/read", params, %{"mcp-name" => "file://x"}, @resource_opts)
 
         assert response.status == 400
 
-        assert %{"error" => %{"code" => -32_602, "message" => "Invalid params: uri" <> _}} =
+        assert %{"error" => %{"code" => -32_020, "message" => "Mcp-Name header value" <> _}} =
                  Jason.decode!(response.resp_body)
       end
+    end
+
+    test "a missing Mcp-Name header wins over an invalid name" do
+      response = versioned_request("tools/call", %{"name" => 5})
+
+      assert response.status == 400
+
+      assert %{"error" => %{"code" => -32_020, "message" => "Missing required Mcp-Name header"}} =
+               Jason.decode!(response.resp_body)
+    end
+
+    test "invalid params with valid headers are Invalid Params" do
+      response =
+        versioned_request(
+          "tools/call",
+          %{"name" => "list_artists", "arguments" => "x"},
+          %{"mcp-name" => "list_artists"}
+        )
+
+      assert response.status == 400
+
+      assert %{"error" => %{"code" => -32_602, "message" => "Invalid params: arguments" <> _}} =
+               Jason.decode!(response.resp_body)
     end
   end
 
