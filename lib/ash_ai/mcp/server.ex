@@ -120,7 +120,9 @@ defmodule AshAi.Mcp.Server do
   #   UnsupportedProtocolVersionError, which satisfies the earlier revisions
   #   too, since they define no error body. A configured
   #   `:protocol_version_statement` counts as supported, because
-  #   `initialize` states it and the client sends it back.
+  #   `initialize` states it and the client sends it back. A value that is not
+  #   a revision date at all is `:unsupported`, since it would otherwise sort
+  #   above every dated revision.
   # * `batching?`: 2025-06-18 removed JSON-RPC batching.
   # * `omits_unknown_id?`: from 2025-11-25 on, the schema types an error's
   #   id as an optional string or number, so the server leaves an unknown id
@@ -130,6 +132,7 @@ defmodule AshAi.Mcp.Server do
 
     era =
       cond do
+        not String.match?(version, ~r/\A\d{4}-\d{2}-\d{2}\z/) -> :unsupported
         version >= hd(@per_request_versions) -> :per_request
         version in [opts[:protocol_version_statement] | @initialize_based_versions] -> :initialize
         true -> :unsupported
@@ -591,12 +594,11 @@ defmodule AshAi.Mcp.Server do
 
   defp trim_ows(value), do: String.replace(value, ~r/^[ \t]+|[ \t]+$/, "")
 
-  @doc """
-  Send a JSON-RPC error for a request whose `id` the server cannot read, such
-  as a body that is not valid JSON or one from a forbidden origin. From
-  2025-11-25 on, the response omits the `id`; earlier revisions follow
-  JSON-RPC 2.0 and send `null`.
-  """
+  # Send a JSON-RPC error for a request whose `id` the server cannot read, such
+  # as a body that is not valid JSON or one from a forbidden origin. From
+  # 2025-11-25 on, the response omits the `id`; earlier revisions follow
+  # JSON-RPC 2.0 and send `null`. Public only for `AshAi.Mcp.Router`.
+  @doc false
   def send_error_without_id(conn, status, code, message) do
     rules = header_rules(req_header(conn, "mcp-protocol-version"), [])
     send_json(conn, status, put_unknown_id(error_payload(code, message), rules.omits_unknown_id?))
@@ -766,11 +768,18 @@ defmodule AshAi.Mcp.Server do
         {:json_response, response, session_id}
 
       {:ok, batch} when is_list(batch) ->
-        # Handle batch requests
+        # Handle batch requests. In a batch with requests, the errors go into
+        # the batch body, where JSON-RPC 2.0 requires every error to carry an
+        # id, so a rejected notification's error gets the unknown id too.
+        item_opts =
+          if without_requests?(batch),
+            do: opts,
+            else: Keyword.put(opts, :batched_with_requests?, true)
+
         # Pair each item with its result and drop the ones needing no response
         answered =
           batch
-          |> Enum.map(fn item -> {item, process_message(item, session_id, opts)} end)
+          |> Enum.map(fn item -> {item, process_message(item, session_id, item_opts)} end)
           |> Enum.reject(&match?({_item, {:no_response, _, _}}, &1))
 
         cond do
@@ -808,7 +817,13 @@ defmodule AshAi.Mcp.Server do
 
       {code, error} ->
         payload = error_payload(code, error)
-        response = put_error_id(payload, message, Keyword.get(opts, :omits_unknown_id?, false))
+        omits_unknown_id? = Keyword.get(opts, :omits_unknown_id?, false)
+
+        response =
+          if opts[:batched_with_requests?] && notification?(message),
+            do: put_unknown_id(payload, omits_unknown_id?),
+            else: put_error_id(payload, message, omits_unknown_id?)
+
         {:json_response, Jason.encode!(response), session_id}
     end
   end
@@ -1563,6 +1578,7 @@ defmodule AshAi.Mcp.Server do
   @doc """
   Create a standard JSON-RPC error response
   """
+  @deprecated "Always includes an id, which 2025-11-25 and later omit when the request id is unknown"
   def json_rpc_error_response(id, code, message, data \\ nil) do
     code
     |> error_payload(message, data)

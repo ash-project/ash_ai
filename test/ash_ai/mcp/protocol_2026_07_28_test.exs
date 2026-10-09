@@ -605,6 +605,20 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       end
     end
 
+    test "a header version that is not a revision date is rejected as unsupported" do
+      for version <- ["foo", "latest", "2026-07-28x"] do
+        response =
+          conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "1", "method" => "tools/list"})
+          |> put_req_header("mcp-protocol-version", version)
+          |> Router.call(@tool_opts)
+
+        assert response.status == 400
+
+        assert %{"error" => %{"code" => -32_022, "data" => %{"requested" => ^version}}} =
+                 Jason.decode!(response.resp_body)
+      end
+    end
+
     test "an unsupported header version on a notification gets an error without an id" do
       response =
         conn(:post, "/", %{"jsonrpc" => "2.0", "method" => "notifications/initialized"})

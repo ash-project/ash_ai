@@ -275,6 +275,18 @@ defmodule AshAi.Mcp.ServerTest do
       refute Map.has_key?(body, "id")
     end
 
+    test "a rejected notification in a batch with requests gets a null id" do
+      batch = [
+        %{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"},
+        %{"jsonrpc" => "1.0", "method" => "notifications/initialized"}
+      ]
+
+      assert {200, [%{"id" => "1", "result" => %{}}, %{"error" => %{"code" => -32_600}} = error]} =
+               rpc(%{"_json" => batch})
+
+      assert Map.fetch(error, "id") == {:ok, nil}
+    end
+
     test "a body that is not valid JSON is a Parse error with a null id" do
       response =
         conn(:post, "/", ~s({"jsonrpc": "2.0", "id": 1, "method": ))
