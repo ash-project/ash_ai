@@ -31,17 +31,12 @@ if Code.ensure_loaded?(Plug) do
 
     # DNS-rebinding protection: the transport requires Origin validation on
     # all incoming connections. Configure with `allowed_origins` (a list of
-    # origin strings or a 1-arity predicate); by default localhost origins
-    # and same-host HTTPS origins are accepted, and requests without an
-    # Origin header (non-browser MCP clients) always pass.
+    # origin strings or a 1-arity predicate); by default the router accepts
+    # only localhost origins, and always lets requests without an Origin
+    # header (non-browser MCP clients) through.
     plug(:validate_origin)
 
-    # Parse the request body for JSON
-    plug(Plug.Parsers,
-      parsers: [:json],
-      pass: ["application/json"],
-      json_decoder: Jason
-    )
+    plug(:parse_body)
 
     plug(:match)
     plug(:dispatch)
@@ -69,8 +64,21 @@ if Code.ensure_loaded?(Plug) do
       send_resp(conn, 404, "Not found")
     end
 
-    # sobelow_skip ["XSS.SendResp"]
-    # The 403 body is a static JSON literal; no user input is reflected.
+    @parsers_opts Plug.Parsers.init(
+                    parsers: [:json],
+                    pass: ["application/json"],
+                    json_decoder: Jason
+                  )
+
+    defp parse_body(conn, _opts) do
+      Plug.Parsers.call(conn, @parsers_opts)
+    rescue
+      Plug.Parsers.ParseError ->
+        conn
+        |> Server.send_error_without_id(400, -32_700, "Parse error")
+        |> halt()
+    end
+
     defp validate_origin(conn, _opts) do
       case Server.check_origin(conn, conn.assigns[:router_opts] || []) do
         :ok ->
@@ -78,15 +86,7 @@ if Code.ensure_loaded?(Plug) do
 
         :forbidden ->
           conn
-          |> put_resp_header("content-type", "application/json")
-          |> send_resp(
-            403,
-            Jason.encode!(%{
-              "jsonrpc" => "2.0",
-              "id" => nil,
-              "error" => %{"code" => -32_600, "message" => "Origin not allowed"}
-            })
-          )
+          |> Server.send_error_without_id(403, -32_600, "Origin not allowed")
           |> halt()
       end
     end

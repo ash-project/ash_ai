@@ -26,6 +26,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "initialize",
             id: "1",
             params: %{
@@ -57,6 +58,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "initialize",
             id: "1",
             params: %{
@@ -83,6 +85,7 @@ defmodule AshAi.Mcp.ServerTest do
           :post,
           "/",
           %{
+            jsonrpc: "2.0",
             method: "tools/call",
             id: "2",
             params: %{
@@ -114,25 +117,34 @@ defmodule AshAi.Mcp.ServerTest do
 
       response = Router.call(conn, @opts)
       assert response.status == 405
-      assert get_resp_header(response, "allow") == ["POST, DELETE"]
+      assert get_resp_header(response, "allow") == ["POST"]
     end
   end
 
   describe "DELETE" do
-    test "initialize-era session termination remains supported" do
-      response =
-        conn(:delete, "/")
-        |> put_req_header("mcp-protocol-version", "2025-06-18")
-        |> put_req_header("mcp-session-id", "initialize-era-session")
-        |> Router.call(@opts)
+    test "initialize-era session termination is refused with 405" do
+      for headers <- [
+            [
+              {"mcp-protocol-version", "2025-06-18"},
+              {"mcp-session-id", "initialize-era-session"}
+            ],
+            []
+          ] do
+        response =
+          Enum.reduce(headers, conn(:delete, "/"), fn {name, value}, conn ->
+            put_req_header(conn, name, value)
+          end)
+          |> Router.call(@opts)
 
-      assert response.status == 200
+        assert response.status == 405
+        assert get_resp_header(response, "allow") == ["POST"]
+      end
     end
   end
 
   describe "ping" do
     test "responds with an empty result" do
-      conn = conn(:post, "/", %{method: "ping", id: "9"})
+      conn = conn(:post, "/", %{jsonrpc: "2.0", method: "ping", id: "9"})
 
       response = Router.call(conn, @opts)
       assert response.status == 200
@@ -225,9 +237,128 @@ defmodule AshAi.Mcp.ServerTest do
                rpc(%{"_json" => batch})
     end
 
+    test "a batch is an Invalid Request from 2025-06-18 on" do
+      batch = [%{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"}]
+
+      response =
+        conn(:post, "/", %{"_json" => batch})
+        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> Router.call(@opts)
+
+      assert response.status == 400
+
+      assert %{"id" => nil, "error" => %{"code" => -32_600}} =
+               Jason.decode!(response.resp_body)
+    end
+
+    test "a batch is still answered for 2025-03-26" do
+      batch = [%{"jsonrpc" => "2.0", "id" => "1", "method" => "ping"}]
+
+      response =
+        conn(:post, "/", %{"_json" => batch})
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
+        |> Router.call(@opts)
+
+      assert response.status == 200
+      assert [%{"id" => "1", "result" => %{}}] = Jason.decode!(response.resp_body)
+    end
+
     test "a batch of notifications needs no response" do
       assert {202, false} =
                rpc(%{"_json" => [%{"jsonrpc" => "2.0", "method" => "notifications/initialized"}]})
+    end
+
+    test "a batch of notifications the server cannot accept is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{"_json" => [%{"jsonrpc" => "1.0", "method" => "notifications/initialized"}]})
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "a body that is not valid JSON is a Parse error with a null id" do
+      response =
+        conn(:post, "/", ~s({"jsonrpc": "2.0", "id": 1, "method": ))
+        |> put_req_header("content-type", "application/json")
+        |> Router.call(@opts)
+
+      assert response.status == 400
+      assert get_resp_header(response, "content-type") == ["application/json"]
+
+      assert %{"jsonrpc" => "2.0", "id" => nil, "error" => %{"code" => -32_700}} =
+               Jason.decode!(response.resp_body)
+    end
+
+    test "a request without jsonrpc 2.0 is an Invalid Request" do
+      for version <- [nil, "1.0", 2] do
+        body = %{"jsonrpc" => version, "id" => "1", "method" => "ping"}
+
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_600}}} =
+                 rpc(Map.reject(body, fn {_key, value} -> is_nil(value) end))
+      end
+    end
+
+    test "a notification without jsonrpc 2.0 is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{"method" => "notifications/initialized"})
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "process_message/3 answers a rejected notification with an existing result type" do
+      assert {:json_response, json, nil} =
+               AshAi.Mcp.Server.process_message(
+                 %{"method" => "notifications/initialized"},
+                 nil,
+                 []
+               )
+
+      assert %{"error" => %{"code" => -32_600}} = Jason.decode!(json)
+    end
+
+    test "a client response is accepted with 202" do
+      for response <- [
+            %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}},
+            %{"jsonrpc" => "2.0", "id" => 7, "error" => %{"code" => -1, "message" => "no"}}
+          ] do
+        assert {202, false} = rpc(response)
+      end
+    end
+
+    test "a batch of client responses is accepted with 202" do
+      assert {202, false} = rpc(%{"_json" => [%{"jsonrpc" => "2.0", "id" => 7, "result" => %{}}]})
+    end
+
+    test "a batch of a client response and a rejected notification is rejected with HTTP 400" do
+      assert {400, %{"error" => %{"code" => -32_600}} = body} =
+               rpc(%{
+                 "_json" => [
+                   %{"jsonrpc" => "2.0", "id" => 7, "result" => %{}},
+                   %{"jsonrpc" => "1.0", "method" => "notifications/initialized"}
+                 ]
+               })
+
+      refute Map.has_key?(body, "id")
+    end
+
+    test "a method that is not a string is an Invalid Request" do
+      for method <- [%{}, [], 5, nil] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_600}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => method})
+      end
+    end
+
+    test "a request ID that is not a string or number is an Invalid Request" do
+      for id <- [nil, true, %{"a" => 1}, [1]] do
+        assert {200, %{"id" => nil, "error" => %{"code" => -32_600}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => id, "method" => "ping"})
+      end
+    end
+
+    test "a fractional request ID is accepted" do
+      # schema.ts types RequestId as `string | number`, though the prose says
+      # "string or integer"
+      assert {200, %{"id" => 1.5, "result" => %{}}} =
+               rpc(%{"jsonrpc" => "2.0", "id" => 1.5, "method" => "ping"})
     end
 
     test "tools/call params that are not an object are Invalid Params" do
@@ -237,6 +368,36 @@ defmodule AshAi.Mcp.ServerTest do
 
         assert message == "Invalid params: params must be an object"
       end
+    end
+
+    test "tools/call without a string name is Invalid Params" do
+      for params <- [%{}, %{"name" => 5}, %{"name" => nil}] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 call("tools/call", params)
+
+        assert message == "Invalid params: name must be a string"
+      end
+    end
+
+    test "resources/read without a string uri is Invalid Params" do
+      for params <- [%{}, %{"uri" => 5}, "x"] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602}}} =
+                 call("resources/read", params)
+      end
+    end
+
+    test "initialize, tools/call, and resources/read without params are Invalid Params" do
+      for method <- ["initialize", "tools/call", "resources/read"] do
+        assert {200, %{"id" => "1", "error" => %{"code" => -32_602, "message" => message}}} =
+                 rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => method})
+
+        assert message == "Invalid params: params must be an object"
+      end
+    end
+
+    test "an unknown method without params is Method not found" do
+      assert {200, %{"id" => "1", "error" => %{"code" => -32_601}}} =
+               rpc(%{"jsonrpc" => "2.0", "id" => "1", "method" => "unknown/method"})
     end
 
     test "tools/call arguments that are not an object are Invalid Params" do
