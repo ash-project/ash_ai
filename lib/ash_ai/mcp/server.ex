@@ -95,17 +95,11 @@ defmodule AshAi.Mcp.Server do
 
       # `initialize` precedes negotiation, so the server skips its header
       rules.era == :unsupported and not match?(%{"method" => "initialize"}, body) ->
-        payload = %{
-          "jsonrpc" => "2.0",
-          "error" => %{
-            "code" => -32_022,
-            "message" => "Unsupported protocol version: #{header_version}",
-            "data" => %{
-              "supported" => @supported_protocol_versions,
-              "requested" => header_version
-            }
-          }
-        }
+        payload =
+          error_payload(-32_022, "Unsupported protocol version: #{header_version}", %{
+            "supported" => @supported_protocol_versions,
+            "requested" => header_version
+          })
 
         send_json(conn, 400, put_error_id(payload, body, rules.omits_unknown_id?))
 
@@ -162,31 +156,23 @@ defmodule AshAi.Mcp.Server do
   defp put_unknown_id(payload, true), do: payload
   defp put_unknown_id(payload, false), do: Map.put(payload, "id", nil)
 
-  # sobelow_skip ["XSS.SendResp"]
   defp handle_initialize_based_post(conn, body, session_id, opts) do
     case process_request(body, session_id, opts) do
       {:initialize_response, response, new_session_id} ->
         # Return the initialize response with a session ID header
         conn
-        |> Plug.Conn.put_resp_header("content-type", "application/json")
         |> Plug.Conn.put_resp_header("mcp-session-id", new_session_id)
-        |> Plug.Conn.send_resp(200, response)
+        |> send_encoded_json(200, response)
 
       {:json_response, response, _session_id} ->
         # The initialize-based transports answer a POST without requests with
         # 202 or an HTTP error status, so an error for input the server
         # cannot accept goes out with 400
         status = if without_requests?(body), do: 400, else: 200
-
-        conn
-        |> Plug.Conn.put_resp_header("content-type", "application/json")
-        |> Plug.Conn.send_resp(status, response)
+        send_encoded_json(conn, status, response)
 
       {:batch_response, response, _session_id} ->
-        # Batch response
-        conn
-        |> Plug.Conn.put_resp_header("content-type", "application/json")
-        |> Plug.Conn.send_resp(200, response)
+        send_encoded_json(conn, 200, response)
 
       {:no_response, _, _} ->
         # For notifications or other messages that don't require a response
@@ -568,18 +554,24 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp error_response_2026_07_28(conn, status, id, code, message, data \\ nil) do
-    error =
-      %{"code" => code, "message" => message}
-      |> maybe_put("data", data)
-
-    send_json(conn, status, put_if(%{"jsonrpc" => "2.0", "error" => error}, "id", id))
+    send_json(conn, status, put_if(error_payload(code, message, data), "id", id))
   end
 
+  # A JSON-RPC error response without an id; callers add the id their
+  # revision and message call for
+  defp error_payload(code, message, data \\ nil) do
+    error = maybe_put(%{"code" => code, "message" => message}, "data", data)
+    %{"jsonrpc" => "2.0", "error" => error}
+  end
+
+  defp send_json(conn, status, payload),
+    do: send_encoded_json(conn, status, Jason.encode!(payload))
+
   # sobelow_skip ["XSS.SendResp"]
-  defp send_json(conn, status, payload) do
+  defp send_encoded_json(conn, status, json) do
     conn
     |> Plug.Conn.put_resp_header("content-type", "application/json")
-    |> Plug.Conn.send_resp(status, Jason.encode!(payload))
+    |> Plug.Conn.send_resp(status, json)
   end
 
   defp req_header(conn, name) do
@@ -609,9 +601,8 @@ defmodule AshAi.Mcp.Server do
   JSON-RPC 2.0 and send `null`.
   """
   def send_error_without_id(conn, status, code, message) do
-    payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}}
     rules = header_rules(req_header(conn, "mcp-protocol-version"), [])
-    send_json(conn, status, put_unknown_id(payload, rules.omits_unknown_id?))
+    send_json(conn, status, put_unknown_id(error_payload(code, message), rules.omits_unknown_id?))
   end
 
   @doc """
@@ -819,7 +810,7 @@ defmodule AshAi.Mcp.Server do
         do_process_message(message, session_id, opts)
 
       {code, error} ->
-        payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => error}}
+        payload = error_payload(code, error)
         response = put_error_id(payload, message, Keyword.get(opts, :omits_unknown_id?, false))
         {:json_response, Jason.encode!(response), session_id}
     end
@@ -832,16 +823,15 @@ defmodule AshAi.Mcp.Server do
   # An error for a message whose id the server cannot read follows the
   # revision's rule for an unknown id
   defp unknown_id_error_response(opts, code, message, data \\ nil) do
-    error = maybe_put(%{"code" => code, "message" => message}, "data", data)
-
-    %{"jsonrpc" => "2.0", "error" => error}
+    code
+    |> error_payload(message, data)
     |> put_unknown_id(Keyword.get(opts, :omits_unknown_id?, false))
     |> Jason.encode!()
   end
 
   # `params` is optional in JSON-RPC; `invalid_params` rejects a missing
-  # `params` for the methods that require it. Only requests are checked,
-  # because the handlers read no notification params.
+  # `params` for the methods that require it. The server checks only
+  # requests, because the handlers read no notification params.
   defp invalid_message(message) do
     cond do
       error = invalid_envelope(message) ->
@@ -1577,13 +1567,9 @@ defmodule AshAi.Mcp.Server do
   Create a standard JSON-RPC error response
   """
   def json_rpc_error_response(id, code, message, data \\ nil) do
-    error = %{"code" => code, "message" => message}
-    error = if data, do: Map.put(error, "data", data), else: error
-
-    Jason.encode!(%{
-      "jsonrpc" => "2.0",
-      "id" => id,
-      "error" => error
-    })
+    code
+    |> error_payload(message, data)
+    |> Map.put("id", id)
+    |> Jason.encode!()
   end
 end
