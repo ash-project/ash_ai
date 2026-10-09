@@ -409,6 +409,20 @@ customize the `AshAi.Actions.Prompt.FlowState` before the request.
 
 Tool loop failures are returned as action errors rather than raised.
 
+Anthropic models can decline a request through their safety classifiers. A refused prompt
+action returns an error naming the refusal category rather than a value. To have Anthropic
+retry refused requests on another model instead, enable server-side fallbacks through
+ReqLLM:
+
+```elixir
+run prompt("anthropic:claude-opus-5",
+  req_llm_opts: [provider_options: [anthropic_fallbacks: "default"]]
+)
+```
+
+`"default"` lets Anthropic choose the fallback model by refusal category; a list such as
+`[%{model: "claude-opus-4-8"}]` names the models to try in order.
+
 ### Best Practices for Prompt-Backed Actions
 
 - Write clear, detailed descriptions for the action and its arguments; they form the default prompt.

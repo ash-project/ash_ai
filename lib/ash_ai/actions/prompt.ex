@@ -155,19 +155,42 @@ if Code.ensure_loaded?(ReqLLM) do
                final_context,
                schema,
                flow_state.req_llm_opts
-             ) do
-        {result, response} =
-          case generated do
-            %{object: result} -> {result, generated}
-            result when is_map(result) -> {result, nil}
-          end
-
+             ),
+           {:ok, result, response} <- extract_generated(generated) do
+        # `cast_result/3` returns a bare `:ok` for actions without a return type.
         with {:ok, value} <- cast_result(result, returns, constraints) do
           wrap_result(value, response, loop_usage, action)
         end
       else
         {:error, error} ->
           {:error, error}
+      end
+    end
+
+    # A response without an object means the model produced no parseable structured
+    # output (e.g. a refusal or a truncated response); report why instead of casting nil.
+    defp extract_generated(%{object: nil} = response) do
+      {:error, Ash.Error.Unknown.UnknownError.exception(error: missing_output_message(response))}
+    end
+
+    defp extract_generated(%{object: result} = response), do: {:ok, result, response}
+    defp extract_generated(result) when is_map(result), do: {:ok, result, nil}
+
+    defp missing_output_message(response) do
+      case Map.get(response, :finish_reason) do
+        :content_filter ->
+          category =
+            case get_in(Map.get(response, :provider_meta) || %{}, ["stop_details", "category"]) do
+              nil -> ""
+              category -> " (category: #{category})"
+            end
+
+          "The model refused the request#{category}. For Anthropic models, server-side " <>
+            "fallbacks can retry refused requests on another model: " <>
+            ~s|req_llm_opts: [provider_options: [anthropic_fallbacks: "default"]]|
+
+        finish_reason ->
+          "The model returned no structured output (finish reason: #{inspect(finish_reason)})"
       end
     end
 

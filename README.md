@@ -469,6 +469,22 @@ config :req_llm, anthropic_api_key: System.fetch_env!("ANTHROPIC_API_KEY")
 config :req_llm, google_api_key: System.fetch_env!("GOOGLE_API_KEY")
 ```
 
+### Refusals and fallbacks
+
+Anthropic models can decline a request through their safety classifiers. A refused prompt
+action returns an error naming the refusal category rather than a value. To have Anthropic
+retry refused requests on another model instead, enable server-side fallbacks through
+ReqLLM:
+
+```elixir
+run prompt("anthropic:claude-opus-5",
+  req_llm_opts: [provider_options: [anthropic_fallbacks: "default"]]
+)
+```
+
+`"default"` lets Anthropic choose the fallback model by refusal category; a list such as
+`[%{model: "claude-opus-4-8"}]` names the models to try in order.
+
 For AshAi-specific model notes:
 - [Google Gemini 2.5](/documentation/models/gemini.md)
 - [LangChain to ReqLLM Migration Guide](https://github.com/ash-project/ash_ai/blob/main/documentation/topics/langchain-to-reqllm-migration.md)

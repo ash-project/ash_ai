@@ -107,6 +107,19 @@ defmodule AshAi.Actions.PromptTest do
     end
   end
 
+  defmodule FakeReqLLMWithoutObject do
+    @moduledoc "Fake ReqLLM that returns no structured output, as on a refusal"
+
+    def generate_object(_model, _context, _schema, _opts \\ []) do
+      {:ok,
+       %{
+         object: nil,
+         finish_reason: :content_filter,
+         provider_meta: %{"stop_details" => %{"category" => "reasoning_extraction"}}
+       }}
+    end
+  end
+
   defmodule FakeReqLLMWithNullSchema do
     @moduledoc "Fake ReqLLM that captures schema used for nil outputs"
 
@@ -405,6 +418,16 @@ defmodule AshAi.Actions.PromptTest do
         run prompt("openai:gpt-4o",
               prompt: "Score: <%= @input.arguments.text %>",
               req_llm: FakeReqLLMWithConstrainedMapSchema
+            )
+      end
+
+      action :analyze_without_structured_output, :string do
+        description("Test missing structured output")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: "Analyze: <%= @input.arguments.text %>",
+              req_llm: FakeReqLLMWithoutObject
             )
       end
 
@@ -714,6 +737,20 @@ defmodule AshAi.Actions.PromptTest do
 
       assert %{"type" => "integer", "minimum" => 1, "maximum" => 10} =
                schema["properties"]["result"]["properties"]["score"]
+    end
+  end
+
+  describe "missing structured output" do
+    test "returns a refusal error instead of casting nil" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:analyze_without_structured_output, %{text: "hi"})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~
+               "The model refused the request (category: reasoning_extraction)"
+
+      assert Exception.message(error) =~ "anthropic_fallbacks"
     end
   end
 
