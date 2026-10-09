@@ -79,9 +79,10 @@ defmodule AshAi.Mcp.Server do
 
     body = unwrap_json_params(body)
     header_version = req_header(conn, "mcp-protocol-version")
+    rules = header_rules(header_version, opts)
 
     cond do
-      is_list(body) and not batching_version?(header_version) ->
+      is_list(body) and not rules.batching? ->
         send_error_without_id(
           conn,
           400,
@@ -89,10 +90,11 @@ defmodule AshAi.Mcp.Server do
           "JSON-RPC batch requests are not supported for protocol version #{header_version}"
         )
 
-      per_request_version?(body, header_version) ->
+      per_request_version?(body, rules.era) ->
         handle_post_2026_07_28(conn, body, opts)
 
-      unsupported_header_version?(body, header_version, opts) ->
+      # `initialize` precedes negotiation, so the server skips its header
+      rules.era == :unsupported and not match?(%{"method" => "initialize"}, body) ->
         payload = %{
           "jsonrpc" => "2.0",
           "error" => %{
@@ -105,56 +107,60 @@ defmodule AshAi.Mcp.Server do
           }
         }
 
-        send_json(conn, 400, put_error_id(payload, body, header_version))
+        send_json(conn, 400, put_error_id(payload, body, rules.omits_unknown_id?))
 
       true ->
-        opts = Keyword.put(opts, :protocol_version_header, header_version)
+        opts = Keyword.put(opts, :omits_unknown_id?, rules.omits_unknown_id?)
         handle_initialize_based_post(conn, body, session_id, opts)
     end
   end
 
-  # From 2025-06-18 on, the header carries the version negotiated by
-  # `initialize`, and the server must answer an unsupported one with 400. The
-  # error uses 2026-07-28's UnsupportedProtocolVersionError, which satisfies
-  # the earlier revisions too, since they define no error body. The
-  # server skips the check for `initialize`, which precedes negotiation, and
-  # accepts a configured `:protocol_version_statement`, because `initialize`
-  # states that version and the client sends it back on every request.
-  defp unsupported_header_version?(%{"method" => "initialize"}, _header_version, _opts),
-    do: false
+  # The transport rules an `MCP-Protocol-Version` header value selects. A
+  # request without the header counts as 2025-03-26. Revision dates are
+  # ISO-8601, so string comparison orders them.
+  #
+  # * `era`: a value that sorts from 2026-07-28 on selects per-request
+  #   semantics. An earlier value selects initialize-based semantics if the
+  #   server supports it, and `:unsupported` otherwise. Both answer an
+  #   unsupported version with HTTP 400 and 2026-07-28's
+  #   UnsupportedProtocolVersionError, which satisfies the earlier revisions
+  #   too, since they define no error body. A configured
+  #   `:protocol_version_statement` counts as supported, because
+  #   `initialize` states it and the client sends it back.
+  # * `batching?`: 2025-06-18 removed JSON-RPC batching.
+  # * `omits_unknown_id?`: from 2025-11-25 on, the schema types an error's
+  #   id as an optional string or number, so the server leaves an unknown id
+  #   out. Earlier revisions follow JSON-RPC 2.0 and send `null`.
+  defp header_rules(header_version, opts) do
+    version = header_version || "2025-03-26"
 
-  defp unsupported_header_version?(_body, header_version, opts) do
-    accepted = [opts[:protocol_version_statement] | @initialize_based_versions]
-    is_binary(header_version) and header_version not in accepted
+    era =
+      cond do
+        version >= hd(@per_request_versions) -> :per_request
+        version in [opts[:protocol_version_statement] | @initialize_based_versions] -> :initialize
+        true -> :unsupported
+      end
+
+    %{era: era, batching?: version < "2025-06-18", omits_unknown_id?: version >= "2025-11-25"}
   end
 
   # An error for a request echoes its id. The transports give the error for
   # a rejected notification no id, and an unreadable id follows the revision's
   # rule for an unknown id.
-  defp put_error_id(payload, %{"id" => _} = message, header_version) do
+  defp put_error_id(payload, %{"id" => _} = message, omits_unknown_id?) do
     case request_id(message) do
-      nil -> put_unknown_id(payload, header_version)
+      nil -> put_unknown_id(payload, omits_unknown_id?)
       id -> Map.put(payload, "id", id)
     end
   end
 
-  defp put_error_id(payload, %{"method" => _}, _header_version), do: payload
-  defp put_error_id(payload, _body, header_version), do: put_unknown_id(payload, header_version)
+  defp put_error_id(payload, %{"method" => _}, _omits_unknown_id?), do: payload
 
-  # From 2025-11-25 on, the schema types an error's id as an optional string
-  # or number, so the server leaves an unknown id out. Earlier revisions
-  # follow JSON-RPC 2.0 and send `null`.
-  defp put_unknown_id(payload, header_version) do
-    if is_binary(header_version) and header_version >= "2025-11-25",
-      do: payload,
-      else: Map.put(payload, "id", nil)
-  end
+  defp put_error_id(payload, _body, omits_unknown_id?),
+    do: put_unknown_id(payload, omits_unknown_id?)
 
-  # 2025-06-18 removed JSON-RPC batching, and 2026-07-28 kept it out. Earlier
-  # revisions allow it, and a request without an MCP-Protocol-Version header
-  # counts as 2025-03-26.
-  defp batching_version?(header_version),
-    do: is_nil(header_version) or header_version < "2025-06-18"
+  defp put_unknown_id(payload, true), do: payload
+  defp put_unknown_id(payload, false), do: Map.put(payload, "id", nil)
 
   # sobelow_skip ["XSS.SendResp"]
   defp handle_initialize_based_post(conn, body, session_id, opts) do
@@ -211,24 +217,15 @@ defmodule AshAi.Mcp.Server do
   # Era selection per the 2026-07-28 versioning spec: `initialize` without
   # per-request `_meta` selects initialize-based semantics; with a `_meta`
   # protocol version it is a removed method under 2026-07-28 (404 below).
-  # Otherwise a `_meta` protocol version or an `MCP-Protocol-Version` header
-  # naming a non-initialize-based revision selects per-request semantics.
-  defp per_request_version?(%{"method" => "initialize"} = body, _header_version),
+  # Otherwise a `_meta` protocol version or a per-request header era selects
+  # per-request semantics.
+  defp per_request_version?(%{"method" => "initialize"} = body, _header_era),
     do: is_binary(request_meta_version(body))
 
-  defp per_request_version?(body, header_version) when is_map(body),
-    do: is_binary(request_meta_version(body)) or per_request_header?(header_version)
+  defp per_request_version?(body, header_era) when is_map(body),
+    do: is_binary(request_meta_version(body)) or header_era == :per_request
 
-  defp per_request_version?(_body, _header_version), do: false
-
-  # Every dated revision before 2026-07-28 negotiates via `initialize`, so
-  # route them all to initialize-based semantics rather than demanding
-  # per-request `_meta` they cannot know about; that path rejects the ones
-  # this server does not support. Any other header value selects per-request semantics,
-  # which reject an unsupported version with UnsupportedProtocolVersion.
-  # Revision dates are ISO-8601, so string comparison orders them correctly.
-  defp per_request_header?(header_version),
-    do: is_binary(header_version) and header_version >= hd(@per_request_versions)
+  defp per_request_version?(_body, _header_era), do: false
 
   defp request_meta_version(%{"params" => %{"_meta" => %{@meta_protocol_version => version}}}),
     do: version
@@ -613,7 +610,8 @@ defmodule AshAi.Mcp.Server do
   """
   def send_error_without_id(conn, status, code, message) do
     payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => message}}
-    send_json(conn, status, put_unknown_id(payload, req_header(conn, "mcp-protocol-version")))
+    rules = header_rules(req_header(conn, "mcp-protocol-version"), [])
+    send_json(conn, status, put_unknown_id(payload, rules.omits_unknown_id?))
   end
 
   @doc """
@@ -822,7 +820,7 @@ defmodule AshAi.Mcp.Server do
 
       {code, error} ->
         payload = %{"jsonrpc" => "2.0", "error" => %{"code" => code, "message" => error}}
-        response = put_error_id(payload, message, opts[:protocol_version_header])
+        response = put_error_id(payload, message, Keyword.get(opts, :omits_unknown_id?, false))
         {:json_response, Jason.encode!(response), session_id}
     end
   end
@@ -837,7 +835,7 @@ defmodule AshAi.Mcp.Server do
     error = maybe_put(%{"code" => code, "message" => message}, "data", data)
 
     %{"jsonrpc" => "2.0", "error" => error}
-    |> put_unknown_id(opts[:protocol_version_header])
+    |> put_unknown_id(Keyword.get(opts, :omits_unknown_id?, false))
     |> Jason.encode!()
   end
 
