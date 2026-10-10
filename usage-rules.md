@@ -540,7 +540,6 @@ if code_reloading? do
   socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
 
   plug AshAi.Mcp.Dev,
-    protocol_version_statement: "2024-11-05",
     otp_app: :your_app
 
   plug Phoenix.LiveReloader
@@ -571,10 +570,13 @@ scope "/mcp" do
       :create_post,
       :analyze_sentiment
     ],
-    protocol_version_statement: "2024-11-05",
     otp_app: :my_app
 end
 ```
+
+The server negotiates the protocol version with each client. Set
+`protocol_version_statement` only to force a version for a client that fails
+version negotiation: it overrides negotiation for every client.
 
 ## Testing
 
