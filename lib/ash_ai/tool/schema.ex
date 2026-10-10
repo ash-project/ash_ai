@@ -539,12 +539,8 @@ defmodule AshAi.Tool.Schema do
                 type: :string,
                 description: "The field to sort by",
                 enum:
-                  Ash.Resource.Info.fields(resource, [
-                    :attributes,
-                    :calculations,
-                    :aggregates
-                  ])
-                  |> Enum.filter(&(&1.public? && &1.sortable?))
+                  resource
+                  |> AshAi.Tool.sortable_fields()
                   |> Enum.map(& &1.name)
               },
               direction: %{
@@ -632,8 +628,8 @@ defmodule AshAi.Tool.Schema do
 
   defp add_input_for_fields(sort_obj, resource) do
     resource
-    |> Ash.Resource.Info.fields([:calculations])
-    |> Enum.filter(&(&1.public? && &1.sortable? && !Enum.empty?(&1.arguments)))
+    |> AshAi.Tool.sortable_fields()
+    |> Enum.filter(&match?(%Ash.Resource.Calculation{arguments: [_ | _]}, &1))
     |> case do
       [] ->
         sort_obj
