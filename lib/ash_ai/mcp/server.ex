@@ -1157,6 +1157,14 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
+  defp read_mcp_resource(%AshAi.McpUiResource{html: {module, function, args}}, _params, _opts) do
+    case apply(module, function, args) do
+      html when is_binary(html) -> {:ok, html}
+      {:error, message} when is_binary(message) -> {:error, message}
+      _ -> {:error, "MCP UI HTML renderer must return a string or {:error, message}."}
+    end
+  end
+
   # sobelow_skip ["Traversal.FileModule"]
   # `html_path` is a developer-configured DSL value, not user-supplied input.
   defp read_mcp_resource(%AshAi.McpUiResource{html_path: path}, _params, _opts) do

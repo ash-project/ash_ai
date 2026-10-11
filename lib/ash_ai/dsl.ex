@@ -283,8 +283,13 @@ defmodule AshAi.Dsl do
     ],
     html_path: [
       type: :string,
-      required: true,
-      doc: "Path to the HTML file on disk. Read at request time."
+      doc: "Path to the HTML file on disk. Read at request time. Mutually exclusive with `html`."
+    ],
+    html: [
+      type: :mfa,
+      doc:
+        "MFA invoked at request time to render HTML. Must return a string or `{:error, message}`. " <>
+          "Only the configured arguments are passed. Mutually exclusive with `html_path`."
     ],
     title: [
       type: :string,
@@ -329,7 +334,7 @@ defmodule AshAi.Dsl do
   @mcp_ui_resource %Spark.Dsl.Entity{
     name: :mcp_ui_resource,
     describe: """
-    A UI resource for MCP Apps — serves a static HTML file that is rendered in a sandboxed
+    A UI resource for MCP Apps — serves HTML from a file or callback, rendered in a sandboxed
     iframe by MCP hosts (like Claude Desktop). Link tools to UI resources using the tool's
     `ui:` option or `_meta.ui.resourceUri`.
 
@@ -340,6 +345,7 @@ defmodule AshAi.Dsl do
       ~s(mcp_ui_resource :artist_dashboard, "ui://artists/dashboard.html", html_path: "priv/mcp_apps/artist_dashboard.html", csp: [connect_domains: ["api.example.com"]])
     ],
     target: AshAi.McpUiResource,
+    transform: {AshAi.McpUiResource, :validate, []},
     schema: @mcp_ui_resource_schema,
     args: [:name, :uri]
   }
