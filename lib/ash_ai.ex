@@ -200,7 +200,7 @@ defmodule AshAi do
     @moduledoc """
     A UI resource for MCP Apps (Model Context Protocol Apps extension).
 
-    UI resources serve static HTML files that are rendered in sandboxed iframes by MCP hosts
+    UI resources serve HTML that is rendered in sandboxed iframes by MCP hosts
     (like Claude Desktop). They are linked to tools via `_meta.ui.resourceUri` and provide
     interactive interfaces for tool results.
 
@@ -216,8 +216,11 @@ defmodule AshAi do
             permissions: [camera: true]
         end
 
-    The HTML file at `html_path` is read at request time and returned with MIME type
-    `text/html;profile=mcp-app`.
+    Configure exactly one of `html_path` or `html`. The file at `html_path` is read
+    at request time. Alternatively, `html: {MyApp.Widget, :render, []}` invokes an
+    MFA at request time. It must return an HTML string or `{:error, message}` with
+    a string error message. Request parameters are not passed to the callback.
+    Both sources are returned with MIME type `text/html;profile=mcp-app`.
 
     See [MCP Apps spec](https://modelcontextprotocol.io/specification/2025-11-25).
     """
@@ -227,7 +230,8 @@ defmodule AshAi do
     @type t :: %__MODULE__{
             name: atom(),
             uri: String.t(),
-            html_path: String.t(),
+            html_path: String.t() | nil,
+            html: mfa() | nil,
             title: String.t() | nil,
             description: String.t() | nil,
             csp: keyword() | nil,
@@ -240,6 +244,7 @@ defmodule AshAi do
       :name,
       :uri,
       :html_path,
+      :html,
       :title,
       :description,
       :csp,
@@ -251,6 +256,16 @@ defmodule AshAi do
 
     @doc "Returns the fixed MIME type for MCP App UI resources."
     def mime_type, do: @mime_type
+
+    @doc false
+    @spec validate(t()) :: {:ok, t()} | {:error, String.t()}
+    def validate(%{html_path: path, html: nil} = resource) when is_binary(path),
+      do: {:ok, resource}
+
+    def validate(%{html_path: nil, html: {_, _, _}} = resource), do: {:ok, resource}
+
+    def validate(_resource),
+      do: {:error, "Configure exactly one of `html_path` or `html` for an MCP UI resource."}
   end
 
   defmodule FullText do
