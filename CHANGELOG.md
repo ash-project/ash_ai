@@ -11,6 +11,51 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.1.2](https://github.com/ash-project/ash_ai/compare/v1.1.1...v1.1.2) (2026-10-12)
+
+
+
+
+### Improvements:
+
+* fetch req_llm after installer adds dependency (#240) by [@barnabasJ](https://github.com/barnabasJ) [(#240)](https://github.com/ash-project/ash_ai/pull/240)
+
+### Bug Fixes:
+
+* respect system prompt option in ToolLoop.run & stream by [@zachdaniel](https://github.com/zachdaniel)
+
+* report refusals and missing structured output from prompt actions by [@zachdaniel](https://github.com/zachdaniel)
+
+* multiple MCP spec compliance issues and 2025-11-25 revision support (#246) by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: omit null resource descriptions by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: reject malformed JSON-RPC envelopes by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: answer malformed JSON with a -32700 Parse error by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: validate required tools/call and resources/read params by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: send list tool results as structuredContent for 2026-07-28 by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: reject Mcp-Name values that need Base64 encoding by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: omit the id from 2026-07-28 Origin rejections by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: answer DELETE with 405 for every protocol version by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: reject JSON-RPC batches from 2025-06-18 on by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: reject unsupported MCP-Protocol-Version headers with 400 by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* mcp: validate 2026-07-28 headers before params by leonqadirie [(#246)](https://github.com/ash-project/ash_ai/pull/246)
+
+* resolve an aggregate field's own type before folding it, so avg works (#244) by Daniel Gollings [(#244)](https://github.com/ash-project/ash_ai/pull/244)
+
+* Remove legacy MCP protocol version from generated setup (#239) by [@barnabasJ](https://github.com/barnabasJ) [(#239)](https://github.com/ash-project/ash_ai/pull/239)
+
+* properly create json so req_llm's stripping code works by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.1.1](https://github.com/ash-project/ash_ai/compare/v1.1.0...v1.1.1) (2026-09-23)
 
 
