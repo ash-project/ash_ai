@@ -11,6 +11,11 @@ if Code.ensure_loaded?(ReqLLM) do
 
     Each assistant tool-call turn is appended before its tool results. Earlier
     messages remain unchanged, including their reasoning and provider metadata.
+
+    When `:system_prompt` is given, its result is sent as a system message ahead
+    of `messages` on every model request. It is not part of the returned
+    `Result.messages`, so pass the same option when continuing a conversation
+    from those messages.
     """
 
     alias ReqLLM.Context
@@ -49,6 +54,7 @@ if Code.ensure_loaded?(ReqLLM) do
       run_loop(
         opts.req_llm,
         model,
+        system_messages(opts),
         messages,
         tools,
         registry,
@@ -93,6 +99,7 @@ if Code.ensure_loaded?(ReqLLM) do
       %{
         req_llm: opts.req_llm,
         model: model,
+        system_messages: system_messages(opts),
         messages: messages,
         tools: tools,
         registry: registry,
@@ -172,7 +179,7 @@ if Code.ensure_loaded?(ReqLLM) do
       else
         case state.req_llm.stream_text(
                state.model,
-               state.messages,
+               state.system_messages ++ state.messages,
                req_llm_stream_opts(state.req_llm_opts, state.tools)
              ) do
           {:ok, stream_response} ->
@@ -297,6 +304,12 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
+    defp system_messages(%{system_prompt: system_prompt} = opts)
+         when is_function(system_prompt, 1),
+         do: [Context.system(system_prompt.(opts))]
+
+    defp system_messages(_opts), do: []
+
     defp build_context(opts) do
       %{
         actor: opts.actor,
@@ -326,6 +339,7 @@ if Code.ensure_loaded?(ReqLLM) do
     defp run_loop(
            req_llm,
            model,
+           system_messages,
            messages,
            tools,
            registry,
@@ -339,7 +353,7 @@ if Code.ensure_loaded?(ReqLLM) do
       if max_iterations_reached?(iteration, max_iterations) do
         {:error, :max_iterations_reached}
       else
-        case request_response(req_llm, model, messages, req_llm_opts, tools) do
+        case request_response(req_llm, model, system_messages ++ messages, req_llm_opts, tools) do
           {:ok, stream_response, chunks, response, usage} ->
             assistant = response.message
             usage_acc = accumulate_usage(usage_acc, usage)
@@ -376,6 +390,7 @@ if Code.ensure_loaded?(ReqLLM) do
               run_loop(
                 req_llm,
                 model,
+                system_messages,
                 messages,
                 tools,
                 registry,

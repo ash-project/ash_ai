@@ -324,7 +324,12 @@ defmodule AshAi do
         system_prompt: [
           type: {:or, [{:fun, 1}, {:literal, :none}]},
           doc: """
-          A system prompt that takes the provided options and returns a system prompt.
+          A function that takes the validated options and returns a system prompt, or `:none`.
+
+          `AshAi.ToolLoop` sends it ahead of the given messages on every model request. It is
+          not included in `AshAi.ToolLoop.Result.messages`, so pass it again when continuing a
+          conversation from those messages. `AshAi.iex_chat/1` uses a default prompt when this
+          is not set.
 
           You will want to include something like the actor's id if you are chatting as an
           actor.
@@ -463,26 +468,15 @@ defmodule AshAi do
     Interactive IEx chat loop powered by ReqLLM.
     """
     def iex_chat(opts \\ []) do
-      validated_opts = Options.validate!(opts)
+      opts =
+        Keyword.put_new(opts, :system_prompt, fn _opts ->
+          """
+          You are a helpful assistant.
+          Your purpose is to operate the application on behalf of the user.
+          """
+        end)
 
-      base_messages =
-        case validated_opts.system_prompt do
-          :none ->
-            []
-
-          nil ->
-            [
-              Context.system("""
-              You are a helpful assistant.
-              Your purpose is to operate the application on behalf of the user.
-              """)
-            ]
-
-          system_prompt ->
-            [Context.system(system_prompt.(validated_opts))]
-        end
-
-      run_iex_loop(base_messages, opts)
+      run_iex_loop([], opts)
     end
 
     defp run_iex_loop(messages, opts) do

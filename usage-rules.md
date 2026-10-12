@@ -288,6 +288,8 @@ Options to know:
 
 - `otp_app:` or `actions: [{Resource, [:action]}]` decides where tools are discovered from.
 - `tools:` is `true`, `false`, or a list of tool names.
+- `system_prompt:` is `fn opts -> "..." end`, sent ahead of `messages` on every request. It is
+  not included in `Result.messages`, so pass it again when continuing from them.
 - `extra_tools:` adds arbitrary `ReqLLM.Tool`s alongside Ash tools.
 - `req_llm_opts:` passes provider options through (temperature, reasoning, and so on).
 - `req_llm:` swaps in a module implementing the ReqLLM functions, for tests.

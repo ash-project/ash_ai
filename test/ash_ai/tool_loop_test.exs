@@ -341,6 +341,39 @@ defmodule AshAi.ToolLoopTest do
     end
   end
 
+  defmodule FakeReqLLMRequestMessagesCapture do
+    def stream_text(_model, messages, _opts \\ []) do
+      send(self(), {:tool_loop_request_messages, messages})
+      count = Process.get({__MODULE__, :call_count}, 0)
+      Process.put({__MODULE__, :call_count}, count + 1)
+
+      stream =
+        if count == 0 do
+          [
+            ReqLLM.StreamChunk.tool_call("plain_extra_tool", %{"message" => "hello"}, %{
+              id: "call_extra",
+              index: 0
+            }),
+            ReqLLM.StreamChunk.meta(%{finish_reason: :tool_calls})
+          ]
+        else
+          [
+            ReqLLM.StreamChunk.text("done"),
+            ReqLLM.StreamChunk.meta(%{finish_reason: :stop})
+          ]
+        end
+
+      {:ok,
+       %ReqLLM.StreamResponse{
+         stream: stream,
+         metadata_handle: AshAi.Test.StreamHelpers.metadata_handle(),
+         cancel: fn -> :ok end,
+         model: "openai:gpt-4o",
+         context: ReqLLM.Context.new([])
+       }}
+    end
+  end
+
   defmodule FakeReqLLMUsageReporter do
     @moduledoc """
     Returns a stream_response per call with a real `MetadataHandle` pid
@@ -724,6 +757,70 @@ defmodule AshAi.ToolLoopTest do
     assert ReqLLM.ToolResult.output_from_message(tool_message) == %{"echo" => "hello"}
   end
 
+  describe "system_prompt" do
+    setup do
+      Process.delete({FakeReqLLMRequestMessagesCapture, :call_count})
+
+      opts = [
+        tools: false,
+        extra_tools: [plain_extra_tool()],
+        model: "openai:gpt-4o",
+        req_llm: FakeReqLLMRequestMessagesCapture,
+        actor: %{id: "actor-1"},
+        system_prompt: fn opts -> "You are Grieg, acting for #{opts.actor.id}." end
+      ]
+
+      %{opts: opts, messages: [Context.user("Say hello.")]}
+    end
+
+    test "run/2 sends it ahead of the messages on every request", %{
+      opts: opts,
+      messages: messages
+    } do
+      assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               ToolLoop.run(messages, opts)
+
+      assert_system_prompt_on_every_request("You are Grieg, acting for actor-1.")
+      refute Enum.any?(final_messages, &(&1.role == :system))
+      assert hd(final_messages) == hd(messages)
+    end
+
+    test "stream/2 sends it ahead of the messages on every request", %{
+      opts: opts,
+      messages: messages
+    } do
+      events = messages |> ToolLoop.stream(opts) |> Enum.to_list()
+
+      assert {:done, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
+               List.last(events)
+
+      assert_system_prompt_on_every_request("You are Grieg, acting for actor-1.")
+      refute Enum.any?(final_messages, &(&1.role == :system))
+      assert hd(final_messages) == hd(messages)
+    end
+
+    test "is not duplicated when continuing from the result messages", %{
+      opts: opts,
+      messages: messages
+    } do
+      assert {:ok, %ToolLoop.Result{messages: final_messages}} = ToolLoop.run(messages, opts)
+      flush_request_messages()
+
+      Process.delete({FakeReqLLMRequestMessagesCapture, :call_count})
+      assert {:ok, _} = ToolLoop.run(final_messages ++ [Context.user("Again.")], opts)
+
+      # The fake replays the already-processed `call_extra`, so this run ends after one request.
+      assert_system_prompt_on_every_request("You are Grieg, acting for actor-1.", 1)
+    end
+
+    test "sends no system message when set to :none", %{opts: opts, messages: messages} do
+      assert {:ok, _} = ToolLoop.run(messages, Keyword.put(opts, :system_prompt, :none))
+
+      assert_received {:tool_loop_request_messages, request_messages}
+      refute Enum.any?(request_messages, &(&1.role == :system))
+    end
+  end
+
   test "run/2 does not leak raw tool exception text into the conversation" do
     Process.delete({FakeReqLLMCallsRaisingTool, :call_count})
     messages = [Context.user("trigger boom")]
@@ -1047,6 +1144,25 @@ defmodule AshAi.ToolLoopTest do
       description: "Conflicts with AshAi tool",
       callback: fn _args -> {:ok, "duplicate"} end
     )
+  end
+
+  defp assert_system_prompt_on_every_request(system_prompt, request_count \\ 2) do
+    requests = flush_request_messages()
+    assert length(requests) == request_count
+
+    for request_messages <- requests do
+      assert [%{role: :system} = system | rest] = request_messages
+      assert system == Context.system(system_prompt)
+      refute Enum.any?(rest, &(&1.role == :system))
+    end
+  end
+
+  defp flush_request_messages(acc \\ []) do
+    receive do
+      {:tool_loop_request_messages, messages} -> flush_request_messages([messages | acc])
+    after
+      0 -> Enum.reverse(acc)
+    end
   end
 
   defp tool_call?(%{role: :assistant, tool_calls: tool_calls}) do
