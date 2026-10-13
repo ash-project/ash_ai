@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.2.0](https://github.com/ash-project/ash_ai/compare/v1.1.2...v1.2.0) (2026-10-13)
+
+
+
+
+### Features:
+
+* mcp: support HTML renderers for UI resources (#248) by [@kosciak9](https://github.com/kosciak9) [(#248)](https://github.com/ash-project/ash_ai/pull/248)
+
 ## [v1.1.2](https://github.com/ash-project/ash_ai/compare/v1.1.1...v1.1.2) (2026-10-12)
 
 
