@@ -109,6 +109,33 @@ defmodule AshAi.Tool.ErrorsTest do
       assert result =~ "user.address.zip:"
     end
 
+    test "names the path of an error that has a path but no field" do
+      error =
+        Ash.Error.Unknown.UnknownError.exception(
+          error: "is invalid",
+          path: [:recommendations, 0, :severity]
+        )
+
+      assert Errors.format(error) == "recommendations.0.severity: is invalid"
+    end
+
+    test "returns just the message of an error with neither path nor field" do
+      error = Ash.Error.Unknown.UnknownError.exception(error: "is invalid")
+
+      assert Errors.format(error) == "is invalid"
+    end
+
+    test "still prefixes path and field when both are present" do
+      error =
+        Ash.Error.Changes.InvalidArgument.exception(
+          field: :severity,
+          message: "is invalid",
+          path: [:recommendations, 0]
+        )
+
+      assert Errors.format(error) == "recommendations.0.severity: is invalid"
+    end
+
     test "handles errors without a field" do
       error =
         Ash.Error.Query.NotFound.exception(primary_key: %{id: "abc"}, resource: SomeResource)

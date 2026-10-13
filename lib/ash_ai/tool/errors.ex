@@ -48,6 +48,8 @@ defmodule AshAi.Tool.Errors do
       end
 
     case {Map.get(error, :path, []), Map.get(error, :field)} do
+      {[], nil} -> msg
+      {path, nil} when is_list(path) -> "#{Enum.join(path, ".")}: #{msg}"
       {_, nil} -> msg
       {[], field} -> "#{field}: #{msg}"
       {path, field} -> "#{Enum.join(path ++ [field], ".")}: #{msg}"

@@ -240,6 +240,18 @@ defmodule AshAi.ToToolErrorTest do
     end
   end
 
+  describe "Ash.Error.Unknown.UnknownError" do
+    test "returns the error message" do
+      error = Ash.Error.Unknown.UnknownError.exception(error: "is invalid")
+      assert AshAi.ToToolError.to_tool_error(error) == "is invalid"
+    end
+
+    test "returns fallback when error is nil" do
+      error = Ash.Error.Unknown.UnknownError.exception([])
+      assert AshAi.ToToolError.to_tool_error(error) == "is invalid"
+    end
+  end
+
   describe "error class wrappers" do
     test "Ash.Error.Invalid returns class name" do
       error = Ash.Error.Invalid.exception(errors: [])
