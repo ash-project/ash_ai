@@ -91,6 +91,21 @@ defmodule AshAi do
       end
     end
 
+    @doc """
+    The fields a read tool may sort by.
+
+    Defined here so the schema's enum and execution's validation cannot drift.
+    A field's own `sortable?` is not enough: it defaults to true on every
+    calculation, but the data layer can only sort on one that has an
+    expression, and sorting on any other raises `UndefinedFunctionError`
+    mid-read. `Ash.Resource.Info.sortable?/2` is the check Ash applies itself.
+    """
+    def sortable_fields(resource) do
+      resource
+      |> Ash.Resource.Info.fields([:attributes, :calculations, :aggregates])
+      |> Enum.filter(&(&1.public? && Ash.Resource.Info.sortable?(resource, &1.name)))
+    end
+
     @doc false
     # Raises ArgumentError if a field is not usable as a lookup.
     def get_by_fields(resource, get_by) do
