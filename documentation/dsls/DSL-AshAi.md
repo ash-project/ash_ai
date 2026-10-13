@@ -270,7 +270,7 @@ mcp_ui_resource name, uri
 ```
 
 
-A UI resource for MCP Apps — serves a static HTML file that is rendered in a sandboxed
+A UI resource for MCP Apps — serves HTML from a file or callback, rendered in a sandboxed
 iframe by MCP hosts (like Claude Desktop). Link tools to UI resources using the tool's
 `ui:` option or `_meta.ui.resourceUri`.
 
@@ -300,7 +300,8 @@ mcp_ui_resource :artist_dashboard, "ui://artists/dashboard.html", html_path: "pr
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`html_path`](#mcp_resources-mcp_ui_resource-html_path){: #mcp_resources-mcp_ui_resource-html_path .spark-required} | `String.t` |  | Path to the HTML file on disk. Read at request time. |
+| [`html_path`](#mcp_resources-mcp_ui_resource-html_path){: #mcp_resources-mcp_ui_resource-html_path } | `String.t` |  | Path to the HTML file on disk. Read at request time. Mutually exclusive with `html`. |
+| [`html`](#mcp_resources-mcp_ui_resource-html){: #mcp_resources-mcp_ui_resource-html } | `mfa` |  | MFA invoked at request time to render HTML. Must return a string or `{:error, message}`. Only the configured arguments are passed. Mutually exclusive with `html_path`. |
 | [`title`](#mcp_resources-mcp_ui_resource-title){: #mcp_resources-mcp_ui_resource-title } | `String.t` |  | A short, human-readable title. Defaults to the resource name. |
 | [`description`](#mcp_resources-mcp_ui_resource-description){: #mcp_resources-mcp_ui_resource-description } | `String.t` |  | A description of the UI resource. |
 | [`csp`](#mcp_resources-mcp_ui_resource-csp){: #mcp_resources-mcp_ui_resource-csp } | `keyword` |  | Content Security Policy configuration. |
