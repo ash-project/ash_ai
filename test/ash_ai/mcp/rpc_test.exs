@@ -48,7 +48,7 @@ defmodule AshAi.Mcp.ServerTest do
       resp = Jason.decode!(response.resp_body)
       assert resp["jsonrpc"] == "2.0"
       assert resp["id"] == "1"
-      assert resp["result"]["serverInfo"]["name"] == "MCP Server"
+      assert resp["result"]["serverInfo"]["name"] == "ash_ai MCP Server"
     end
 
     test "handles tool execution requests" do
@@ -139,6 +139,20 @@ defmodule AshAi.Mcp.ServerTest do
         assert response.status == 405
         assert get_resp_header(response, "allow") == ["POST"]
       end
+    end
+  end
+
+  describe "get_server_name/1" do
+    test "prefers mcp_name" do
+      assert Server.get_server_name(mcp_name: "Custom", otp_app: :my_app) == "Custom"
+    end
+
+    test "uses the otp_app when there is no mcp_name" do
+      assert Server.get_server_name(otp_app: :my_app) == "my_app MCP Server"
+    end
+
+    test "falls back to a generic name" do
+      assert Server.get_server_name([]) == "MCP Server"
     end
   end
 

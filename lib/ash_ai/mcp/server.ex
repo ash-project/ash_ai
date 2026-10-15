@@ -740,14 +740,10 @@ defmodule AshAi.Mcp.Server do
   Get the MCP server name
   """
   def get_server_name(opts) do
-    if opts[:mcp_name] do
-      opts[:mcp_name]
-    else
-      if opts[:otp_app] do
-        "MCP Server"
-      else
-        "#{opts[:otp_app]} MCP Server"
-      end
+    cond do
+      opts[:mcp_name] -> opts[:mcp_name]
+      opts[:otp_app] -> "#{opts[:otp_app]} MCP Server"
+      true -> "MCP Server"
     end
   end
 
