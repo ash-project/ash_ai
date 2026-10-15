@@ -71,6 +71,16 @@ mcp server will be available under `http://localhost:4000/ash_ai/mcp`.
 
 We are still experimenting to see what tools (if any) are useful while developing with agents.
 
+Other packages can add tools to the dev server. Pass Ash domains that use the `AshAi`
+extension as `dev_tool_domains`, and the tools declared in their `tools do` sections are
+served alongside the built-in ones:
+
+```elixir
+    plug AshAi.Mcp.Dev,
+      otp_app: :your_app,
+      dev_tool_domains: [SomePackage.DevTools]
+```
+
 ### Production MCP Server
 
 AshAi provides a pre-built MCP server that can be used to expose your tool definitions to an MCP client (typically some kind of IDE, or Claude Desktop for example).
