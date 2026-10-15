@@ -125,7 +125,13 @@ if Code.ensure_loaded?(Igniter) do
              We look for `if code_reloading? do`, but you may have customized this code.
              Please add the plug manually, for example:
 
-             if code_relading?
+             if code_reloading? do
+               plug AshAi.Mcp.Dev,
+                 otp_app: :#{otp_app},
+                 path: "/ash_ai/mcp"
+
+               # ...
+             end
              """}
         end
       end)

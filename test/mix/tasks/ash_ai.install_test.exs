@@ -32,6 +32,23 @@ defmodule Mix.Tasks.AshAi.InstallTest do
     refute endpoint_diff =~ "protocol_version_statement"
   end
 
+  test "warns with an example plug when the endpoint has no code_reloading? block" do
+    igniter =
+      phx_test_project()
+      |> Igniter.update_elixir_file("lib/test_web/endpoint.ex", fn zipper ->
+        Igniter.Code.Common.remove(zipper, fn zipper ->
+          Igniter.Code.Function.function_call?(zipper, :if, 2)
+        end)
+      end)
+      |> Mix.Tasks.AshAi.Gen.Mcp.add_plug_to_endpoint(TestWeb.Endpoint, :test)
+
+    assert [warning] = igniter.warnings
+    assert warning =~ "if code_reloading? do"
+    assert warning =~ "plug AshAi.Mcp.Dev,"
+    assert warning =~ "otp_app: :test,"
+    refute warning =~ "code_relading?"
+  end
+
   test "--no-req-llm skips adding the req_llm dependency" do
     igniter =
       phx_test_project()
