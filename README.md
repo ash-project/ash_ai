@@ -194,7 +194,7 @@ To try it out from scratch:
 mix igniter.new my_app \
   --with phx.new \
   --install ash,ash_postgres,ash_phoenix \
-  --install ash_authentication_phoenix,ash_oban \
+  --install ash_authentication,ash_authentication_phoenix,ash_oban \
   --install ash_ai@github:ash-project/ash_ai \
   --auth-strategy password
 ```
