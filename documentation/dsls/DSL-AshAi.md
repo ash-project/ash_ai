@@ -52,6 +52,10 @@ tool :update_artist, Artist, :update, identity: :id, load: [:albums]
 ```
 
 ```
+tool :delete_artist, Artist, :destroy, title: "Delete artist", annotations: [destructive?: true, idempotent?: true]
+```
+
+```
 tool :list_artists, Artist, :read, load: [albums: [:title]], load_strict?: true
 ```
 
@@ -98,6 +102,8 @@ tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 | [`description`](#tools-tool-description){: #tools-tool-description } | `String.t` |  | A description for the tool. Defaults to the action's description. |
 | [`identity`](#tools-tool-identity){: #tools-tool-identity } | `atom` |  | The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely. |
 | [`get_by`](#tools-tool-get_by){: #tools-tool-get_by } | `atom \| list(atom)` |  | For read actions, a field or list of fields used to fetch a single record. The fields must be filterable attributes, calculations or aggregates. |
+| [`title`](#tools-tool-title){: #tools-tool-title } | `String.t` |  | A short, human-readable name for the tool (MCP `title`). Clients show it instead of the tool's identifier, for example in a confirmation prompt. |
+| [`annotations`](#tools-tool-annotations){: #tools-tool-annotations } | `keyword` | `[]` | MCP tool annotations: hints a client uses to decide whether to ask the person before a call and how to present the tool. The MCP specification treats them as untrusted hints, not security guarantees. Only the hints you set are sent, so the client applies its own defaults to the rest. |
 | [`_meta`](#tools-tool-_meta){: #tools-tool-_meta } | `any` | `%{}` | Optional metadata map for tool integrations. Supports provider-specific extensions like OpenAI metadata. Keys and values should be strings to comply with JSON-RPC serialization. |
 | [`ui`](#tools-tool-ui){: #tools-tool-ui } | `atom \| String.t` |  | The `mcp_ui_resource` name (atom) or a `ui://` URI string for MCP Apps. Shortcut for setting `_meta.ui.resourceUri`. When an atom is given, the URI is resolved from the matching `mcp_ui_resource` declaration. |
 

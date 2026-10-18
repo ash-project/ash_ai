@@ -29,6 +29,17 @@ defmodule AshAi.Test.Music do
          :read,
          description: "Read artists with UI",
          ui: :test_app
+
+    tool :list_artists_annotated,
+         AshAi.Test.Music.ArtistAfterAction,
+         :read,
+         title: "List artists",
+         annotations: [read_only?: true, open_world?: false]
+
+    tool :create_artist_annotated,
+         AshAi.Test.Music.ArtistAfterAction,
+         :create,
+         annotations: [destructive?: false, idempotent?: false]
   end
 
   mcp_resources do

@@ -123,6 +123,38 @@ defmodule AshAi.Dsl do
       doc:
         "For read actions, a field or list of fields used to fetch a single record. The fields must be filterable attributes, calculations or aggregates."
     ],
+    title: [
+      type: :string,
+      doc:
+        "A short, human-readable name for the tool (MCP `title`). Clients show it instead of the tool's identifier, for example in a confirmation prompt."
+    ],
+    annotations: [
+      type: :keyword_list,
+      default: [],
+      keys: [
+        read_only?: [
+          type: :boolean,
+          doc: "The tool does not modify anything (`readOnlyHint`)."
+        ],
+        destructive?: [
+          type: :boolean,
+          doc:
+            "The tool may delete or irreversibly change data (`destructiveHint`). Only meaningful when the tool is not read-only."
+        ],
+        idempotent?: [
+          type: :boolean,
+          doc:
+            "Calling the tool again with the same arguments has no further effect (`idempotentHint`). Only meaningful when the tool is not read-only."
+        ],
+        open_world?: [
+          type: :boolean,
+          doc:
+            "The tool reaches outside the application, such as the web or a third-party service (`openWorldHint`)."
+        ]
+      ],
+      doc:
+        "MCP tool annotations: hints a client uses to decide whether to ask the person before a call and how to present the tool. The MCP specification treats them as untrusted hints, not security guarantees. Only the hints you set are sent, so the client applies its own defaults to the rest."
+    ],
     _meta: [
       type: :any,
       default: %{},
@@ -247,6 +279,7 @@ defmodule AshAi.Dsl do
       ~s(tool :get_artist_by_id, Artist, :read, get_by: :id),
       ~s(tool :create_artist, Artist, :create, description: "Create a new artist"),
       ~s(tool :update_artist, Artist, :update, identity: :id, load: [:albums]),
+      ~s(tool :delete_artist, Artist, :destroy, title: "Delete artist", annotations: [destructive?: true, idempotent?: true]),
       ~s(tool :list_artists, Artist, :read, load: [albums: [:title]], load_strict?: true),
       ~s(tool :list_artists, Artist, :read, select: [:name]),
       """

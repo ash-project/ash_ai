@@ -17,7 +17,7 @@ defmodule AshAi.ExposedToolsTest do
   describe "tools filtering" do
     test "tools: nil returns all tools (default)" do
       tools = AshAi.exposed_tools(@opts)
-      assert length(tools) == 8
+      assert length(tools) == 10
     end
 
     test "tools: specific list filters to only those tools" do
@@ -58,7 +58,9 @@ defmodule AshAi.ExposedToolsTest do
                  :list_artists,
                  :create_artist_after,
                  :list_artists_with_meta,
-                 :list_artists_with_ui
+                 :list_artists_with_ui,
+                 :list_artists_annotated,
+                 :create_artist_annotated
                ])
     end
 
@@ -74,7 +76,9 @@ defmodule AshAi.ExposedToolsTest do
                  :create_artist_after,
                  :update_artist_after,
                  :list_artists_with_meta,
-                 :list_artists_with_ui
+                 :list_artists_with_ui,
+                 :list_artists_annotated,
+                 :create_artist_annotated
                ])
     end
 
@@ -93,7 +97,8 @@ defmodule AshAi.ExposedToolsTest do
                  :list_artists,
                  :create_artist_manual,
                  :list_artists_with_meta,
-                 :list_artists_with_ui
+                 :list_artists_with_ui,
+                 :list_artists_annotated
                ])
     end
 
@@ -129,7 +134,8 @@ defmodule AshAi.ExposedToolsTest do
                  :create_artist_manual,
                  :update_artist_after,
                  :list_artists_with_meta,
-                 :list_artists_with_ui
+                 :list_artists_with_ui,
+                 :list_artists_annotated
                ])
     end
   end

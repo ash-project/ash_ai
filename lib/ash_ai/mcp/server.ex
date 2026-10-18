@@ -1158,11 +1158,12 @@ defmodule AshAi.Mcp.Server do
           AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
       }
 
-      if Tool.has_meta?(tool) do
-        Map.put(result, "_meta", tool._meta)
-      else
-        result
-      end
+      result
+      |> maybe_put("title", tool.title)
+      |> maybe_put("annotations", Tool.annotations(tool))
+      |> then(fn result ->
+        if Tool.has_meta?(tool), do: Map.put(result, "_meta", tool._meta), else: result
+      end)
     end)
     |> Enum.sort_by(& &1["name"])
   end

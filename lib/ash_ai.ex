@@ -23,6 +23,7 @@ defmodule AshAi do
 
   defmodule Tool do
     @moduledoc "An action exposed to LLM agents"
+    @type t :: %__MODULE__{}
     defstruct [
       :name,
       :resource,
@@ -34,10 +35,12 @@ defmodule AshAi do
       :identity,
       :get_by,
       :description,
+      :title,
       :action_parameters,
       :arguments,
       :_meta,
       :ui,
+      annotations: [],
       full_filter_schema?: false,
       load_strict?: false,
       __spark_metadata__: nil
@@ -63,6 +66,35 @@ defmodule AshAi do
         do: true
 
     def has_meta?(_), do: false
+
+    @annotation_keys [
+      read_only?: "readOnlyHint",
+      destructive?: "destructiveHint",
+      idempotent?: "idempotentHint",
+      open_world?: "openWorldHint"
+    ]
+
+    @doc """
+    The tool's annotations as the MCP `annotations` object (string keys in the
+    specification's spelling), or `nil` when none are set. Only hints that
+    were given are included, so clients apply their own defaults to the rest.
+    """
+    @spec annotations(t()) :: map() | nil
+    def annotations(%__MODULE__{annotations: annotations}) when is_list(annotations) do
+      annotations
+      |> Enum.flat_map(fn {key, value} ->
+        case {Keyword.fetch(@annotation_keys, key), value} do
+          {{:ok, name}, value} when is_boolean(value) -> [{name, value}]
+          _ -> []
+        end
+      end)
+      |> case do
+        [] -> nil
+        pairs -> Map.new(pairs)
+      end
+    end
+
+    def annotations(_), do: nil
 
     @doc """
     Resolves the attribute keys used to address a record for update/destroy tools.
