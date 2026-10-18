@@ -98,7 +98,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     phx_test_project()
     |> Igniter.compose_task("ash_ai.gen.chat", argv)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
-    |Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
+    |%{text: initial_text, tool_calls: [], tool_results: [], stream_error: nil, result: nil},
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |%{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
@@ -111,11 +111,63 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |  %{acc | stream_error: reason}
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
-    |if final_state.stream_error ||
+    |if reply || awaiting || final_state.stream_error ||
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |defp stream_error_text(:max_iterations_reached) do
     """)
+  end
+
+  test "generated replies can wait on the user and continue", %{argv: argv} do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv ++ ["--live", "--live-component"])
+      |> apply_igniter!()
+
+    content = fn path -> igniter.rewrite.sources[path] |> Rewrite.Source.get(:content) end
+    message = content.("lib/test/chat/message.ex")
+    respond = content.("lib/test/chat/message/changes/respond.ex")
+
+    # The reply records what it waits on, and the user's message can continue it
+    assert message =~ "attribute :awaiting, :map"
+    assert message =~ "attribute :resume_requested, :boolean"
+
+    assert message =~
+             ~r/update :resume do.*set_attribute\(:resume_requested, true\).*run_oban_trigger\(:respond\)/s
+
+    # Decisions add to those kept from before
+    assert message =~ "coalesce(?, '{}'::jsonb) || ?"
+    # Only while the reply waits, which it stops doing once it streams again
+    assert message =~ "resume_requested and not is_nil(response.awaiting)"
+    assert message =~ ~r/upsert_fields[ (]\[:complete, :awaiting\]/
+    assert message =~ "response_to_id: message.response_to_id"
+    assert content.("lib/test/chat.ex") =~ ~r/define[ (]:resume_message/
+
+    # Continuing appends to the same reply, which replays after its message
+    assert respond =~ "Ash.Query.filter(response_to_id == ^message.id)"
+    assert respond =~ "Ash.Query.filter(is_nil(response_to_id) or response_to_id != ^message.id)"
+    assert respond =~ "approvals: approvals(message.approvals)"
+    assert respond =~ "# approve_tool_call: fn _call, _context -> :ask end"
+    assert respond =~ "defp awaiting(%{status: :paused, paused_calls: paused})"
+    assert respond =~ "force_change_attribute(:resume_requested, false)"
+
+    for path <- ["lib/test_web/live/chat_live.ex", "lib/test_web/chat_component.ex"] do
+      ui = content.(path)
+      assert ui =~ ~s|<% %{"type" => "authorization", "servers" => servers} -> %>|
+      assert ui =~ "action={mcp_authorize_path()}"
+      # Only the latest reply, the stream's first message, shows them
+      assert ui =~ ~s|"chat group",|
+      assert ui =~ "group-first:flex"
+      assert ui =~ ~s|def handle_event("approve_tool_calls"|
+      assert ui =~ "resume_message(id, %{approvals: approvals},"
+      assert {:ok, _ast} = Code.string_to_quoted(ui)
+    end
+
+    assert content.("lib/test_web/live/chat_live.ex") =~
+             ~s|value={~p"/chat/\#{@conversation.id}"}|
+
+    assert content.("lib/test_web/chat_component.ex") =~ "value={@return_to}"
+    assert content.("lib/test_web/chat_component.ex") =~ "phx-target={@myself}"
   end
 
   test "generated chat stores each reply's turn as transcript parts and replays them", %{

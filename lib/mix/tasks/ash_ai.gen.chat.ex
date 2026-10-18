@@ -139,6 +139,9 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
       * `prompt_fingerprint` (string) - the `AshAi.Transcript.fingerprint/2` of the system prompt and tools the reply was written with
       * `source` (enum: `:user` | `:agent`, default `:user`)
       * `complete` (boolean, default `true`) - false while streaming
+      * `awaiting` (map) - on a reply, what it waits on the user for before it continues: MCP servers to authorize, or tool calls to approve or deny
+      * `resume_requested` (boolean, default `false`) - on a user message, set to continue its reply
+      * `approvals` (map) - on a user message, the user's decisions on tool calls awaiting approval, by call id
       * `inserted_at`, `updated_at`
     * **Relationships**: `belongs_to :conversation` (required), `belongs_to :response_to` (self-referential), `has_one :response`
     * **Actions**:
@@ -148,7 +151,8 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
       * `:for_conversation` - keyset-paginated read filtered by `conversation_id`, sorted by `inserted_at` desc
       * `:respond` - update action that runs the `Respond` change (streams LLM response via `AshAi.ToolLoop.stream/2`)
       * `:upsert_response` - creates or atomically updates the agent's response message, appending streamed text chunks, tool call/result data, and transcript parts
-    * **Calculations**: `needs_response` - true when `source == :user` and no response message exists
+      * `:resume` - continues the reply to a user message that is waiting on the user, with optional `approvals`, by triggering the `:respond` Oban job again
+    * **Calculations**: `needs_response` - true when `source == :user` and either no response message exists or `resume_requested` is set while the response is waiting
     * **Extensions**: `postgres`, `AshOban`
 
     ### Respond Change
@@ -162,21 +166,27 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     5. Appends each assistant turn and tool result to the reply's `parts` as the loop adds them (`{:message, message}` events). `@store_reasoning` decides whether reasoning is kept.
     6. Accumulates tool calls and tool results during the stream
     7. Finalizes the response message with the complete text, tool calls, tool results, and prompt fingerprint
-    8. Handles stream errors gracefully with user-facing error messages
+    8. Records in the reply's `awaiting` what the loop stopped for, when it pauses for MCP authorization or awaits approval. On `:resume`, it continues the same reply: the history is what came before the user's message, plus the reply's parts, and the user's decisions are passed as `approvals:`.
+    9. Handles stream errors gracefully with user-facing error messages
 
     ### Building on the generated chat
 
     Because each reply stores its full turn, the generated chat can grow into
     the rest of `AshAi.ToolLoop` without changing how messages are stored:
 
-    * **Approvals**: pass `approve_tool_call:` to stop for the person's approval
-      (`Result.status == :awaiting_approval`). The calls still waiting are
-      `AshAi.Transcript.pending_tool_calls(reply.parts)`. To continue, run the
-      loop again with the reply's parts appended to the history and an
-      `approvals:` map.
+    * **Approvals**: the chat already shows Approve and Deny for tool calls
+      awaiting approval and continues the reply with the user's decisions. It
+      asks for none until you decide which calls need approval: uncomment
+      `approve_tool_call:` in the generated `Respond` change and return `:ask`
+      for those calls.
     * **Tool search**: pass `tool_search: true` to load tools on demand with the
       provider's built-in search (`AshAi.ToolSearch`).
     * **MCP servers**: add `AshAi.Mcp.Client.req_llm_tools/3` to `extra_tools:`.
+      When a server needs the user to authorize it, the reply pauses and the chat
+      shows a Connect button for it, posting to the route
+      `mix ash_ai.gen.mcp_oauth` generates, and a Continue button for when the
+      user is back. To use another route, change `mcp_authorize_path/0` in the
+      generated UI.
 
     ### GenerateName Change
 
@@ -228,6 +238,7 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     * **Agent responding indicator** - shows a loading animation while the LLM is generating
     * **Markdown rendering** - agent messages are rendered as HTML via MDEx with GitHub-flavored extensions (strikethrough, tables, autolinks, task lists, footnotes, code highlighting)
     * **Tool call/result badges** - displays tool invocations and results inline with messages
+    * **Waiting on the user** - under a reply that is waiting, Connect buttons for MCP servers to authorize, or Approve and Deny for tool calls, and a way to continue the reply
     * **Responsive drawer** - sidebar collapses on mobile with a hamburger toggle
 
     Routes are added to your router inside the `ash_authentication_live_session` block:
@@ -263,8 +274,11 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
       current_user={@current_user}
       conversation_id={@conversation_id}
       hide_sidebar={false}
+      return_to={~p"/my-page"}
     />
     ```
+
+    `return_to` is where the user comes back to after authorizing an MCP server, `"/"` by default.
 
     Your parent LiveView must:
 
@@ -691,6 +705,23 @@ if Code.ensure_loaded?(Igniter) do
         default true
       end
       """)
+      |> Ash.Resource.Igniter.add_new_attribute(message, :awaiting, """
+      attribute :awaiting, :map do
+        description "What a reply is waiting on the user for before it continues: authorizing MCP servers, or deciding on tool calls."
+      end
+      """)
+      |> Ash.Resource.Igniter.add_new_attribute(message, :resume_requested, """
+      attribute :resume_requested, :boolean do
+        description "Set on a user message to continue its reply once the user has authorized or decided."
+        allow_nil? false
+        default false
+      end
+      """)
+      |> Ash.Resource.Igniter.add_new_attribute(message, :approvals, """
+      attribute :approvals, :map do
+        description "The user's decisions on tool calls awaiting approval, by call id: \\"approve\\" or \\"deny\\"."
+      end
+      """)
       |> Ash.Resource.Igniter.add_new_relationship(message, :response, """
       has_one :response, __MODULE__ do
         public? true
@@ -751,6 +782,32 @@ if Code.ensure_loaded?(Igniter) do
         change #{inspect(respond)}
       end
       """)
+      |> Ash.Resource.Igniter.add_new_action(message, :resume, """
+      update :resume do
+        description "Continues the reply to this message, which is waiting on the user."
+        accept []
+        require_atomic? false
+        argument :approvals, :map, default: %{}
+
+        change set_attribute(:resume_requested, true)
+
+        # Added to decisions kept from before, such as an approved call that then
+        # needed authorization
+        change atomic_update(
+                 :approvals,
+                 {:atomic,
+                  expr(
+                    fragment(
+                      "coalesce(?, '{}'::jsonb) || ?",
+                      approvals,
+                      type(^arg(:approvals), :map)
+                    )
+                  )}
+               )
+
+        change run_oban_trigger(:respond)
+      end
+      """)
       |> Ash.Resource.Igniter.add_new_action(message, :upsert_response, """
       create :upsert_response do
         upsert? true
@@ -761,6 +818,7 @@ if Code.ensure_loaded?(Igniter) do
         argument :tool_results, {:array, :map}
         argument :parts, {:array, :map}
         argument :prompt_fingerprint, :string
+        argument :awaiting, :map
 
         # if updating
         #   if complete, set the text to the provided text
@@ -843,9 +901,12 @@ if Code.ensure_loaded?(Igniter) do
         change set_attribute(:tool_calls, arg(:tool_calls))
         change set_attribute(:parts, arg(:parts))
         change set_attribute(:prompt_fingerprint, arg(:prompt_fingerprint))
+        change set_attribute(:awaiting, arg(:awaiting))
 
-        # on update, only set complete to its new value
-        upsert_fields [:complete]
+        # on update, only set complete, and what the reply waits on, to their new
+        # values. A reply waits on nothing while it streams, so continuing one
+        # stops it waiting.
+        upsert_fields [:complete, :awaiting]
       end
       """)
       |> then(fn igniter ->
@@ -863,7 +924,7 @@ if Code.ensure_loaded?(Igniter) do
       end)
       |> Ash.Resource.Igniter.add_new_calculation(message, :needs_response, """
       calculate :needs_response, :boolean do
-        calculation expr(source == :user and not exists(response))
+        calculation expr(source == :user and (not exists(response) or (resume_requested and not is_nil(response.awaiting))))
       end
       """)
       |> Igniter.Project.Module.create_module(respond, """
@@ -895,18 +956,39 @@ if Code.ensure_loaded?(Igniter) do
               )
             )
 
+          # A reply waiting on the user continues where it stopped, appending to
+          # the same reply. Its unanswered tool calls run first.
+          reply =
+            if message.resume_requested do
+              #{inspect(message)}
+              |> Ash.Query.filter(response_to_id == ^message.id)
+              |> Ash.read_one!(scope: context)
+            end
+
           messages =
             #{inspect(message)}
             |> Ash.Query.filter(conversation_id == ^message.conversation_id)
             |> Ash.Query.filter(id != ^message.id)
+            # The reply being continued goes after the message it answers
+            |> Ash.Query.filter(is_nil(response_to_id) or response_to_id != ^message.id)
             |> Ash.Query.select([:text, :source, :parts, :prompt_fingerprint])
             |> Ash.Query.sort(inserted_at: :asc)
             |> Ash.read!(scope: context)
             |> Enum.concat([%{source: :user, text: message.text}])
+            |> Enum.concat(List.wrap(reply))
 
           prompt_messages = [Context.system(system_prompt())] ++ message_chain(messages, fingerprint)
 
-          new_message_id = Ash.UUIDv7.generate()
+          {new_message_id, initial_text} =
+            if reply do
+              separator = if String.trim(reply.text || "") == "", do: "", else: "\\n\\n"
+
+              # Shows the reply as responding again rather than waiting
+              upsert_response(message, reply.id, %{text: separator, complete: false})
+              {reply.id, (reply.text || "") <> separator}
+            else
+              {Ash.UUIDv7.generate(), ""}
+            end
 
           final_state =
             prompt_messages
@@ -916,9 +998,17 @@ if Code.ensure_loaded?(Igniter) do
               model: "#{provider.model}",
               actor: context.actor,
               tenant: context.tenant,
-              context: Map.new(Ash.Context.to_opts(context))
+              context: Map.new(Ash.Context.to_opts(context)),
+              # To have the user approve tool calls before they run, such as calls
+              # to MCP servers, return `:ask` for them. The chat then shows Approve
+              # and Deny buttons under the reply. `:ok` runs a call, and
+              # `{:deny, reason}` refuses it.
+              # approve_tool_call: fn _call, _context -> :ask end,
+              approvals: approvals(message.approvals)
             )
-            |> Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
+            |> Enum.reduce(
+              %{text: initial_text, tool_calls: [], tool_results: [], stream_error: nil, result: nil},
+              fn
               {:content, content}, acc ->
                 if content not in [nil, ""] do
                   upsert_response(message, new_message_id, %{text: content})
@@ -949,32 +1039,37 @@ if Code.ensure_loaded?(Igniter) do
               {:error, reason}, acc ->
                 %{acc | stream_error: reason}
 
-              {:done, _}, acc ->
-                acc
+              {:done, result}, acc ->
+                %{acc | result: result}
 
               _, acc ->
                 acc
             end)
 
+          awaiting = awaiting(final_state.result)
           stream_error_text = stream_error_text(final_state.stream_error)
+          text = String.trim_trailing(final_state.text || "")
 
           final_text =
             cond do
-              stream_error_text && String.trim(final_state.text || "") != "" ->
-                final_state.text <> "\\n\\n" <> stream_error_text
+              stream_error_text && text != "" ->
+                text <> "\\n\\n" <> stream_error_text
 
               stream_error_text ->
                 stream_error_text
 
-              String.trim(final_state.text || "") == "" &&
-                  (final_state.tool_calls != [] || final_state.tool_results != []) ->
+              # The chat shows what the reply is waiting on instead
+              awaiting ->
+                text
+
+              text == "" && (final_state.tool_calls != [] || final_state.tool_results != []) ->
                 "Completed tool call."
 
               true ->
-                final_state.text
+                text
             end
 
-          if final_state.stream_error ||
+          if reply || awaiting || final_state.stream_error ||
                final_state.tool_calls != [] ||
                final_state.tool_results != [] ||
                final_text != "" do
@@ -983,13 +1078,56 @@ if Code.ensure_loaded?(Igniter) do
               tool_calls: final_state.tool_calls,
               tool_results: final_state.tool_results,
               text: final_text,
-              prompt_fingerprint: fingerprint
+              prompt_fingerprint: fingerprint,
+              awaiting: awaiting
             })
           end
 
+          # Decisions for calls still waiting, such as an approved call that then
+          # needed authorization, are kept so the user isn't asked again
           changeset
+          |> Ash.Changeset.force_change_attribute(:resume_requested, false)
+          |> Ash.Changeset.force_change_attribute(:approvals, stored_approvals(final_state.result))
         end)
       end
+
+      # What the reply waits on, for the chat to ask the user: MCP servers to
+      # authorize, or tool calls to approve or deny
+      defp awaiting(%{status: :awaiting_approval, pending_approvals: calls}) do
+        %{
+          "type" => "approval",
+          "calls" =>
+            Enum.map(calls, &%{"id" => &1.id, "name" => &1.name, "arguments" => &1.arguments})
+        }
+      end
+
+      defp awaiting(%{status: :paused, paused_calls: paused}) do
+        servers =
+          for %{reason: {kind, info}} <- paused,
+              kind in [:authorization_required, :insufficient_scope],
+              uniq: true,
+              do: %{"server_url" => info.server_url, "challenge" => info.www_authenticate}
+
+        if servers != [], do: %{"type" => "authorization", "servers" => servers}
+      end
+
+      defp awaiting(_result), do: nil
+
+      defp approvals(decisions) do
+        Map.new(decisions || %{}, fn
+          {id, "approve"} -> {id, :approve}
+          {id, _deny} -> {id, {:deny, "The user denied this tool call."}}
+        end)
+      end
+
+      defp stored_approvals(%{approvals: approvals}) when map_size(approvals) > 0 do
+        Map.new(approvals, fn
+          {id, :approve} -> {id, "approve"}
+          {id, _deny} -> {id, "deny"}
+        end)
+      end
+
+      defp stored_approvals(_result), do: nil
 
       defp system_prompt do
         \"""
@@ -1105,7 +1243,9 @@ if Code.ensure_loaded?(Igniter) do
                       source: message.source,
                       complete: message.complete,
                       tool_calls: message.tool_calls,
-                      tool_results: message.tool_results
+                      tool_results: message.tool_results,
+                      awaiting: message.awaiting,
+                      response_to_id: message.response_to_id
                     }
                   end
                 end
@@ -1120,7 +1260,9 @@ if Code.ensure_loaded?(Igniter) do
                       source: message.source,
                       complete: message.complete,
                       tool_calls: message.tool_calls,
-                      tool_results: message.tool_results
+                      tool_results: message.tool_results,
+                      awaiting: message.awaiting,
+                      response_to_id: message.response_to_id
                     }
                   end
                 end
@@ -1223,6 +1365,12 @@ if Code.ensure_loaded?(Igniter) do
         message,
         :create_message,
         "define :create_message, action: :create"
+      )
+      |> Ash.Domain.Igniter.add_new_code_interface(
+        chat,
+        message,
+        :resume_message,
+        "define :resume_message, action: :resume, get_by: [:id]"
       )
       |> then(fn igniter ->
         if user do
@@ -1479,7 +1627,11 @@ if Code.ensure_loaded?(Igniter) do
               current_user={@current_user}
               conversation_id={@conversation_id}
               hide_sidebar={false}
+              return_to={~p"/your-page"}
             />
+
+        `return_to` is where the user comes back to after authorizing an MCP
+        server, "/" by default.
 
         Your parent LiveView must:
 
@@ -1692,6 +1844,103 @@ if Code.ensure_loaded?(Igniter) do
       apply(AshOban.Igniter, :add_new_trigger, [igniter, conversation, name, code])
     end
 
+    # Under a finished reply that's waiting on the user: buttons to connect the
+    # MCP servers it needs, or to approve or deny its tool calls
+    defp awaiting_markup(target, return_to) do
+      ~s'''
+      <%!-- Only the latest reply can continue: the user answered earlier ones by
+      sending another message. The latest message is the stream's first. --%>
+      <div
+        :if={message.source == :agent && message_complete?(message) && awaiting(message)}
+        class="chat-footer mt-2 hidden w-full max-w-[36rem] flex-col gap-2 text-sm group-first:flex"
+      >
+        <%= case awaiting(message) do %>
+          <% %{"type" => "authorization", "servers" => servers} -> %>
+            <p>Connect to continue, then press Continue.</p>
+            <div class="flex flex-wrap gap-2">
+              <.form :for={server <- servers} for={%{}} action={mcp_authorize_path()} method="post">
+                <input type="hidden" name="server_url" value={server["server_url"]} />
+                <input type="hidden" name="challenge" value={server["challenge"]} />
+                <input type="hidden" name="return_to" value={#{return_to}} />
+                <button type="submit" class="btn btn-sm btn-primary">
+                  Connect {URI.parse(server["server_url"]).host}
+                </button>
+              </.form>
+              <button
+                phx-click="resume"
+                phx-value-id={message.response_to_id}#{target}
+                class="btn btn-sm"
+              >
+                Continue
+              </button>
+            </div>
+          <% %{"type" => "approval", "calls" => calls} -> %>
+            <p>Allow these tool calls?</p>
+            <span
+              :for={call <- calls}
+              class="badge badge-outline max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
+            >
+              {call["name"]} {Jason.encode!(call["arguments"] || %{})}
+            </span>
+            <div class="flex gap-2">
+              <button
+                phx-click="approve_tool_calls"
+                phx-value-id={message.response_to_id}
+                phx-value-calls={Enum.map_join(calls, ",", & &1["id"])}#{target}
+                class="btn btn-sm btn-primary"
+              >
+                Approve
+              </button>
+              <button
+                phx-click="deny_tool_calls"
+                phx-value-id={message.response_to_id}
+                phx-value-calls={Enum.map_join(calls, ",", & &1["id"])}#{target}
+                class="btn btn-sm"
+              >
+                Deny
+              </button>
+            </div>
+          <% _other -> %>
+        <% end %>
+      </div>
+      '''
+    end
+
+    defp awaiting_events(impl) do
+      ~s'''
+      #{impl}def handle_event("resume", %{"id" => id}, socket), do: resume(socket, id, %{})
+
+      #{impl}def handle_event("approve_tool_calls", %{"id" => id, "calls" => calls}, socket),
+        do: resume(socket, id, decisions(calls, "approve"))
+
+      #{impl}def handle_event("deny_tool_calls", %{"id" => id, "calls" => calls}, socket),
+        do: resume(socket, id, decisions(calls, "deny"))
+      '''
+    end
+
+    defp awaiting_helpers(chat) do
+      ~s'''
+      # Continues the reply to the user message `id`, which is waiting on the user
+      defp resume(socket, id, approvals) do
+        case #{inspect(chat)}.resume_message(id, %{approvals: approvals},
+               actor: socket.assigns.current_user
+             ) do
+          {:ok, _message} -> {:noreply, assign(socket, :agent_responding, true)}
+          {:error, _error} -> {:noreply, put_flash(socket, :error, "Couldn't continue that reply.")}
+        end
+      end
+
+      defp decisions(calls, decision), do: Map.new(String.split(calls, ","), &{&1, decision})
+
+      defp awaiting(%{awaiting: %{} = awaiting}), do: awaiting
+      defp awaiting(_message), do: nil
+
+      # The route `mix ash_ai.gen.mcp_oauth` generates, which sends the user to
+      # authorize an MCP server and brings them back
+      defp mcp_authorize_path, do: "/mcp-auth/authorize"
+      '''
+    end
+
     defp chat_live_contents(web_module, on_mount, endpoint, chat, user, route) do
       interface_name =
         if user do
@@ -1788,7 +2037,7 @@ if Code.ensure_loaded?(Igniter) do
                     <div
                       id={id}
                       class={[
-                        "chat",
+                        "chat group",
                         message.source == :user && "chat-end",
                         message.source == :agent && "chat-start"
                       ]}
@@ -1844,6 +2093,7 @@ if Code.ensure_loaded?(Igniter) do
                       <div :if={String.trim(message.text || "") != ""} class="chat-bubble">
                         <%= to_markdown(message.text || "") %>
                       </div>
+      #{awaiting_markup("", ~s|~p"#{route}/\#{@conversation.id}"|)}
                     </div>
                   <% end %>
                 </div>
@@ -2019,6 +2269,7 @@ if Code.ensure_loaded?(Igniter) do
           end
         end
 
+      #{awaiting_events("")}
         def handle_info(
               %Phoenix.Socket.Broadcast{
                 topic: "chat:messages:" <> conversation_id,
@@ -2125,6 +2376,7 @@ if Code.ensure_loaded?(Igniter) do
         defp message_complete?(%{"complete" => complete}), do: complete in [true, "true"]
         defp message_complete?(_), do: false
 
+      #{awaiting_helpers(chat)}
         defp user_message?(message), do: message_source(message) in [:user, "user"]
         defp agent_message?(message), do: message_source(message) in [:agent, "agent"]
 
@@ -2225,6 +2477,8 @@ if Code.ensure_loaded?(Igniter) do
             |> assign_new(:conversation_id, fn -> nil end)
             |> assign_new(:agent_responding, fn -> false end)
             |> assign_new(:tool_data_warning_shown?, fn -> false end)
+            # Where the user comes back to after connecting an MCP server
+            |> assign_new(:return_to, fn -> "/" end)
             |> stream(:conversations, conversations)
             |> stream(:messages, [])
             |> assign_message_form()
@@ -2329,7 +2583,7 @@ if Code.ensure_loaded?(Igniter) do
                   <div
                     id={id}
                     class={[
-                      "chat",
+                      "chat group",
                       message.source == :user && "chat-end",
                       message.source == :agent && "chat-start"
                     ]}
@@ -2385,6 +2639,7 @@ if Code.ensure_loaded?(Igniter) do
                     <div :if={String.trim(message.text || "") != ""} class="chat-bubble">
                       <%= to_markdown(message.text || "") %>
                     </div>
+      #{awaiting_markup(" phx-target={@myself}", "@return_to")}
                   </div>
                 <% end %>
               </div>
@@ -2465,6 +2720,7 @@ if Code.ensure_loaded?(Igniter) do
         {:noreply, socket}
       end
 
+      #{awaiting_events("@impl true\n")}
       defp load_conversation(socket, conversation_id) do
         if #{actor_required?} && is_nil(socket.assigns.current_user) do
           socket
@@ -2613,6 +2869,7 @@ if Code.ensure_loaded?(Igniter) do
       defp message_complete?(%{"complete" => complete}), do: complete in [true, "true"]
       defp message_complete?(_), do: false
 
+      #{awaiting_helpers(chat)}
       defp user_message?(message), do: message_source(message) in [:user, "user"]
       defp agent_message?(message), do: message_source(message) in [:agent, "agent"]
 
