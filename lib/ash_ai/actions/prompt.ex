@@ -134,6 +134,8 @@ if Code.ensure_loaded?(ReqLLM) do
     """
     use Ash.Resource.Actions.Implementation
 
+    @result_request "Now give your final answer in the required format."
+
     def run(input, opts, context) do
       model = resolve_model_spec(opts[:model], input, context)
       action = input.action
@@ -296,6 +298,7 @@ if Code.ensure_loaded?(ReqLLM) do
           {:ok, loop_opts} ->
             case AshAi.ToolLoop.run(flow_state.messages, loop_opts) do
               {:ok, %AshAi.ToolLoop.Result{messages: messages, usage: usage}} ->
+                messages = ask_for_result(messages)
                 {:ok, ReqLLM.Context.new(messages), usage || %{}}
 
               {:error, reason} ->
@@ -316,6 +319,20 @@ if Code.ensure_loaded?(ReqLLM) do
         end
       else
         {:ok, ReqLLM.Context.new(flow_state.messages), %{}}
+      end
+    end
+
+    # The structured output request continues the tool loop's conversation,
+    # which ends with the model's answer in prose. Sending that as the last
+    # message would be an assistant prefill, which Anthropic rejects, so ask for
+    # the result in a user turn instead.
+    defp ask_for_result(messages) do
+      case List.last(messages) do
+        %{role: :assistant} ->
+          messages ++ [ReqLLM.Context.user(@result_request)]
+
+        _ ->
+          messages
       end
     end
 

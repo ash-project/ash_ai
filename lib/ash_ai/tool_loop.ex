@@ -484,9 +484,6 @@ if Code.ensure_loaded?(ReqLLM) do
     defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
     defp decode_tool_call_arguments(_), do: {:ok, %{}}
 
-    defp maybe_append_assistant_message(messages, _assistant, _text, %{provider: :anthropic}),
-      do: messages
-
     defp maybe_append_assistant_message(messages, assistant, text, _model)
          when is_binary(text) and text != "" do
       messages ++ [%{assistant | tool_calls: nil}]

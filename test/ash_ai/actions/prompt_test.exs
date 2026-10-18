@@ -312,6 +312,24 @@ defmodule AshAi.Actions.PromptTest do
             )
       end
 
+      action :analyze_with_anthropic_tool_loop, :string do
+        description("Test a tool loop followed by structured output on Anthropic")
+        argument(:text, :string, allow_nil?: false)
+
+        run prompt("anthropic:claude-sonnet-4-5",
+              prompt: "Use the extra tool for: <%= @input.arguments.text %>",
+              tools: [],
+              req_llm: FakeReqLLMToolLoopWithOptsCapture,
+              transform_flow: fn flow_state, _context ->
+                %{
+                  flow_state
+                  | extra_tools:
+                      flow_state.extra_tools ++ [AshAi.Actions.PromptTest.prompt_extra_tool()]
+                }
+              end
+            )
+      end
+
       action :analyze_with_function_prompt, :string do
         description("Test function-based prompt")
         argument(:text, :string, allow_nil?: false)
@@ -549,6 +567,24 @@ defmodule AshAi.Actions.PromptTest do
         end)
 
       assert marker_message
+    end
+
+    test "asks for the structured result in a user turn after the tool loop's answer" do
+      for action <- [:analyze_with_transform_flow_extra_tool, :analyze_with_anthropic_tool_loop] do
+        Process.delete({FakeReqLLMToolLoopWithOptsCapture, :call_count})
+
+        assert "tool_loop_result" ==
+                 TestResource
+                 |> Ash.ActionInput.for_action(action, %{text: "hello"})
+                 |> Ash.run_action!()
+
+        assert_receive {:prompt_generate_object_with_opts_called, _model, context, _opts}
+
+        # The loop's prose answer stays, and the request ends on a user turn,
+        # which every provider accepts.
+        assert [%{role: :assistant}, %{role: :user} = request] = Enum.take(context.messages, -2)
+        assert content_contains?(request.content, "final answer in the required format")
+      end
     end
 
     test "transform_flow can append extra_tools and forward req_llm_opts into tool loops" do

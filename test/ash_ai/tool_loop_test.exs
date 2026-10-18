@@ -943,8 +943,8 @@ defmodule AshAi.ToolLoopTest do
            end) == [["call_1"], ["call_2"]]
   end
 
-  describe "trailing assistant message handling" do
-    test "run/2 with Anthropic model does not append trailing assistant message when no tools are called" do
+  describe "final answer handling" do
+    test "run/2 with Anthropic model appends the final answer when no tools are called" do
       messages = [Context.user("hello")]
 
       assert {:ok, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
@@ -954,11 +954,10 @@ defmodule AshAi.ToolLoopTest do
                  req_llm: FakeReqLLMStreamOptsCapture
                )
 
-      assert final_messages == messages
-      refute List.last(final_messages).role == :assistant
+      assert [_user, %{role: :assistant, tool_calls: nil}] = final_messages
     end
 
-    test "run/2 with Anthropic model ends with tool result after tool call" do
+    test "run/2 with Anthropic model ends with the final answer after its tool results" do
       Process.delete({FakeReqLLMToolCallThenText, :call_count})
       messages = [Context.user("trigger tool")]
 
@@ -969,14 +968,15 @@ defmodule AshAi.ToolLoopTest do
                  req_llm: FakeReqLLMToolCallThenText
                )
 
-      assert List.last(final_messages).role == :tool
+      assert [%{role: :tool}, %{role: :assistant, tool_calls: nil}] =
+               Enum.take(final_messages, -2)
 
       assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
       assert length(assistant_tool_turns) == 1
     end
 
-    test "stream/2 with Anthropic model does not append trailing assistant message when no tools are called" do
+    test "stream/2 with Anthropic model appends the final answer when no tools are called" do
       messages = [Context.user("hello")]
 
       events =
@@ -990,11 +990,10 @@ defmodule AshAi.ToolLoopTest do
       assert {:done, %ToolLoop.Result{final_text: "done", messages: final_messages}} =
                List.last(events)
 
-      assert final_messages == messages
-      refute List.last(final_messages).role == :assistant
+      assert [_user, %{role: :assistant, tool_calls: nil}] = final_messages
     end
 
-    test "stream/2 with Anthropic model ends with tool result after tool call" do
+    test "stream/2 with Anthropic model ends with the final answer after its tool results" do
       Process.delete({FakeReqLLMToolCallThenText, :call_count})
       messages = [Context.user("trigger tool")]
 
@@ -1010,7 +1009,9 @@ defmodule AshAi.ToolLoopTest do
       assert Enum.any?(events, &match?({:tool_result, %{id: "call_1"}}, &1))
 
       assert {:done, %ToolLoop.Result{messages: final_messages}} = List.last(events)
-      assert List.last(final_messages).role == :tool
+
+      assert [%{role: :tool}, %{role: :assistant, tool_calls: nil}] =
+               Enum.take(final_messages, -2)
     end
 
     test "run/2 with OpenAI model still appends trailing assistant message" do
@@ -1048,7 +1049,7 @@ defmodule AshAi.ToolLoopTest do
                )
     end
 
-    test "run/2 with Anthropic model across sequential tool-call rounds never ends on an assistant message" do
+    test "run/2 with Anthropic model across sequential tool-call rounds answers each call before the final answer" do
       Process.delete({FakeReqLLMSequentialToolCalls, :call_count})
       messages = [Context.user("trigger tools")]
 
@@ -1059,13 +1060,13 @@ defmodule AshAi.ToolLoopTest do
                  req_llm: FakeReqLLMSequentialToolCalls
                )
 
-      refute List.last(final_messages).role == :assistant
-      assert List.last(final_messages).role == :tool
+      assert [%{role: :tool}, %{role: :assistant, tool_calls: nil}] =
+               Enum.take(final_messages, -2)
 
       assert_tool_results_after_tool_calls(final_messages)
     end
 
-    test "run/2 with Anthropic model and interleaved assistant text + tool_calls never ends on an assistant message" do
+    test "run/2 with Anthropic model and interleaved assistant text + tool_calls answers each call before the final answer" do
       Process.delete({FakeReqLLMToolCallsWithInterleavedText, :call_count})
       messages = [Context.user("trigger tools")]
 
@@ -1076,8 +1077,8 @@ defmodule AshAi.ToolLoopTest do
                  req_llm: FakeReqLLMToolCallsWithInterleavedText
                )
 
-      refute List.last(final_messages).role == :assistant
-      assert List.last(final_messages).role == :tool
+      assert [%{role: :tool}, %{role: :assistant, tool_calls: nil}] =
+               Enum.take(final_messages, -2)
 
       assistant_tool_turns = Enum.filter(final_messages, &tool_call?/1)
 
