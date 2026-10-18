@@ -175,6 +175,7 @@ defmodule AshAi.Tools do
     end
 
     defp normalize_extra_tool_result({:ok, content}), do: {:ok, content, content}
+    defp normalize_extra_tool_result({:pause, reason}), do: {:pause, reason}
 
     defp normalize_extra_tool_result({:error, content}) do
       {:error, normalize_extra_tool_error(content)}

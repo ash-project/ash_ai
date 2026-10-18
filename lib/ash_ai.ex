@@ -455,6 +455,23 @@ defmodule AshAi do
 
           Set to `:infinity` to disable iteration limits.
           """
+        ],
+        approve_tool_call: [
+          type: {:fun, 2},
+          doc: """
+          Decides whether a tool call may run. Receives the call
+          (`%{id: id, name: name, arguments: args}`) and the tool context, and returns
+          `:ok`, `{:deny, reason}`, or `:ask`. `:ask` stops the loop with
+          `status: :awaiting_approval`. See "Approvals" in `AshAi.ToolLoop`.
+          """
+        ],
+        approvals: [
+          type: {:map, :string, :any},
+          default: %{},
+          doc: """
+          Decisions for the calls of a paused round, as a map from tool call id to
+          `:approve` or `{:deny, reason}`. See "Approvals" in `AshAi.ToolLoop`.
+          """
         ]
       ]
   end
