@@ -49,6 +49,19 @@ if Code.ensure_loaded?(ReqLLM) do
     Pass `tool_search: true` (or options) to defer tools until the model
     searches for them with the provider's built-in tool search. See
     `AshAi.ToolSearch`.
+
+    ## Images in tool results
+
+    A tool can return content parts with images, as `AshAi.Mcp.Client` tools
+    do. The model receives them when it accepts image input and its provider's
+    API carries images in tool results: Anthropic's, Google's, and OpenAI's
+    Responses API. Otherwise each image is described in text. The conversation
+    keeps the images either way, so a later request to a model that accepts
+    them still sends them.
+
+    Pass `tool_result_images: true` to always send them, for a provider that
+    accepts them but isn't recognized, or `false` to always describe them, for
+    example behind a gateway that drops them.
     """
 
     alias AshAi.ToolSearch
@@ -199,6 +212,7 @@ if Code.ensure_loaded?(ReqLLM) do
         registry: registry,
         approve_tool_call: opts.approve_tool_call,
         approvals: opts.approvals,
+        tool_result_images: opts.tool_result_images,
         req_llm_opts: opts.req_llm_opts,
         context: context,
         # A resumed round runs before the first request, which is iteration 1.
@@ -343,9 +357,16 @@ if Code.ensure_loaded?(ReqLLM) do
         tools = ToolSearch.request_tools(state.search, state.tools)
         req_llm_opts = ToolSearch.request_opts(state.search, state.req_llm_opts)
 
+        messages =
+          AshAi.ToolLoop.Media.prepare(
+            state.system_messages ++ close_dangling_tool_calls(state.messages),
+            state.model,
+            state.tool_result_images
+          )
+
         case state.req_llm.stream_text(
                state.model,
-               state.system_messages ++ close_dangling_tool_calls(state.messages),
+               messages,
                req_llm_stream_opts(req_llm_opts, tools)
              ) do
           {:ok, stream_response} ->

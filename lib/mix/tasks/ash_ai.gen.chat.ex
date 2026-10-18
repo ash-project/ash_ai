@@ -1034,10 +1034,11 @@ if Code.ensure_loaded?(Igniter) do
       defp append_event(items, value) when is_list(items), do: items ++ [value]
       defp append_event(_items, value), do: [value]
 
+      # For display: images are described here, and replayed from `parts`
       defp normalize_tool_result(tool_call_id, {:ok, content, _raw}) do
         %{
           tool_call_id: tool_call_id,
-          content: content,
+          content: AshAi.ChatUI.Tools.storable_content(content),
           is_error: false
         }
       end
@@ -1045,7 +1046,7 @@ if Code.ensure_loaded?(Igniter) do
       defp normalize_tool_result(tool_call_id, {:error, content}) do
         %{
           tool_call_id: tool_call_id,
-          content: content,
+          content: AshAi.ChatUI.Tools.storable_content(content),
           is_error: true
         }
       end

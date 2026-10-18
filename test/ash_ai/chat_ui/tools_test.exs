@@ -152,4 +152,28 @@ defmodule AshAi.ChatUI.ToolsTest do
       assert tool_result.content == %{"ok" => true}
     end
   end
+
+  describe "storable_content/1" do
+    alias ReqLLM.Message.ContentPart
+
+    test "joins content parts into text, describing images without their data" do
+      content = [ContentPart.text("Here:"), ContentPart.image(<<0, 255>>, "image/png")]
+
+      assert Tools.storable_content(content) == "Here:\n[image: image/png]"
+      assert {:ok, _json} = Jason.encode(Tools.storable_content(content))
+    end
+
+    test "describes images in lists that mix in other content" do
+      content = [ContentPart.image(<<0, 255>>, "image/png"), %{"caption" => "a chart"}]
+
+      assert Tools.storable_content(content) == ["[image: image/png]", %{"caption" => "a chart"}]
+      assert {:ok, _json} = Jason.encode(Tools.storable_content(content))
+    end
+
+    test "returns other content as it is" do
+      assert Tools.storable_content("text") == "text"
+      assert Tools.storable_content(%{"ok" => true}) == %{"ok" => true}
+      assert Tools.storable_content([%{"a" => 1}]) == [%{"a" => 1}]
+    end
+  end
 end

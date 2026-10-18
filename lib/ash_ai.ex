@@ -480,6 +480,18 @@ defmodule AshAi do
           Defers tools until the model searches for them. `true` or a keyword list of
           options. See `AshAi.ToolSearch`.
           """
+        ],
+        tool_result_images: [
+          type: {:in, [:auto, true, false]},
+          default: :auto,
+          doc: """
+          Whether images in tool results reach the model. `:auto` sends them when the
+          model accepts image input and its provider's API carries images in tool
+          results, and describes them in text otherwise. `true` always sends them, for a
+          provider that accepts them but isn't recognized, and `false` always describes
+          them, for example behind a gateway that drops them. See "Images in tool
+          results" in `AshAi.ToolLoop`.
+          """
         ]
       ]
   end

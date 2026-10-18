@@ -142,6 +142,8 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     assert respond =~ "Transcript.strip_reasoning()"
     # Replies stored before parts existed still replay as text
     assert respond =~ "Context.assistant(text || \"\")"
+    # Tool results with images are stored for display without their data
+    assert respond =~ "content: AshAi.ChatUI.Tools.storable_content(content)"
 
     {modules, diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(respond) end)
     assert [{Test.Chat.Message.Changes.Respond, _}] = modules

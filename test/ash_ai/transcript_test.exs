@@ -62,6 +62,16 @@ defmodule AshAi.TranscriptTest do
     assert restored == message
   end
 
+  test "tool results with images round trip, bytes intact" do
+    png = <<137, 80, 78, 71, 13, 10, 26, 10, 0, 255>>
+    message = Context.tool_result("call_1", [ContentPart.text("Here:"), ContentPart.image(png)])
+
+    assert [restored] =
+             [message] |> Transcript.to_parts() |> json_round_trip() |> Transcript.from_parts()
+
+    assert restored == message
+  end
+
   test "fingerprint changes with the system prompt and tools" do
     tool = ReqLLM.Tool.new!(name: "a", description: "a", callback: fn _ -> {:ok, nil} end)
 
