@@ -71,6 +71,7 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {^ref, :event, {:done, _}}
 
     send(metadata, {ref, :metadata, %{usage: %{input_tokens: 3, output_tokens: 2}}})
+    assert_receive {^ref, :event, {:message, %{role: :assistant, tool_calls: nil}}}, 1_000
     assert_receive {^ref, :event, {:done, result}}, 1_000
     assert result.final_text == "hello world"
     assert result.usage == %{input_tokens: 3, output_tokens: 2}
@@ -168,9 +169,11 @@ defmodule AshAi.ToolLoopStreamingTest do
     refute_receive {:tool_executed, _}
     send(first_metadata, {ref, :metadata, %{usage: %{input_tokens: 10, output_tokens: 2}}})
 
+    assert_receive {^ref, :event, {:message, %{role: :assistant, tool_calls: [_]}}}, 1_000
     assert_receive {^ref, :event, {:tool_call, %{id: "call_1"}}}, 1_000
     assert_receive {:tool_executed, ^consumer}, 1_000
     assert_receive {^ref, :event, {:tool_result, %{id: "call_1"}}}, 1_000
+    assert_receive {^ref, :event, {:message, %{role: :tool, tool_call_id: "call_1"}}}, 1_000
     assert_receive {^ref, :event, {:iteration, %ToolLoop.IterationEvent{iteration: 2}}}, 1_000
     assert_receive {:DOWN, ^first_monitor, :process, ^first_handle, :normal}, 1_000
 
@@ -191,6 +194,7 @@ defmodule AshAi.ToolLoopStreamingTest do
       usage: %{input_tokens: 20, output_tokens: 3}
     })
 
+    assert_receive {^ref, :event, {:message, %{role: :assistant, tool_calls: nil}}}, 1_000
     assert_receive {^ref, :event, {:done, result}}, 1_000
     assert result.final_text == "Found it."
     assert result.iterations == 2
@@ -205,13 +209,14 @@ defmodule AshAi.ToolLoopStreamingTest do
   end
 
   test "stream/2 does not run tools or start another turn after the caller halts" do
-    {ref, consumer} = start_consumer(&Stream.take(&1, 1), extra_tools: [lookup_tool()])
+    {ref, consumer} = start_consumer(&Stream.take(&1, 2), extra_tools: [lookup_tool()])
     assert_receive {^ref, :started, ^consumer, _handle, _}, 1_000
     assert_receive {^ref, :metadata_waiting, metadata}, 1_000
     assert_receive {^ref, :demand}, 1_000
     send(consumer, {ref, :chunk, StreamChunk.tool_call("lookup", %{}, %{id: "call_1"})})
     finish_response(ref, consumer, metadata, %{})
 
+    assert_receive {^ref, :event, {:message, %{role: :assistant}}}, 1_000
     assert_receive {^ref, :event, {:tool_call, %{id: "call_1"}}}, 1_000
     assert_receive {^ref, :finished}, 1_000
     refute_receive {:tool_executed, _}

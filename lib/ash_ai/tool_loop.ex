@@ -16,6 +16,14 @@ if Code.ensure_loaded?(ReqLLM) do
     of `messages` on every model request. It is not part of the returned
     `Result.messages`, so pass the same option when continuing a conversation
     from those messages.
+
+    ## Persisting turns
+
+    `stream/2` emits `{:message, message}` for every message the loop adds to
+    the conversation: each assistant turn (with its reasoning and provider
+    metadata) and each tool result. Store them with `AshAi.Transcript.to_parts/2`
+    to replay turns exactly, which keeps prompt caching and reasoning intact
+    across turns.
     """
 
     alias ReqLLM.Context
@@ -76,8 +84,11 @@ if Code.ensure_loaded?(ReqLLM) do
 
     Events:
     - `{:content, text}`
+    - `{:thinking, text}`
     - `{:tool_call, %{id: id, name: name, arguments: args}}`
     - `{:tool_result, %{id: id, result: result}}`
+    - `{:message, %ReqLLM.Message{}}` - an assistant turn or tool result added
+      to the conversation
     - `{:iteration, %IterationEvent{}}`
     - `{:error, reason}`
     - `{:done, %Result{}}`
@@ -122,8 +133,8 @@ if Code.ensure_loaded?(ReqLLM) do
     defp next_stream_chunk(%{state: :streaming} = state) do
       case resume_stream(state.continuation) do
         {:suspended, chunk, continuation} ->
-          events = if chunk.type == :content, do: [{:content, chunk.text || ""}], else: []
-          {events, %{state | continuation: continuation, chunks: [chunk | state.chunks]}}
+          {chunk_events(chunk),
+           %{state | continuation: continuation, chunks: [chunk | state.chunks]}}
 
         {status, _} when status in [:done, :halted] ->
           {[], %{state | state: :finalizing, continuation: nil}}
@@ -167,10 +178,10 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp next_stream_chunk(%{state: :tools, pending_tool_calls: [call | rest]} = state) do
       {result, content} = run_single_tool(call, state.registry, state.context)
-      messages = state.messages ++ [Context.tool_result(call.id, content)]
+      message = Context.tool_result(call.id, content)
 
-      {[{:tool_result, %{id: call.id, result: result}}],
-       %{state | messages: messages, pending_tool_calls: rest}}
+      {[{:tool_result, %{id: call.id, result: result}}, {:message, message}],
+       %{state | messages: state.messages ++ [message], pending_tool_calls: rest}}
     end
 
     defp next_stream_chunk(%{state: :running} = state) do
@@ -204,6 +215,13 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
+    defp chunk_events(%{type: :content, text: text}), do: [{:content, text || ""}]
+
+    defp chunk_events(%{type: :thinking, text: text}) when is_binary(text),
+      do: [{:thinking, text}]
+
+    defp chunk_events(_chunk), do: []
+
     defp resume_stream(continuation) do
       continuation.({:cont, nil})
     catch
@@ -231,9 +249,10 @@ if Code.ensure_loaded?(ReqLLM) do
       # No new calls means no progress is possible, including when the provider
       # only replays previously processed calls. Finish instead of looping.
       if tool_calls != [] do
-        messages = append_tool_call_turn(state.messages, assistant, tool_calls)
+        turn = tool_call_turn(assistant, tool_calls)
+        messages = state.messages ++ [turn]
 
-        {Enum.map(tool_calls, &{:tool_call, &1}),
+        {[{:message, turn} | Enum.map(tool_calls, &{:tool_call, &1})],
          %{
            state
            | state: :tools,
@@ -259,7 +278,15 @@ if Code.ensure_loaded?(ReqLLM) do
           usage: usage_acc
         }
 
-        {[{:done, result}], %{state | state: :done}}
+        # Emitted whenever the turn has content, even without text, so a caller
+        # persisting turns keeps its reasoning and metadata.
+        events =
+          case assistant do
+            %{content: [_ | _]} -> [{:message, %{assistant | tool_calls: nil}}, {:done, result}]
+            _ -> [{:done, result}]
+          end
+
+        {events, %{state | state: :done}}
       end
     end
 
@@ -378,12 +405,7 @@ if Code.ensure_loaded?(ReqLLM) do
             # no-progress loop, unbounded under `max_iterations: :infinity`), so
             # treat it as terminal.
             if tool_calls != [] do
-              messages =
-                append_tool_call_turn(
-                  messages,
-                  assistant,
-                  tool_calls
-                )
+              messages = messages ++ [tool_call_turn(assistant, tool_calls)]
 
               messages = run_tools(tool_calls, messages, registry, context)
 
@@ -565,10 +587,10 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp normalize_tool_call_arguments(_), do: %{}
 
-    defp append_tool_call_turn(messages, assistant, tool_calls) do
+    defp tool_call_turn(assistant, tool_calls) do
       ids = MapSet.new(tool_calls, & &1.id)
       calls = Enum.filter(assistant.tool_calls, &MapSet.member?(ids, &1.id))
-      messages ++ [%{assistant | tool_calls: calls}]
+      %{assistant | tool_calls: calls}
     end
 
     defp unprocessed_tool_calls(tool_calls, messages) do

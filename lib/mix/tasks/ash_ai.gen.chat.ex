@@ -135,6 +135,8 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
       * `text` (string, required, allows empty, no trimming)
       * `tool_calls` (array of maps) - structured tool invocation data
       * `tool_results` (array of maps) - tool execution results
+      * `parts` (array of maps) - the agent's reply as `AshAi.Transcript` parts: every assistant turn (with its reasoning) and tool result, in order
+      * `prompt_fingerprint` (string) - the `AshAi.Transcript.fingerprint/2` of the system prompt and tools the reply was written with
       * `source` (enum: `:user` | `:agent`, default `:user`)
       * `complete` (boolean, default `true`) - false while streaming
       * `inserted_at`, `updated_at`
@@ -145,7 +147,7 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
       * `:destroy` - default destroy
       * `:for_conversation` - keyset-paginated read filtered by `conversation_id`, sorted by `inserted_at` desc
       * `:respond` - update action that runs the `Respond` change (streams LLM response via `AshAi.ToolLoop.stream/2`)
-      * `:upsert_response` - creates or atomically updates the agent's response message, appending streamed text chunks and tool call/result data
+      * `:upsert_response` - creates or atomically updates the agent's response message, appending streamed text chunks, tool call/result data, and transcript parts
     * **Calculations**: `needs_response` - true when `source == :user` and no response message exists
     * **Extensions**: `postgres`, `AshOban`
 
@@ -154,12 +156,27 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     The generated `Respond` change module:
 
     1. Loads the full message history for the conversation
-    2. Builds a prompt chain with a system message ("You are a helpful chat bot...") followed by the message history
+    2. Builds a prompt chain with a system message ("You are a helpful chat bot...") followed by the message history. Earlier replies replay exactly from their `parts`, tool calls and results included, which keeps prompt caching working. Their reasoning is dropped if the system prompt or tools changed since (`prompt_fingerprint`). Replies without parts replay as text.
     3. Calls `AshAi.ToolLoop.stream/2` with `tools: true` (all AshAi domain tools available)
     4. Streams content chunks, upserting the response message as tokens arrive (enabling real-time UI updates via PubSub)
-    5. Accumulates tool calls and tool results during the stream
-    6. Finalizes the response message with the complete text, tool calls, and tool results
-    7. Handles stream errors gracefully with user-facing error messages
+    5. Appends each assistant turn and tool result to the reply's `parts` as the loop adds them (`{:message, message}` events). `@store_reasoning` decides whether reasoning is kept.
+    6. Accumulates tool calls and tool results during the stream
+    7. Finalizes the response message with the complete text, tool calls, tool results, and prompt fingerprint
+    8. Handles stream errors gracefully with user-facing error messages
+
+    ### Building on the generated chat
+
+    Because each reply stores its full turn, the generated chat can grow into
+    the rest of `AshAi.ToolLoop` without changing how messages are stored:
+
+    * **Approvals**: pass `approve_tool_call:` to stop for the person's approval
+      (`Result.status == :awaiting_approval`). The calls still waiting are
+      `AshAi.Transcript.pending_tool_calls(reply.parts)`. To continue, run the
+      loop again with the reply's parts appended to the history and an
+      `approvals:` map.
+    * **Tool search**: pass `tool_search: true` to load tools on demand with the
+      provider's built-in search (`AshAi.ToolSearch`).
+    * **MCP servers**: add `AshAi.Mcp.Client.req_llm_tools/3` to `extra_tools:`.
 
     ### GenerateName Change
 
@@ -643,6 +660,16 @@ if Code.ensure_loaded?(Igniter) do
       |> Ash.Resource.Igniter.add_new_attribute(message, :tool_results, """
       attribute :tool_results, {:array, :map}
       """)
+      |> Ash.Resource.Igniter.add_new_attribute(message, :parts, """
+      attribute :parts, {:array, :map} do
+        description "The agent's reply as `AshAi.Transcript` parts, replayed exactly on later turns."
+      end
+      """)
+      |> Ash.Resource.Igniter.add_new_attribute(message, :prompt_fingerprint, """
+      attribute :prompt_fingerprint, :string do
+        description "The `AshAi.Transcript.fingerprint/2` of the prompt and tools the reply was written with."
+      end
+      """)
       |> Ash.Resource.Igniter.add_new_attribute(message, :source, """
       attribute :source, #{inspect(source)} do
         allow_nil? false
@@ -724,6 +751,8 @@ if Code.ensure_loaded?(Igniter) do
         argument :text, :string, allow_nil?: false, constraints: [trim?: false, allow_empty?: true]
         argument :tool_calls, {:array, :map}
         argument :tool_results, {:array, :map}
+        argument :parts, {:array, :map}
+        argument :prompt_fingerprint, :string
 
         # if updating
         #   if complete, set the text to the provided text
@@ -774,12 +803,38 @@ if Code.ensure_loaded?(Igniter) do
                 )}
               )
 
+      change atomic_update(
+                :parts,
+                {:atomic,
+                expr(
+                  if not is_nil(^arg(:parts)) do
+                    fragment("? || ?", parts, type(^arg(:parts), {:array, :map}))
+                  else
+                    parts
+                  end
+                )}
+              )
+
+      change atomic_update(
+                :prompt_fingerprint,
+                {:atomic,
+                expr(
+                  if not is_nil(^arg(:prompt_fingerprint)) do
+                    ^arg(:prompt_fingerprint)
+                  else
+                    prompt_fingerprint
+                  end
+                )}
+              )
+
         # if creating, set the text attribute to the provided text
         change set_attribute(:text, arg(:text))
         change set_attribute(:complete, arg(:complete))
         change set_attribute(:source, :agent)
         change set_attribute(:tool_results, arg(:tool_results))
         change set_attribute(:tool_calls, arg(:tool_calls))
+        change set_attribute(:parts, arg(:parts))
+        change set_attribute(:prompt_fingerprint, arg(:prompt_fingerprint))
 
         # on update, only set complete to its new value
         upsert_fields [:complete]
@@ -807,29 +862,41 @@ if Code.ensure_loaded?(Igniter) do
       use Ash.Resource.Change
       require Ash.Query
 
+      alias AshAi.Transcript
       alias ReqLLM.Context
+
+      # Whether replies keep the model's reasoning (thinking blocks, signatures,
+      # encrypted reasoning) in their `parts`. Replaying it keeps prompt caching
+      # and the model's reasoning intact across turns. Set to `false` to store
+      # only text, tool calls, and tool results.
+      @store_reasoning true
 
       @impl true
       def change(changeset, _opts, context) do
         Ash.Changeset.before_transaction(changeset, fn changeset ->
           message = changeset.data
 
+          fingerprint =
+            Transcript.fingerprint(
+              system_prompt(),
+              AshAi.list_tools(
+                otp_app: :#{otp_app},
+                tools: true,
+                actor: context.actor,
+                tenant: context.tenant
+              )
+            )
+
           messages =
             #{inspect(message)}
             |> Ash.Query.filter(conversation_id == ^message.conversation_id)
             |> Ash.Query.filter(id != ^message.id)
-            |> Ash.Query.select([:text, :source, :tool_calls, :tool_results])
+            |> Ash.Query.select([:text, :source, :parts, :prompt_fingerprint])
             |> Ash.Query.sort(inserted_at: :asc)
             |> Ash.read!(scope: context)
             |> Enum.concat([%{source: :user, text: message.text}])
 
-          prompt_messages =
-            [
-              Context.system(\"""
-            You are a helpful chat bot.
-            Your job is to use the tools at your disposal to assist the user.
-            \""")
-            ] ++ message_chain(messages)
+          prompt_messages = [Context.system(system_prompt())] ++ message_chain(messages, fingerprint)
 
           new_message_id = Ash.UUIDv7.generate()
 
@@ -846,21 +913,20 @@ if Code.ensure_loaded?(Igniter) do
             |> Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
               {:content, content}, acc ->
                 if content not in [nil, ""] do
-                  #{inspect(message)}
-                  |> Ash.Changeset.for_create(
-                    :upsert_response,
-                    %{
-                      id: new_message_id,
-                      response_to_id: message.id,
-                      conversation_id: message.conversation_id,
-                      text: content
-                    },
-                    actor: %AshAi{}
-                  )
-                  |> Ash.create!()
+                  upsert_response(message, new_message_id, %{text: content})
                 end
 
                 %{acc | text: acc.text <> (content || "")}
+
+              # Each assistant turn and tool result, stored so later turns
+              # replay them exactly
+              {:message, turn}, acc ->
+                upsert_response(message, new_message_id, %{
+                  text: "",
+                  parts: Transcript.to_parts([turn], reasoning: @store_reasoning)
+                })
+
+                acc
 
               {:tool_call, tool_call}, acc ->
                 %{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
@@ -904,36 +970,56 @@ if Code.ensure_loaded?(Igniter) do
                final_state.tool_calls != [] ||
                final_state.tool_results != [] ||
                final_text != "" do
-            #{inspect(message)}
-            |> Ash.Changeset.for_create(
-              :upsert_response,
-              %{
-                id: new_message_id,
-                response_to_id: message.id,
-                conversation_id: message.conversation_id,
-                complete: true,
-                tool_calls: final_state.tool_calls,
-                tool_results: final_state.tool_results,
-                text: final_text
-              },
-              actor: %AshAi{}
-            )
-            |> Ash.create!()
+            upsert_response(message, new_message_id, %{
+              complete: true,
+              tool_calls: final_state.tool_calls,
+              tool_results: final_state.tool_results,
+              text: final_text,
+              prompt_fingerprint: fingerprint
+            })
           end
 
           changeset
         end)
       end
 
-      defp message_chain(messages) do
-        Enum.map(messages, fn
-          %{source: :agent, text: text} ->
-            # Historical tool call replay can break provider request validation for prior call IDs.
-            # Keep replay text-only; current turn tool usage is handled by AshAi.ToolLoop.
-            Context.assistant(text || "")
+      defp system_prompt do
+        \"""
+        You are a helpful chat bot.
+        Your job is to use the tools at your disposal to assist the user.
+        \"""
+      end
 
+      defp upsert_response(message, id, attrs) do
+        #{inspect(message)}
+        |> Ash.Changeset.for_create(
+          :upsert_response,
+          Map.merge(
+            %{id: id, response_to_id: message.id, conversation_id: message.conversation_id},
+            attrs
+          ),
+          actor: %AshAi{}
+        )
+        |> Ash.create!()
+      end
+
+      defp message_chain(messages, fingerprint) do
+        Enum.flat_map(messages, fn
           %{source: :user, text: text} ->
-            Context.user(text || "")
+            [Context.user(text || "")]
+
+          # Replies with stored parts replay exactly, with their tool calls and
+          # results. Reasoning is bound to the system prompt and tools it was
+          # written with, so it's dropped when either changed since.
+          %{source: :agent, parts: [_ | _] = parts, prompt_fingerprint: ^fingerprint} ->
+            Transcript.from_parts(parts)
+
+          %{source: :agent, parts: [_ | _] = parts} ->
+            parts |> Transcript.from_parts() |> Transcript.strip_reasoning()
+
+          # Replies stored before parts existed
+          %{source: :agent, text: text} ->
+            [Context.assistant(text || "")]
         end)
       end
 

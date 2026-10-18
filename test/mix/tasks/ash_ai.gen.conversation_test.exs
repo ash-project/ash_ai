@@ -118,7 +118,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     """)
   end
 
-  test "generated respond change replays text-only history to avoid stale tool call ids", %{
+  test "generated chat stores each reply's turn as transcript parts and replays them", %{
     argv: argv
   } do
     argv = argv ++ ["--live"]
@@ -128,14 +128,27 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
       |> Igniter.compose_task("ash_ai.gen.chat", argv)
       |> apply_igniter!()
 
-    respond_content =
-      igniter.rewrite.sources["lib/test/chat/message/changes/respond.ex"]
-      |> Rewrite.Source.get(:content)
+    content = fn path -> igniter.rewrite.sources[path] |> Rewrite.Source.get(:content) end
+    respond = content.("lib/test/chat/message/changes/respond.ex")
+    message = content.("lib/test/chat/message.ex")
 
-    assert respond_content =~ "Context.assistant(text || \"\")"
-    refute respond_content =~ "normalize_tool_calls(message.tool_calls || [])"
-    refute respond_content =~ "normalize_tool_result_message"
-    refute respond_content =~ "Context.tool_result(id, content || \"\")"
+    assert message =~ "attribute :parts, {:array, :map}"
+    assert message =~ "attribute :prompt_fingerprint, :string"
+    assert message =~ "argument(:parts, {:array, :map})"
+
+    assert respond =~ "{:message, turn}, acc ->"
+    assert respond =~ "Transcript.to_parts([turn], reasoning: @store_reasoning)"
+    assert respond =~ "Transcript.from_parts(parts)"
+    assert respond =~ "Transcript.strip_reasoning()"
+    # Replies stored before parts existed still replay as text
+    assert respond =~ "Context.assistant(text || \"\")"
+
+    {modules, diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(respond) end)
+    assert [{Test.Chat.Message.Changes.Respond, _}] = modules
+    assert diagnostics == []
+  after
+    :code.purge(Test.Chat.Message.Changes.Respond)
+    :code.delete(Test.Chat.Message.Changes.Respond)
   end
 
   test "--live with --user guards unauthenticated actor-required flows", %{argv: argv} do
