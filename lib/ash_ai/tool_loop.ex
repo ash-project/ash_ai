@@ -43,8 +43,15 @@ if Code.ensure_loaded?(ReqLLM) do
     metadata) and each tool result. Store them with `AshAi.Transcript.to_parts/2`
     to replay turns exactly, which keeps prompt caching and reasoning intact
     across turns and lets a paused turn resume later.
+
+    ## Tool search
+
+    Pass `tool_search: true` (or options) to defer tools until the model
+    searches for them with the provider's built-in tool search. See
+    `AshAi.ToolSearch`.
     """
 
+    alias AshAi.ToolSearch
     alias ReqLLM.Context
     alias ReqLLM.StreamResponse
 
@@ -178,6 +185,8 @@ if Code.ensure_loaded?(ReqLLM) do
       context = build_context(opts)
       model = resolve_model(opts.model, opts)
 
+      search = ToolSearch.new(tools, opts.tool_search, model)
+
       pending = pending_tool_calls(messages)
 
       %{
@@ -186,6 +195,7 @@ if Code.ensure_loaded?(ReqLLM) do
         system_messages: system_messages(opts),
         messages: messages,
         tools: tools,
+        search: search,
         registry: registry,
         approve_tool_call: opts.approve_tool_call,
         approvals: opts.approvals,
@@ -330,10 +340,13 @@ if Code.ensure_loaded?(ReqLLM) do
       if max_iterations_reached?(state.iteration, state.max_iterations) do
         stream_error(state, :max_iterations_reached)
       else
+        tools = ToolSearch.request_tools(state.search, state.tools)
+        req_llm_opts = ToolSearch.request_opts(state.search, state.req_llm_opts)
+
         case state.req_llm.stream_text(
                state.model,
                state.system_messages ++ close_dangling_tool_calls(state.messages),
-               req_llm_stream_opts(state.req_llm_opts, state.tools)
+               req_llm_stream_opts(req_llm_opts, tools)
              ) do
           {:ok, stream_response} ->
             # Suspend after each chunk so the caller can consume it before we pull another.

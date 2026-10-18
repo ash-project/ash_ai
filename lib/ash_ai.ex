@@ -472,6 +472,14 @@ defmodule AshAi do
           Decisions for the calls of a paused round, as a map from tool call id to
           `:approve` or `{:deny, reason}`. See "Approvals" in `AshAi.ToolLoop`.
           """
+        ],
+        tool_search: [
+          type: {:or, [:boolean, :keyword_list]},
+          default: false,
+          doc: """
+          Defers tools until the model searches for them. `true` or a keyword list of
+          options. See `AshAi.ToolSearch`.
+          """
         ]
       ]
   end
