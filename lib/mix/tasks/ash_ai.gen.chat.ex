@@ -180,9 +180,9 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
 
     ### GenerateName Change
 
-    Automatically generates a conversation title by sending the first 10 messages to the LLM with
-    a system prompt requesting a 2-8 word name. Triggered by the `:name_conversation` Oban trigger
-    when `needs_title` is true.
+    Automatically generates a conversation title by sending the first 10 messages to the LLM, as a
+    single transcript, with a system prompt requesting a 2-8 word name. Triggered by the
+    `:name_conversation` Oban trigger when `needs_title` is true.
 
     ### Oban Triggers
 
@@ -194,6 +194,10 @@ defmodule Mix.Tasks.AshAi.Gen.Chat.Docs do
     When a user resource is provided, an `AiAgentActorPersister` module is generated to serialize/deserialize
     the actor for Oban jobs. The persisted user gets `chat_agent?: true` metadata so you can differentiate
     agent-initiated actions in policies.
+
+    The `:name_conversation` scheduler runs without an actor, so both resources get an
+    `AshOban.Checks.AshObanInteraction` bypass, and the trigger uses `shared_context [:ash_oban?]` so
+    the bypass also covers the messages `GenerateName` reads. This needs `ash_oban` 0.10.2 or later.
 
     ### Configuration
 
@@ -422,7 +426,7 @@ if Code.ensure_loaded?(Igniter) do
         if Igniter.Project.Deps.has_dep?(igniter, :ash_oban) do
           {igniter, false}
         else
-          {Igniter.Project.Deps.add_dep(igniter, {:ash_oban, "~> 0.4"}), true}
+          {Igniter.Project.Deps.add_dep(igniter, {:ash_oban, "~> 0.10 and >= 0.10.2"}), true}
         end
 
       {igniter, install_mdex?} =
@@ -557,21 +561,25 @@ if Code.ensure_loaded?(Igniter) do
             |> Ash.Query.sort(inserted_at: :asc)
             |> Ash.read!(scope: context)
 
-          prompt_messages =
-            [
-              Context.system(\"""
-              Provide a short name for the current conversation.
-              2-8 words, preferring more succinct names.
-              RESPOND WITH ONLY THE NEW CONVERSATION NAME.
-              \""")
-            ] ++
-              Enum.map(messages, fn message ->
-                if message.source == :agent do
-                  Context.assistant(message.text)
-                else
-                  Context.user(message.text)
-                end
-              end)
+          transcript =
+            Enum.map_join(messages, "\\n\\n", fn message ->
+              if message.source == :agent do
+                "Assistant: " <> message.text
+              else
+                "User: " <> message.text
+              end
+            end)
+
+          # The conversation goes in as one user message. Replayed as turns, it
+          # ends on a reply, which models continue instead of naming.
+          prompt_messages = [
+            Context.system(\"""
+            Provide a short name for the conversation the user sends you.
+            2-8 words, preferring more succinct names.
+            RESPOND WITH ONLY THE NEW CONVERSATION NAME.
+            \"""),
+            Context.user("<conversation>\\n" <> transcript <> "\\n</conversation>")
+          ]
 
           ReqLLM.generate_text("#{provider.model}", prompt_messages)
           |> case do
@@ -1556,15 +1564,21 @@ if Code.ensure_loaded?(Igniter) do
       |> Igniter.Project.IgniterConfig.add_extension(Igniter.Extensions.Phoenix)
     end
 
-    # Adds Ash.Policy.Authorizer plus a bypass for the internal `%AshAi{}` actor
-    # used by agent-run actions (e.g. `:upsert_response`). Ownership policies are
-    # added by the callers.
+    # Adds Ash.Policy.Authorizer plus bypasses for the internal `%AshAi{}` actor
+    # used by agent-run actions (e.g. `:upsert_response`) and for AshOban, whose
+    # `:name_conversation` scheduler runs without an actor. Ownership policies
+    # are added by the callers.
     defp add_policy_authorizer(igniter, resource) do
       igniter
       |> Spark.Igniter.add_extension(resource, Ash.Resource, :authorizers, Ash.Policy.Authorizer)
       |> Ash.Resource.Igniter.add_bypass(
         resource,
         quote(do: AshAi.Checks.ActorIsAshAi),
+        quote(do: authorize_if(always()))
+      )
+      |> Ash.Resource.Igniter.add_bypass(
+        resource,
+        quote(do: AshOban.Checks.AshObanInteraction),
         quote(do: authorize_if(always()))
       )
     end
@@ -1660,8 +1674,9 @@ if Code.ensure_loaded?(Igniter) do
         where expr(needs_response)
       end
       """)
-      |> add_new_trigger(conversation, :respond, """
+      |> add_new_trigger(conversation, :name_conversation, """
       trigger :name_conversation do
+        #{if user, do: "shared_context [:ash_oban?]"}
         action :generate_name
         queue :conversations
         lock_for_update? false
@@ -1939,7 +1954,7 @@ if Code.ensure_loaded?(Igniter) do
           conversation =
             #{get_conversation_call}
 
-          messages = #{inspect(chat)}.message_history!(conversation.id, stream?: true)
+          messages = #{inspect(chat)}.message_history!(conversation.id, actor: socket.assigns.current_user, stream?: true)
 
           cond do
             socket.assigns[:conversation] && socket.assigns[:conversation].id == conversation.id ->
@@ -2458,7 +2473,7 @@ if Code.ensure_loaded?(Igniter) do
           conversation =
             #{inspect(chat)}.get_conversation!(conversation_id, actor: socket.assigns.current_user)
 
-          messages = #{inspect(chat)}.message_history!(conversation.id, stream?: true)
+          messages = #{inspect(chat)}.message_history!(conversation.id, actor: socket.assigns.current_user, stream?: true)
 
           #{inspect(endpoint)}.subscribe("chat:messages:\#{conversation.id}")
 
