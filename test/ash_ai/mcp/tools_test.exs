@@ -16,6 +16,7 @@ defmodule AshAi.Mcp.ToolsTest do
   @opts_with_create [tools: [:list_artists, :create_artist_after], otp_app: :ash_ai]
   @opts_with_meta [tools: [:list_artists_with_meta], otp_app: :ash_ai]
   @opts_with_ui [tools: [:list_artists_with_ui], otp_app: :ash_ai]
+  @opts_with_annotations [tools: [:list_artists_with_annotations], otp_app: :ash_ai]
 
   describe "tools/list" do
     test "returns available MCP tools" do
@@ -69,7 +70,27 @@ defmodule AshAi.Mcp.ToolsTest do
       assert tool["_meta"]["openai/outputTemplate"] == "ui://widget/artists-list.html"
     end
 
-    test "excludes _meta when tool has no metadata" do
+    test "includes annotations with camelCase hint names" do
+      session_id = initialize_and_get_session_id(@opts_with_annotations)
+
+      response = list_tools(session_id, @opts_with_annotations)
+      body = decode_response(response)
+
+      assert [
+               %{
+                 "annotations" =>
+                   %{
+                     "title" => "List artists",
+                     "readOnlyHint" => true,
+                     "openWorldHint" => false
+                   } = annotations
+               }
+             ] = body["result"]["tools"]
+
+      assert map_size(annotations) == 3
+    end
+
+    test "excludes _meta and annotations when tool has neither" do
       session_id = initialize_and_get_session_id(@opts)
 
       response = list_tools(session_id, @opts)
@@ -78,6 +99,7 @@ defmodule AshAi.Mcp.ToolsTest do
       [tool_without_meta] = body["result"]["tools"]
 
       refute Map.has_key?(tool_without_meta, "_meta")
+      refute Map.has_key?(tool_without_meta, "annotations")
     end
   end
 

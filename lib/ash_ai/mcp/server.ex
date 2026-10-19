@@ -1158,6 +1158,8 @@ defmodule AshAi.Mcp.Server do
           AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
       }
 
+      result = put_if(result, "annotations", tool_annotations(tool))
+
       if Tool.has_meta?(tool) do
         Map.put(result, "_meta", tool._meta)
       else
@@ -1166,6 +1168,11 @@ defmodule AshAi.Mcp.Server do
     end)
     |> Enum.sort_by(& &1["name"])
   end
+
+  defp tool_annotations(%Tool{annotations: []}), do: nil
+
+  defp tool_annotations(%Tool{annotations: annotations}),
+    do: keyword_to_camel_case_map(annotations)
 
   defp resource_definitions(opts) do
     action_resources =

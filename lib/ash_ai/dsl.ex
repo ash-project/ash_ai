@@ -129,6 +129,32 @@ defmodule AshAi.Dsl do
       doc:
         "Optional metadata map for tool integrations. Supports provider-specific extensions like OpenAI metadata. Keys and values should be strings to comply with JSON-RPC serialization."
     ],
+    annotations: [
+      type: :keyword_list,
+      keys: [
+        title: [type: :string, doc: "A human-readable title for the tool."],
+        read_only_hint: [
+          type: :boolean,
+          doc: "Whether the tool does not modify its environment."
+        ],
+        destructive_hint: [
+          type: :boolean,
+          doc:
+            "Whether the tool may perform destructive updates. Meaningful only when not read-only."
+        ],
+        idempotent_hint: [
+          type: :boolean,
+          doc:
+            "Whether repeated calls with the same arguments have no additional effect. Meaningful only when not read-only."
+        ],
+        open_world_hint: [
+          type: :boolean,
+          doc: "Whether the tool may interact with an open world of external entities."
+        ]
+      ],
+      doc:
+        "MCP tool annotations describing the tool's behavior to clients, served as `annotations` in `tools/list`. Hints are advisory; clients must not rely on them for security decisions."
+    ],
     ui: [
       type: {:or, [:atom, :string]},
       doc:
@@ -257,7 +283,8 @@ defmodule AshAi.Dsl do
       end
       """,
       ~s|tool :get_board, Board, :read, _meta: %{"openai/outputTemplate" => "ui://widget/kanban-board.html", "openai/toolInvocation/invoking" => "Preparing the board…", "openai/toolInvocation/invoked" => "Board ready."}|,
-      ~s(tool :list_artists, Artist, :read, ui: "ui://artists/list.html")
+      ~s(tool :list_artists, Artist, :read, ui: "ui://artists/list.html"),
+      ~s(tool :list_artists, Artist, :read, annotations: [read_only_hint: true, open_world_hint: false])
     ],
     target: AshAi.Tool,
     schema: @tool_schema,
