@@ -81,6 +81,7 @@ defmodule AshAi.MixProject do
         {"README.md", title: "Home"},
         {"documentation/dsls/DSL-AshAi.md", search_data: Spark.Docs.search_data_for(AshAi)},
         {"documentation/models/gemini.md", title: "Gemini"},
+        "documentation/topics/using-mcp-servers-with-tool-loops.md",
         "documentation/topics/mcp-client-authorization.md",
         "CHANGELOG.md"
       ],
