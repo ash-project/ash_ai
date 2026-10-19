@@ -6,6 +6,7 @@ spark_locals_without_parens = [
   _meta: 1,
   action_parameters: 1,
   allow_nil?: 1,
+  annotations: 1,
   argument: 2,
   argument: 3,
   ash_oban_trigger_name: 1,
