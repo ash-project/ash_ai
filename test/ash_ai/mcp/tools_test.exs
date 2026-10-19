@@ -228,6 +228,68 @@ defmodule AshAi.Mcp.ToolsTest do
       init_body = decode_response(init_response)
       assert init_body["result"]["instructions"] == "tools=1"
     end
+
+    test "omits `icons` from serverInfo when not configured" do
+      init_response =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => "init_1",
+          "params" => %{}
+        })
+        |> Router.call(@opts)
+
+      init_body = decode_response(init_response)
+      refute Map.has_key?(init_body["result"]["serverInfo"], "icons")
+    end
+
+    test "includes `icons` in serverInfo from opts" do
+      icons = [
+        %{
+          "src" => "https://example.com/icon.png",
+          "mimeType" => "image/png",
+          "sizes" => ["512x512"]
+        }
+      ]
+
+      opts = Router.init(Keyword.put(@opts, :mcp_icons, icons))
+
+      init_response =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => "init_1",
+          "params" => %{}
+        })
+        |> Router.call(opts)
+
+      init_body = decode_response(init_response)
+      assert init_body["result"]["serverInfo"]["icons"] == icons
+    end
+
+    test "supports a 1-arity function for `icons`" do
+      opts =
+        Router.init(
+          Keyword.put(@opts, :mcp_icons, fn opts ->
+            [%{src: "https://example.com/#{opts[:otp_app]}.svg", sizes: ["any"]}]
+          end)
+        )
+
+      init_response =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "method" => "initialize",
+          "id" => "init_1",
+          "params" => %{}
+        })
+        |> Router.call(opts)
+
+      init_body = decode_response(init_response)
+
+      assert init_body["result"]["serverInfo"]["icons"] == [
+               %{"src" => "https://example.com/ash_ai.svg", "sizes" => ["any"]}
+             ]
+    end
   end
 
   describe "integration" do
