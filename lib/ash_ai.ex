@@ -491,6 +491,43 @@ defmodule AshAi do
 
           Set to `:infinity` to disable iteration limits.
           """
+        ],
+        approve_tool_call: [
+          type: {:fun, 2},
+          doc: """
+          Decides whether a tool call may run. Receives the call
+          (`%{id: id, name: name, arguments: args}`) and the tool context, and returns
+          `:ok`, `{:deny, reason}`, or `:ask`. `:ask` stops the loop with
+          `status: :awaiting_approval`. See "Approvals" in `AshAi.ToolLoop`.
+          """
+        ],
+        approvals: [
+          type: {:map, :string, :any},
+          default: %{},
+          doc: """
+          Decisions for the calls of a paused round, as a map from tool call id to
+          `:approve` or `{:deny, reason}`. See "Approvals" in `AshAi.ToolLoop`.
+          """
+        ],
+        tool_search: [
+          type: {:or, [:boolean, :keyword_list]},
+          default: false,
+          doc: """
+          Defers tools until the model searches for them. `true` or a keyword list of
+          options. See `AshAi.ToolSearch`.
+          """
+        ],
+        tool_result_images: [
+          type: {:in, [:auto, true, false]},
+          default: :auto,
+          doc: """
+          Whether images in tool results reach the model. `:auto` sends them when the
+          model accepts image input and its provider's API carries images in tool
+          results, and describes them in text otherwise. `true` always sends them, for a
+          provider that accepts them but isn't recognized, and `false` always describes
+          them, for example behind a gateway that drops them. See "Images in tool
+          results" in `AshAi.ToolLoop`.
+          """
         ]
       ]
   end

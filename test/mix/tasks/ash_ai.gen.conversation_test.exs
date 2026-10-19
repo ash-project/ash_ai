@@ -98,7 +98,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     phx_test_project()
     |> Igniter.compose_task("ash_ai.gen.chat", argv)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
-    |Enum.reduce(%{text: "", tool_calls: [], tool_results: [], stream_error: nil}, fn
+    |%{text: initial_text, tool_calls: [], tool_results: [], stream_error: nil, result: nil},
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |%{acc | tool_calls: append_event(acc.tool_calls, tool_call)}
@@ -111,14 +111,66 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |  %{acc | stream_error: reason}
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
-    |if final_state.stream_error ||
+    |if reply || awaiting || final_state.stream_error ||
     """)
     |> assert_has_patch("lib/test/chat/message/changes/respond.ex", """
     |defp stream_error_text(:max_iterations_reached) do
     """)
   end
 
-  test "generated respond change replays text-only history to avoid stale tool call ids", %{
+  test "generated replies can wait on the user and continue", %{argv: argv} do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv ++ ["--live", "--live-component"])
+      |> apply_igniter!()
+
+    content = fn path -> igniter.rewrite.sources[path] |> Rewrite.Source.get(:content) end
+    message = content.("lib/test/chat/message.ex")
+    respond = content.("lib/test/chat/message/changes/respond.ex")
+
+    # The reply records what it waits on, and the user's message can continue it
+    assert message =~ "attribute :awaiting, :map"
+    assert message =~ "attribute :resume_requested, :boolean"
+
+    assert message =~
+             ~r/update :resume do.*set_attribute\(:resume_requested, true\).*run_oban_trigger\(:respond\)/s
+
+    # Decisions add to those kept from before
+    assert message =~ "coalesce(?, '{}'::jsonb) || ?"
+    # Only while the reply waits, which it stops doing once it streams again
+    assert message =~ "resume_requested and not is_nil(response.awaiting)"
+    assert message =~ ~r/upsert_fields[ (]\[:complete, :awaiting\]/
+    assert message =~ "response_to_id: message.response_to_id"
+    assert content.("lib/test/chat.ex") =~ ~r/define[ (]:resume_message/
+
+    # Continuing appends to the same reply, which replays after its message
+    assert respond =~ "Ash.Query.filter(response_to_id == ^message.id)"
+    assert respond =~ "Ash.Query.filter(is_nil(response_to_id) or response_to_id != ^message.id)"
+    assert respond =~ "approvals: approvals(message.approvals)"
+    assert respond =~ "# approve_tool_call: fn _call, _context -> :ask end"
+    assert respond =~ "defp awaiting(%{status: :paused, paused_calls: paused})"
+    assert respond =~ "force_change_attribute(:resume_requested, false)"
+
+    for path <- ["lib/test_web/live/chat_live.ex", "lib/test_web/chat_component.ex"] do
+      ui = content.(path)
+      assert ui =~ ~s|<% %{"type" => "authorization", "servers" => servers} -> %>|
+      assert ui =~ "action={mcp_authorize_path()}"
+      # Only the latest reply, the stream's first message, shows them
+      assert ui =~ ~s|"chat group",|
+      assert ui =~ "group-first:flex"
+      assert ui =~ ~s|def handle_event("approve_tool_calls"|
+      assert ui =~ "resume_message(id, %{approvals: approvals},"
+      assert {:ok, _ast} = Code.string_to_quoted(ui)
+    end
+
+    assert content.("lib/test_web/live/chat_live.ex") =~
+             ~s|value={~p"/chat/\#{@conversation.id}"}|
+
+    assert content.("lib/test_web/chat_component.ex") =~ "value={@return_to}"
+    assert content.("lib/test_web/chat_component.ex") =~ "phx-target={@myself}"
+  end
+
+  test "generated chat stores each reply's turn as transcript parts and replays them", %{
     argv: argv
   } do
     argv = argv ++ ["--live"]
@@ -128,14 +180,29 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
       |> Igniter.compose_task("ash_ai.gen.chat", argv)
       |> apply_igniter!()
 
-    respond_content =
-      igniter.rewrite.sources["lib/test/chat/message/changes/respond.ex"]
-      |> Rewrite.Source.get(:content)
+    content = fn path -> igniter.rewrite.sources[path] |> Rewrite.Source.get(:content) end
+    respond = content.("lib/test/chat/message/changes/respond.ex")
+    message = content.("lib/test/chat/message.ex")
 
-    assert respond_content =~ "Context.assistant(text || \"\")"
-    refute respond_content =~ "normalize_tool_calls(message.tool_calls || [])"
-    refute respond_content =~ "normalize_tool_result_message"
-    refute respond_content =~ "Context.tool_result(id, content || \"\")"
+    assert message =~ "attribute :parts, {:array, :map}"
+    assert message =~ "attribute :prompt_fingerprint, :string"
+    assert message =~ "argument(:parts, {:array, :map})"
+
+    assert respond =~ "{:message, turn}, acc ->"
+    assert respond =~ "Transcript.to_parts([turn], reasoning: @store_reasoning)"
+    assert respond =~ "Transcript.from_parts(parts)"
+    assert respond =~ "Transcript.strip_reasoning()"
+    # Replies stored before parts existed still replay as text
+    assert respond =~ "Context.assistant(text || \"\")"
+    # Tool results with images are stored for display without their data
+    assert respond =~ "content: AshAi.ChatUI.Tools.storable_content(content)"
+
+    {modules, diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(respond) end)
+    assert [{Test.Chat.Message.Changes.Respond, _}] = modules
+    assert diagnostics == []
+  after
+    :code.purge(Test.Chat.Message.Changes.Respond)
+    :code.delete(Test.Chat.Message.Changes.Respond)
   end
 
   test "--live with --user guards unauthenticated actor-required flows", %{argv: argv} do
@@ -155,6 +222,21 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     |> apply_igniter!()
   end
 
+  test "generated UIs load message history as the current user", %{argv: argv} do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv ++ ["--live", "--live-component"])
+      |> apply_igniter!()
+
+    for path <- ["lib/test_web/live/chat_live.ex", "lib/test_web/chat_component.ex"] do
+      content = igniter.rewrite.sources[path] |> Rewrite.Source.get(:content)
+
+      # Message reads are scoped to the conversation's owner
+      assert content =~
+               ~r/message_history!\(\s*conversation\.id,\s*actor: socket\.assigns\.current_user/
+    end
+  end
+
   test "--user adds ownership authorization policies to the generated chat resources", %{
     argv: argv
   } do
@@ -171,12 +253,40 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
     assert conversation =~ "authorize_if(relating_to_actor(:user))"
     assert conversation =~ "authorize_if(relates_to_actor_via(:user))"
 
+    # The `:name_conversation` scheduler has no actor
+    assert conversation =~ "bypass AshOban.Checks.AshObanInteraction"
+    assert conversation =~ "shared_context [:ash_oban?]"
+
     message =
       igniter.rewrite.sources["lib/test/chat/message.ex"] |> Rewrite.Source.get(:content)
 
     assert message =~ "Ash.Policy.Authorizer"
     assert message =~ "bypass AshAi.Checks.ActorIsAshAi"
+    assert message =~ "bypass AshOban.Checks.AshObanInteraction"
     assert message =~ "authorize_if(relates_to_actor_via([:conversation, :user]))"
+  end
+
+  test "generated name change sends the conversation as a single transcript", %{argv: argv} do
+    igniter =
+      phx_test_project()
+      |> Igniter.compose_task("ash_ai.gen.chat", argv)
+      |> apply_igniter!()
+
+    generate_name =
+      igniter.rewrite.sources["lib/test/chat/conversation/changes/generate_name.ex"]
+      |> Rewrite.Source.get(:content)
+
+    assert generate_name =~
+             ~s|Context.user("<conversation>\\n" <> transcript <> "\\n</conversation>")|
+
+    refute generate_name =~ "Context.assistant"
+
+    {modules, diagnostics} = Code.with_diagnostics(fn -> Code.compile_string(generate_name) end)
+    assert [{Test.Chat.Conversation.Changes.GenerateName, _}] = modules
+    assert diagnostics == []
+  after
+    :code.purge(Test.Chat.Conversation.Changes.GenerateName)
+    :code.delete(Test.Chat.Conversation.Changes.GenerateName)
   end
 
   test "when --user is not provided, generated conversation create action does not relate actor" do
@@ -190,6 +300,7 @@ defmodule Mix.Tasks.AshAi.Gen.ChatTest do
       |> Rewrite.Source.get(:content)
 
     refute conversation_content =~ "change relate_actor(:user)"
+    refute conversation_content =~ "shared_context"
   end
 
   test "generated chat domain includes AshAi extension and starter tools", %{argv: argv} do

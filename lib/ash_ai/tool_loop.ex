@@ -16,10 +16,59 @@ if Code.ensure_loaded?(ReqLLM) do
     of `messages` on every model request. It is not part of the returned
     `Result.messages`, so pass the same option when continuing a conversation
     from those messages.
+
+    ## Approvals
+
+    Pass `:approve_tool_call`, a function that receives each tool call
+    (`%{id: id, name: name, arguments: args}`) and the tool context, and returns
+    `:ok`, `{:deny, reason}`, or `:ask`. Approved calls run and denied calls get
+    an error result as usual. When any call in a round needs approval, the loop
+    finishes the other calls of that round and stops, returning a `Result` with
+    `status: :awaiting_approval` and the calls in `pending_approvals`.
+
+    The loop keeps no state between calls. To resume, call `run/2` or `stream/2`
+    again with the returned messages (which end in the paused tool round) and an
+    `:approvals` map from call id to `:approve` or `{:deny, reason}`. Calls
+    without a decision go through `:approve_tool_call` again. `resume/3` is a
+    shorthand.
+
+    If the conversation moves on instead (a user message follows a paused
+    round), each unanswered call is sent to the model with a fixed "not run"
+    result, so the history stays valid and identical across requests.
+
+    ## Persisting turns
+
+    `stream/2` emits `{:message, message}` for every message the loop adds to
+    the conversation: each assistant turn (with its reasoning and provider
+    metadata) and each tool result. Store them with `AshAi.Transcript.to_parts/2`
+    to replay turns exactly, which keeps prompt caching and reasoning intact
+    across turns and lets a paused turn resume later.
+
+    ## Tool search
+
+    Pass `tool_search: true` (or options) to defer tools until the model
+    searches for them with the provider's built-in tool search. See
+    `AshAi.ToolSearch`.
+
+    ## Images in tool results
+
+    A tool can return content parts with images, as `AshAi.Mcp.Client` tools
+    do. The model receives them when it accepts image input and its provider's
+    API carries images in tool results: Anthropic's, Google's, and OpenAI's
+    Responses API. Otherwise each image is described in text. The conversation
+    keeps the images either way, so a later request to a model that accepts
+    them still sends them.
+
+    Pass `tool_result_images: true` to always send them, for a provider that
+    accepts them but isn't recognized, or `false` to always describe them, for
+    example behind a gateway that drops them.
     """
 
+    alias AshAi.ToolSearch
     alias ReqLLM.Context
     alias ReqLLM.StreamResponse
+
+    @not_run_message "Not run: the conversation continued before this tool call could run."
 
     defmodule IterationEvent do
       @moduledoc """
@@ -32,6 +81,20 @@ if Code.ensure_loaded?(ReqLLM) do
       @moduledoc """
       Result returned from a completed tool loop.
 
+      `:status` is one of:
+
+      - `:complete`
+      - `:awaiting_approval` - the loop stopped for the tool calls in
+        `:pending_approvals`. See "Approvals" in `AshAi.ToolLoop`.
+      - `:paused` - a tool asked to pause, for example because the user has
+        to authorize an MCP server. `:paused_calls` holds
+        `%{call: call, reason: reason}` for each. Resume like an approval.
+
+      `:approvals` holds the decisions from the `:approvals` option for calls
+      that are still waiting, such as an approved call that then paused.
+      Store them with the turn and pass them back when resuming, so the user
+      isn't asked twice.
+
       `:usage` is the token-usage totals summed across every `stream_text/3`
       call made during the loop (one per iteration). Keys mirror what the
       underlying ReqLLM provider reports — typically `:input_tokens`,
@@ -39,32 +102,47 @@ if Code.ensure_loaded?(ReqLLM) do
       non-numeric fields fall through to the most recent value. Empty `%{}`
       when no provider reported usage.
       """
-      defstruct [:messages, :final_text, :iterations, :tool_calls_made, usage: %{}]
+      defstruct [
+        :messages,
+        :final_text,
+        :iterations,
+        :tool_calls_made,
+        status: :complete,
+        pending_approvals: [],
+        paused_calls: [],
+        approvals: %{},
+        usage: %{}
+      ]
     end
 
     @doc """
     Runs the tool loop synchronously.
+
+    Returns `{:ok, %Result{}}`, including when the loop stops to wait for
+    approvals, or `{:error, reason}`.
     """
     def run(messages, opts) do
-      opts = AshAi.Options.validate!(opts)
-      {tools, registry} = AshAi.Tools.build_tools_and_registry(opts)
-      context = build_context(opts)
-      model = resolve_model(opts.model, opts)
+      messages
+      |> stream(opts)
+      |> Enum.reduce({nil, nil}, fn
+        {:error, reason}, {nil, result} -> {{:error, reason}, result}
+        {:done, result}, {error, _} -> {error, result}
+        _event, acc -> acc
+      end)
+      |> case do
+        {nil, result} -> {:ok, result}
+        {error, _result} -> error
+      end
+    end
 
-      run_loop(
-        opts.req_llm,
-        model,
-        system_messages(opts),
-        messages,
-        tools,
-        registry,
-        opts.req_llm_opts,
-        context,
-        1,
-        opts.max_iterations,
-        [],
-        %{}
-      )
+    @doc """
+    Resumes a loop that stopped for approvals.
+
+    `decisions` maps tool call ids to `:approve` or `{:deny, reason}`. Shorthand
+    for `run(messages, Keyword.put(opts, :approvals, decisions))`.
+    """
+    def resume(messages, decisions, opts) do
+      run(messages, Keyword.put(opts, :approvals, decisions))
     end
 
     @doc """
@@ -76,8 +154,13 @@ if Code.ensure_loaded?(ReqLLM) do
 
     Events:
     - `{:content, text}`
+    - `{:thinking, text}`
     - `{:tool_call, %{id: id, name: name, arguments: args}}`
     - `{:tool_result, %{id: id, result: result}}`
+    - `{:message, %ReqLLM.Message{}}` - an assistant turn or tool result added
+      to the conversation
+    - `{:approval_required, [%{id: id, name: name, arguments: args}]}`
+    - `{:paused, [%{call: call, reason: reason}]}`
     - `{:iteration, %IterationEvent{}}`
     - `{:error, reason}`
     - `{:done, %Result{}}`
@@ -90,11 +173,34 @@ if Code.ensure_loaded?(ReqLLM) do
       )
     end
 
+    @doc """
+    The tool calls of a paused round: calls in the last assistant message that
+    have no result, when nothing but tool results follows that message.
+    """
+    def pending_tool_calls(messages) do
+      {trailing_results, rest} =
+        messages
+        |> Enum.reverse()
+        |> Enum.split_while(&(Map.get(&1, :role) == :tool))
+
+      case rest do
+        [%{role: :assistant, tool_calls: [_ | _] = calls} | _] ->
+          calls |> normalize_tool_calls() |> unprocessed_tool_calls(trailing_results)
+
+        _ ->
+          []
+      end
+    end
+
     defp init_stream(messages, opts) do
       opts = AshAi.Options.validate!(opts)
       {tools, registry} = AshAi.Tools.build_tools_and_registry(opts)
       context = build_context(opts)
       model = resolve_model(opts.model, opts)
+
+      search = ToolSearch.new(tools, opts.tool_search, model)
+
+      pending = pending_tool_calls(messages)
 
       %{
         req_llm: opts.req_llm,
@@ -102,18 +208,25 @@ if Code.ensure_loaded?(ReqLLM) do
         system_messages: system_messages(opts),
         messages: messages,
         tools: tools,
+        search: search,
         registry: registry,
+        approve_tool_call: opts.approve_tool_call,
+        approvals: opts.approvals,
+        tool_result_images: opts.tool_result_images,
         req_llm_opts: opts.req_llm_opts,
         context: context,
-        iteration: 1,
+        # A resumed round runs before the first request, which is iteration 1.
+        iteration: if(pending == [], do: 1, else: 0),
         max_iterations: opts.max_iterations,
         tool_calls_made: [],
         usage_acc: %{},
         stream_response: nil,
         continuation: nil,
         chunks: [],
-        pending_tool_calls: [],
-        state: :running
+        pending_tool_calls: pending,
+        awaiting_approval: [],
+        paused_calls: [],
+        state: if(pending == [], do: :running, else: :tools)
       }
     end
 
@@ -122,8 +235,8 @@ if Code.ensure_loaded?(ReqLLM) do
     defp next_stream_chunk(%{state: :streaming} = state) do
       case resume_stream(state.continuation) do
         {:suspended, chunk, continuation} ->
-          events = if chunk.type == :content, do: [{:content, chunk.text || ""}], else: []
-          {events, %{state | continuation: continuation, chunks: [chunk | state.chunks]}}
+          {chunk_events(chunk),
+           %{state | continuation: continuation, chunks: [chunk | state.chunks]}}
 
         {status, _} when status in [:done, :halted] ->
           {[], %{state | state: :finalizing, continuation: nil}}
@@ -158,6 +271,40 @@ if Code.ensure_loaded?(ReqLLM) do
       end
     end
 
+    defp next_stream_chunk(
+           %{
+             state: :tools,
+             pending_tool_calls: [],
+             awaiting_approval: awaiting,
+             paused_calls: paused
+           } = state
+         )
+         when awaiting != [] or paused != [] do
+      waiting_ids = Enum.map(awaiting ++ Enum.map(paused, & &1.call), & &1.id)
+
+      result = %Result{
+        messages: state.messages,
+        final_text: "",
+        iterations: state.iteration,
+        tool_calls_made: state.tool_calls_made,
+        status: if(awaiting != [], do: :awaiting_approval, else: :paused),
+        pending_approvals: awaiting,
+        paused_calls: paused,
+        approvals: Map.take(state.approvals, waiting_ids),
+        usage: state.usage_acc
+      }
+
+      events =
+        [
+          if(awaiting != [], do: {:approval_required, awaiting}),
+          if(paused != [], do: {:paused, paused}),
+          {:done, result}
+        ]
+        |> Enum.reject(&is_nil/1)
+
+      {events, %{state | state: :done}}
+    end
+
     defp next_stream_chunk(%{state: :tools, pending_tool_calls: []} = state) do
       iteration = state.iteration + 1
 
@@ -166,21 +313,61 @@ if Code.ensure_loaded?(ReqLLM) do
     end
 
     defp next_stream_chunk(%{state: :tools, pending_tool_calls: [call | rest]} = state) do
-      {result, content} = run_single_tool(call, state.registry, state.context)
-      messages = state.messages ++ [Context.tool_result(call.id, content)]
+      case decide(call, state) do
+        :ask ->
+          {[],
+           %{
+             state
+             | pending_tool_calls: rest,
+               awaiting_approval: state.awaiting_approval ++ [call]
+           }}
 
-      {[{:tool_result, %{id: call.id, result: result}}],
-       %{state | messages: messages, pending_tool_calls: rest}}
+        decision ->
+          outcome =
+            case decision do
+              :approve ->
+                run_single_tool(call, state.registry, state.context)
+
+              {:deny, reason} ->
+                content = Jason.encode!(%{error: denial_message(reason)})
+                {{:error, content}, content}
+            end
+
+          case outcome do
+            # The call stays unanswered, so resuming runs it again.
+            {:pause, reason} ->
+              paused = %{call: call, reason: reason}
+
+              {[],
+               %{state | pending_tool_calls: rest, paused_calls: state.paused_calls ++ [paused]}}
+
+            {result, content} ->
+              message = Context.tool_result(call.id, content)
+
+              {[{:tool_result, %{id: call.id, result: result}}, {:message, message}],
+               %{state | messages: state.messages ++ [message], pending_tool_calls: rest}}
+          end
+      end
     end
 
     defp next_stream_chunk(%{state: :running} = state) do
       if max_iterations_reached?(state.iteration, state.max_iterations) do
         stream_error(state, :max_iterations_reached)
       else
+        tools = ToolSearch.request_tools(state.search, state.tools)
+        req_llm_opts = ToolSearch.request_opts(state.search, state.req_llm_opts)
+
+        messages =
+          AshAi.ToolLoop.Media.prepare(
+            state.system_messages ++ close_dangling_tool_calls(state.messages),
+            state.model,
+            state.tool_result_images
+          )
+
         case state.req_llm.stream_text(
                state.model,
-               state.system_messages ++ state.messages,
-               req_llm_stream_opts(state.req_llm_opts, state.tools)
+               messages,
+               req_llm_stream_opts(req_llm_opts, tools)
              ) do
           {:ok, stream_response} ->
             # Suspend after each chunk so the caller can consume it before we pull another.
@@ -202,6 +389,73 @@ if Code.ensure_loaded?(ReqLLM) do
             stream_error(state, reason)
         end
       end
+    end
+
+    defp chunk_events(%{type: :content, text: text}), do: [{:content, text || ""}]
+
+    defp chunk_events(%{type: :thinking, text: text}) when is_binary(text),
+      do: [{:thinking, text}]
+
+    defp chunk_events(_chunk), do: []
+
+    defp decide(call, state) do
+      cond do
+        Map.has_key?(state.approvals, call.id) ->
+          normalize_decision(state.approvals[call.id])
+
+        is_function(state.approve_tool_call, 2) ->
+          normalize_decision(state.approve_tool_call.(call, state.context))
+
+        true ->
+          :approve
+      end
+    end
+
+    defp normalize_decision(decision) when decision in [:ok, :approve, :approved, true],
+      do: :approve
+
+    defp normalize_decision(decision) when decision in [:deny, :denied, false],
+      do: {:deny, nil}
+
+    defp normalize_decision({:deny, reason}), do: {:deny, reason}
+    defp normalize_decision(:ask), do: :ask
+
+    defp normalize_decision(other) do
+      raise ArgumentError,
+            "Expected :ok, :approve, {:deny, reason}, or :ask as a tool call decision, got: #{inspect(other)}"
+    end
+
+    defp denial_message(nil), do: "The user denied this tool call."
+    defp denial_message(reason), do: "The user denied this tool call: #{reason}"
+
+    # Gives every tool call that a later message left unanswered a fixed result,
+    # right after the results it did get. The provider rejects a history with
+    # unanswered calls, and a fixed result keeps every request's prefix identical.
+    defp close_dangling_tool_calls(messages) do
+      {acc, _open} =
+        Enum.reduce(messages, {[], []}, fn message, {acc, open} ->
+          case message do
+            %{role: :tool, tool_call_id: id} ->
+              {[message | acc], List.delete(open, id)}
+
+            %{role: :assistant, tool_calls: [_ | _] = calls} ->
+              ids = calls |> normalize_tool_calls() |> Enum.map(& &1.id)
+              {[message | not_run_results(open) ++ acc], ids}
+
+            message ->
+              {[message | not_run_results(open) ++ acc], []}
+          end
+        end)
+
+      # Calls still open at the end belong to a paused round, which is resolved
+      # before any request is made.
+      Enum.reverse(acc)
+    end
+
+    defp not_run_results(ids) do
+      ids
+      |> Enum.reverse()
+      |> Enum.map(&Context.tool_result(&1, Jason.encode!(%{error: @not_run_message})))
     end
 
     defp resume_stream(continuation) do
@@ -231,9 +485,10 @@ if Code.ensure_loaded?(ReqLLM) do
       # No new calls means no progress is possible, including when the provider
       # only replays previously processed calls. Finish instead of looping.
       if tool_calls != [] do
-        messages = append_tool_call_turn(state.messages, assistant, tool_calls)
+        turn = tool_call_turn(assistant, tool_calls)
+        messages = state.messages ++ [turn]
 
-        {Enum.map(tool_calls, &{:tool_call, &1}),
+        {[{:message, turn} | Enum.map(tool_calls, &{:tool_call, &1})],
          %{
            state
            | state: :tools,
@@ -259,7 +514,15 @@ if Code.ensure_loaded?(ReqLLM) do
           usage: usage_acc
         }
 
-        {[{:done, result}], %{state | state: :done}}
+        # Emitted whenever the turn has content, even without text, so a caller
+        # persisting turns keeps its reasoning and metadata.
+        events =
+          case assistant do
+            %{content: [_ | _]} -> [{:message, %{assistant | tool_calls: nil}}, {:done, result}]
+            _ -> [{:done, result}]
+          end
+
+        {events, %{state | state: :done}}
       end
     end
 
@@ -289,19 +552,6 @@ if Code.ensure_loaded?(ReqLLM) do
         _key, a, b when is_number(a) and is_number(b) -> a + b
         _key, _a, b -> b
       end)
-    end
-
-    defp request_response(req_llm, model, messages, req_llm_opts, tools) do
-      with {:ok, stream_response} <-
-             req_llm.stream_text(model, messages, req_llm_stream_opts(req_llm_opts, tools)) do
-        chunks = Enum.map(stream_response.stream, &normalize_chunk_tool_call_id/1)
-        usage = StreamResponse.usage(stream_response)
-
-        with {:ok, response} <-
-               StreamResponse.to_response(%{stream_response | stream: chunks, model: model}) do
-          {:ok, stream_response, chunks, response, usage}
-        end
-      end
     end
 
     defp system_messages(%{system_prompt: system_prompt} = opts)
@@ -336,103 +586,6 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp resolve_model(model, _opts), do: ReqLLM.model!(model)
 
-    defp run_loop(
-           req_llm,
-           model,
-           system_messages,
-           messages,
-           tools,
-           registry,
-           req_llm_opts,
-           context,
-           iteration,
-           max_iterations,
-           tool_calls_made,
-           usage_acc
-         ) do
-      if max_iterations_reached?(iteration, max_iterations) do
-        {:error, :max_iterations_reached}
-      else
-        case request_response(req_llm, model, system_messages ++ messages, req_llm_opts, tools) do
-          {:ok, stream_response, chunks, response, usage} ->
-            assistant = response.message
-            usage_acc = accumulate_usage(usage_acc, usage)
-
-            classification =
-              stream_response
-              |> Map.put(:stream, chunks)
-              |> ReqLLM.StreamResponse.classify()
-
-            tool_calls =
-              if classification.type == :tool_calls do
-                classification.tool_calls
-                |> normalize_tool_calls()
-                |> unprocessed_tool_calls(messages)
-              else
-                []
-              end
-
-            # An empty post-filter list means the model returned only invalid or
-            # already-processed tool calls, so `messages` would not advance.
-            # Recursing would re-send a byte-identical request forever (a
-            # no-progress loop, unbounded under `max_iterations: :infinity`), so
-            # treat it as terminal.
-            if tool_calls != [] do
-              messages =
-                append_tool_call_turn(
-                  messages,
-                  assistant,
-                  tool_calls
-                )
-
-              messages = run_tools(tool_calls, messages, registry, context)
-
-              run_loop(
-                req_llm,
-                model,
-                system_messages,
-                messages,
-                tools,
-                registry,
-                req_llm_opts,
-                context,
-                iteration + 1,
-                max_iterations,
-                tool_calls_made ++ tool_calls,
-                usage_acc
-              )
-            else
-              messages =
-                maybe_append_assistant_message(
-                  messages,
-                  assistant,
-                  classification.text,
-                  model
-                )
-
-              {:ok,
-               %Result{
-                 messages: messages,
-                 final_text: classification.text,
-                 iterations: iteration,
-                 tool_calls_made: tool_calls_made,
-                 usage: usage_acc
-               }}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-      end
-    end
-
-    defp run_tools(tool_calls, messages, registry, ctx) do
-      Enum.reduce(tool_calls, messages, fn tool_call, msgs ->
-        {_, content} = run_single_tool(tool_call, registry, ctx)
-        msgs ++ [Context.tool_result(tool_call.id, content)]
-      end)
-    end
-
     defp run_single_tool(tool_call, registry, ctx) do
       fun = Map.get(registry, tool_call.name)
 
@@ -458,13 +611,11 @@ if Code.ensure_loaded?(ReqLLM) do
               {:error, Jason.encode!(%{error: reason})}
           end
 
-        content =
-          case result do
-            {:ok, content, _raw} -> content
-            {:error, content} -> content
-          end
-
-        {result, content}
+        case result do
+          {:ok, content, _raw} -> {result, content}
+          {:error, content} -> {result, content}
+          {:pause, reason} -> {:pause, reason}
+        end
       end
     end
 
@@ -483,9 +634,6 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp decode_tool_call_arguments(m) when is_map(m), do: {:ok, m}
     defp decode_tool_call_arguments(_), do: {:ok, %{}}
-
-    defp maybe_append_assistant_message(messages, _assistant, _text, %{provider: :anthropic}),
-      do: messages
 
     defp maybe_append_assistant_message(messages, assistant, text, _model)
          when is_binary(text) and text != "" do
@@ -568,10 +716,10 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp normalize_tool_call_arguments(_), do: %{}
 
-    defp append_tool_call_turn(messages, assistant, tool_calls) do
+    defp tool_call_turn(assistant, tool_calls) do
       ids = MapSet.new(tool_calls, & &1.id)
       calls = Enum.filter(assistant.tool_calls, &MapSet.member?(ids, &1.id))
-      messages ++ [%{assistant | tool_calls: calls}]
+      %{assistant | tool_calls: calls}
     end
 
     defp unprocessed_tool_calls(tool_calls, messages) do

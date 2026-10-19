@@ -11,6 +11,23 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.3.0](https://github.com/ash-project/ash_ai/compare/v1.2.0...v1.3.0) (2026-10-19)
+
+
+
+
+### Features:
+
+* add tool search by [@zachdaniel](https://github.com/zachdaniel)
+
+* add tool call approval by [@zachdaniel](https://github.com/zachdaniel)
+
+* rework chat storage model by [@zachdaniel](https://github.com/zachdaniel)
+
+### Bug Fixes:
+
+* keep the tool loop's last message on Anthropic by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.2.0](https://github.com/ash-project/ash_ai/compare/v1.1.2...v1.2.0) (2026-10-13)
 
 

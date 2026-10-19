@@ -53,6 +53,39 @@ if Code.ensure_loaded?(ReqLLM) do
       {:error, invalid_payload_error("message", message, "a map or struct")}
     end
 
+    @doc """
+    A tool result's content in a form to store as JSON and show to people, such
+    as in a message's `tool_results`.
+
+    Content parts become text, with images and other non-text parts described
+    rather than carrying their data, and a list that is all text is joined.
+    Other content is returned as it is. Store the result's exact content,
+    images included, with `AshAi.Transcript.to_parts/2`.
+    """
+    @spec storable_content(term()) :: term()
+    def storable_content([_ | _] = content) do
+      if Enum.any?(content, &is_struct(&1, ReqLLM.Message.ContentPart)) do
+        items =
+          Enum.map(content, fn
+            %ReqLLM.Message.ContentPart{} = part -> part_text(part)
+            other -> other
+          end)
+
+        if Enum.all?(items, &is_binary/1), do: Enum.join(items, "\n"), else: items
+      else
+        content
+      end
+    end
+
+    def storable_content(content), do: content
+
+    defp part_text(%ReqLLM.Message.ContentPart{type: :text, text: text}), do: text
+
+    defp part_text(%ReqLLM.Message.ContentPart{type: :image, media_type: type}),
+      do: "[image: #{type}]"
+
+    defp part_text(%ReqLLM.Message.ContentPart{type: type}), do: "[#{type}]"
+
     defp fetch_list_field(message, field) do
       case map_field(message, field) do
         nil ->
@@ -256,5 +289,6 @@ else
     @moduledoc "Requires the `req_llm` dependency."
 
     def extract(_message), do: AshAi.Dependencies.require_req_llm!("`AshAi.ChatUI.Tools`")
+    def storable_content(content), do: content
   end
 end
