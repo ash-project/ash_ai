@@ -1151,12 +1151,15 @@ defmodule AshAi.Mcp.Server do
     |> Enum.map(fn %Tool{} = tool ->
       # MCP schemas are advisory (no grammar-constrained sampling), so the
       # OpenAI strict transformation defaults off here.
-      result = %{
-        "name" => to_string(tool.name),
-        "description" => AshAi.Tools.description(tool),
-        "inputSchema" =>
-          AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
-      }
+      result =
+        %{
+          "name" => to_string(tool.name),
+          "description" => AshAi.Tools.description(tool),
+          "inputSchema" =>
+            AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
+        }
+        |> maybe_put("title", tool.title)
+        |> maybe_put("annotations", tool_annotations(tool))
 
       if Tool.has_meta?(tool) do
         Map.put(result, "_meta", tool._meta)
@@ -1165,6 +1168,27 @@ defmodule AshAi.Mcp.Server do
       end
     end)
     |> Enum.sort_by(& &1["name"])
+  end
+
+  @tool_annotations [
+    :title,
+    :read_only_hint,
+    :destructive_hint,
+    :idempotent_hint,
+    :open_world_hint
+  ]
+
+  defp tool_annotations(%Tool{annotations: []}), do: nil
+
+  defp tool_annotations(%Tool{annotations: [_ | _] = annotations}) do
+    verify_annotations!(annotations)
+    keyword_to_camel_case_map(annotations)
+  end
+
+  defp verify_annotations!(annotations) do
+    with {:error, err} <- Keyword.validate(annotations, @tool_annotations) do
+      raise ArgumentError, "unrecognized tool annotation(s): #{inspect(err)}"
+    end
   end
 
   defp resource_definitions(opts) do

@@ -304,6 +304,28 @@ Resources are exposed via the MCP server at `/mcp` and can be accessed by MCP-co
 
 **Description Behavior**: Resource descriptions default to the action's description. You can override this by providing a `description` option in the DSL, which takes precedence.
 
+### Tool titles and annotations
+
+MCP clients decide from a tool's annotations whether to ask the person before calling it and how to present it. Give each tool a `title` and the hints that apply (`read_only_hint`, `destructive_hint`, `idempotent_hint`, `open_world_hint`, the specification's names in snake case). Only the hints you set are sent; the client applies its own defaults to the rest. Per the MCP specification they are hints, not security guarantees.
+
+`annotations` also takes a `title`, sent as `annotations.title`. The specification has clients show the top-level `title` first and fall back to `annotations.title`, which older clients and some directories read instead. Nothing is copied between the two: each is sent only when you set it.
+
+```elixir
+tools do
+  tool :list_posts, MyApp.Blog.Post, :read,
+    title: "List posts",
+    annotations: [read_only_hint: true]
+
+  tool :delete_post, MyApp.Blog.Post, :destroy,
+    title: "Delete post",
+    annotations: [destructive_hint: true, idempotent_hint: true]
+
+  tool :search_web, MyApp.Search, :search,
+    title: "Search the web",
+    annotations: [read_only_hint: true, open_world_hint: true]
+end
+```
+
 ### Tool Data Access
 
 **Important**: Tools have different access levels for different operations:

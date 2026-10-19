@@ -34,10 +34,12 @@ defmodule AshAi do
       :identity,
       :get_by,
       :description,
+      :title,
       :action_parameters,
       :arguments,
       :_meta,
       :ui,
+      annotations: [],
       full_filter_schema?: false,
       load_strict?: false,
       __spark_metadata__: nil
