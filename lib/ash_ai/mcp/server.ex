@@ -523,10 +523,7 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp result_2026_07_28(result, opts) do
-    server_info = %{
-      "name" => get_server_name(opts),
-      "version" => get_server_version(opts)
-    }
+    server_info = get_server_info(opts)
 
     result
     |> Map.put("resultType", "complete")
@@ -700,6 +697,25 @@ defmodule AshAi.Mcp.Server do
         {:error, _} -> {:halt, conn}
       end
     end)
+  end
+
+  @doc """
+  The `serverInfo` sent on `initialize` and in the `_meta` of 2026-07-28
+  results: `name` and `version`, plus `icons` when the `mcp_icons` option is
+  set. `mcp_icons` is a list of icon maps (`src`, and optionally `mimeType`,
+  `sizes` such as `["48x48"]` or `["any"]`, and `theme`, `"light"` or
+  `"dark"`), or a 1-arity function of the request opts that returns one.
+  Hosts that read them show the icon beside the server's name.
+  """
+  def get_server_info(opts) do
+    icons =
+      case opts[:mcp_icons] do
+        fun when is_function(fun, 1) -> fun.(opts)
+        icons -> icons
+      end
+
+    %{"name" => get_server_name(opts), "version" => get_server_version(opts)}
+    |> maybe_put("icons", if(icons == [], do: nil, else: icons))
   end
 
   @doc """
@@ -901,10 +917,7 @@ defmodule AshAi.Mcp.Server do
 
         result =
           %{
-            "serverInfo" => %{
-              "name" => get_server_name(opts),
-              "version" => get_server_version(opts)
-            },
+            "serverInfo" => get_server_info(opts),
             "protocolVersion" => protocol_version_statement,
             "capabilities" => capabilities
           }

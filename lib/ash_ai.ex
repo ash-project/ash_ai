@@ -78,17 +78,21 @@ defmodule AshAi do
     The tool's annotations as the MCP `annotations` object (string keys in the
     specification's spelling), or `nil` when none are set. Only hints that
     were given are included, so clients apply their own defaults to the rest.
+    The tool's `title` is repeated here as `annotations.title`, which the
+    specification also defines and some directories (Anthropic's) read
+    instead of the top-level `title`.
     """
     @spec annotations(t()) :: map() | nil
-    def annotations(%__MODULE__{annotations: annotations}) when is_list(annotations) do
-      annotations
-      |> Enum.flat_map(fn {key, value} ->
-        case {Keyword.fetch(@annotation_keys, key), value} do
-          {{:ok, name}, value} when is_boolean(value) -> [{name, value}]
-          _ -> []
-        end
-      end)
-      |> case do
+    def annotations(%__MODULE__{title: title, annotations: annotations}) do
+      hints =
+        Enum.flat_map(List.wrap(annotations), fn {key, value} ->
+          case {Keyword.fetch(@annotation_keys, key), value} do
+            {{:ok, name}, value} when is_boolean(value) -> [{name, value}]
+            _ -> []
+          end
+        end)
+
+      case if(is_binary(title) and title != "", do: [{"title", title} | hints], else: hints) do
         [] -> nil
         pairs -> Map.new(pairs)
       end

@@ -24,6 +24,14 @@ defmodule AshAi.Mcp.ToolAnnotationsTest do
                %{"destructiveHint" => true}
     end
 
+    test "repeats the title as annotations.title" do
+      assert Tool.annotations(%Tool{title: "List artists", annotations: [read_only?: true]}) ==
+               %{"title" => "List artists", "readOnlyHint" => true}
+
+      assert Tool.annotations(%Tool{title: "List artists", annotations: nil}) ==
+               %{"title" => "List artists"}
+    end
+
     test "is nil when nothing was set" do
       assert Tool.annotations(%Tool{annotations: []}) == nil
       assert Tool.annotations(%Tool{annotations: nil}) == nil
@@ -42,7 +50,12 @@ defmodule AshAi.Mcp.ToolAnnotationsTest do
 
       annotated = Enum.find(tools, &(&1["name"] == "list_artists_annotated"))
       assert annotated["title"] == "List artists"
-      assert annotated["annotations"] == %{"readOnlyHint" => true, "openWorldHint" => false}
+
+      assert annotated["annotations"] == %{
+               "title" => "List artists",
+               "readOnlyHint" => true,
+               "openWorldHint" => false
+             }
 
       created = Enum.find(tools, &(&1["name"] == "create_artist_annotated"))
       refute Map.has_key?(created, "title")

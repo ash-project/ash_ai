@@ -70,6 +70,16 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert result["cacheScope"] == "private"
     end
 
+    test "carries the configured icons in the serverInfo meta" do
+      icons = [%{"src" => "https://example.com/icon.png", "mimeType" => "image/png"}]
+      opts = Keyword.put(@tool_opts, :mcp_icons, icons)
+
+      response = versioned_request("server/discover", %{}, %{}, opts)
+      result = Jason.decode!(response.resp_body)["result"]
+
+      assert result["_meta"][@meta_server_info]["icons"] == icons
+    end
+
     test "rejects unsupported requested versions like any other method" do
       response =
         versioned_request("server/discover", %{"_meta" => request_meta("2030-01-01")}, %{
