@@ -65,7 +65,7 @@ defmodule AshAi.Mcp.Protocol20260728Test do
       assert List.first(result["supportedVersions"]) == @protocol_version
       assert "2025-03-26" in result["supportedVersions"]
       assert result["capabilities"]["tools"] == %{"listChanged" => false}
-      assert result["_meta"][@meta_server_info]["name"] == "MCP Server"
+      assert result["_meta"][@meta_server_info]["name"] == "ash_ai MCP Server"
       assert is_integer(result["ttlMs"])
       assert result["cacheScope"] == "private"
     end
