@@ -549,6 +549,15 @@ if code_reloading? do
 end
 ```
 
+To serve tools from other packages too, pass Ash domains that use the `AshAi` extension as
+`dev_tool_domains`; their `tools do` entries are added to the built-in dev tools:
+
+```elixir
+plug AshAi.Mcp.Dev,
+  otp_app: :your_app,
+  dev_tool_domains: [SomePackage.DevTools]
+```
+
 ### Production MCP Server
 
 For production environments, set up authentication and add the MCP router:

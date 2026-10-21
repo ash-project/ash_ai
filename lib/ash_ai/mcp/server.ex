@@ -1154,7 +1154,7 @@ defmodule AshAi.Mcp.Server do
   # improves upstream LLM prompt-cache hit rates); harmless for older revisions.
   defp tool_definitions(opts) do
     opts
-    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions])
+    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions, :dev_tool_domains])
     |> Keyword.update(
       :context,
       %{otp_app: opts[:otp_app]},
@@ -1544,7 +1544,7 @@ defmodule AshAi.Mcp.Server do
 
   defp find_tool_by_name(tool_name, session_id, opts) do
     opts
-    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions])
+    |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions, :dev_tool_domains])
     |> Keyword.update(
       :context,
       %{mcp_session_id: session_id},
@@ -1578,14 +1578,11 @@ defmodule AshAi.Mcp.Server do
   defp tools(opts) do
     opts =
       if opts[:tools] == :ash_dev_tools do
+        dev_tools = AshAi.Mcp.Dev.dev_tools(opts[:dev_tool_domains] || [])
+
         opts
-        |> Keyword.put(:actions, [{AshAi.DevTools.Tools, :*}])
-        |> Keyword.put(:tools, [
-          :list_ash_resources,
-          :list_generators,
-          :get_usage_rules,
-          :list_packages_with_rules
-        ])
+        |> Keyword.put(:actions, dev_tools |> Enum.map(&{&1.resource, :*}) |> Enum.uniq())
+        |> Keyword.put(:tools, dev_tools |> Enum.map(& &1.name) |> Enum.uniq())
       else
         opts
       end
