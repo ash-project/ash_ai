@@ -11,6 +11,29 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.4.0](https://github.com/ash-project/ash_ai/compare/v1.3.0...v1.4.0) (2026-10-22)
+
+
+
+
+### Features:
+
+* mcp: tool titles, annotations and server icons (#252) by Ryan Winchester [(#252)](https://github.com/ash-project/ash_ai/pull/252)
+
+* add MCP OAuth by [@zachdaniel](https://github.com/zachdaniel)
+
+* add MCP client by [@zachdaniel](https://github.com/zachdaniel)
+
+### Improvements:
+
+* better handling of invalid arguments in prompt-backed actions by [@zachdaniel](https://github.com/zachdaniel)
+
+* let AshAi.Mcp.Dev serve tools from other AshAi domains (#254) by [@lukegalea](https://github.com/lukegalea) [(#254)](https://github.com/ash-project/ash_ai/pull/254)
+
+### Bug Fixes:
+
+* MCP server name uses the otp_app, and the installer's fallback warning shows the plug (#255) by [@lukegalea](https://github.com/lukegalea) [(#255)](https://github.com/ash-project/ash_ai/pull/255)
+
 ## [v1.3.0](https://github.com/ash-project/ash_ai/compare/v1.2.0...v1.3.0) (2026-10-19)
 
 
