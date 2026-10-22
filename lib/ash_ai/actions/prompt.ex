@@ -25,7 +25,7 @@ if Code.ensure_loaded?(ReqLLM) do
                       # Action Inputs
 
                       <%= for argument <- @input.action.arguments,
-                          {:ok, value} = Ash.ActionInput.fetch_argument(@input, argument.name),
+                          {:ok, value} <- [Ash.ActionInput.fetch_argument(@input, argument.name)],
                           {:ok, value} = Ash.Type.dump_to_embedded(argument.type, value, argument.constraints) do %>
                         - <%= argument.name %>: <%= Jason.encode!(value) %>
                       <% end %>
@@ -141,15 +141,14 @@ if Code.ensure_loaded?(ReqLLM) do
       action = input.action
       {returns, constraints} = AshAi.Actions.Result.unwrap(action.returns, action.constraints)
       schema = build_json_schema(action.allow_nil?, returns, constraints)
-      initial_context = build_context(input, opts, context)
 
       req_llm_module = Keyword.get(opts, :req_llm, ReqLLM)
       req_llm_opts = Keyword.get(opts, :req_llm_opts, [])
 
-      flow_state =
-        build_flow_state(initial_context, model, req_llm_module, req_llm_opts, context, opts)
-
-      with {:ok, flow_state} <- apply_flow_customizations(flow_state, context, opts),
+      with {:ok, initial_context} <- build_context(input, opts, context),
+           flow_state =
+             build_flow_state(initial_context, model, req_llm_module, req_llm_opts, context, opts),
+           {:ok, flow_state} <- apply_flow_customizations(flow_state, context, opts),
            {:ok, final_context, loop_usage} <- maybe_run_tools(flow_state, input, opts),
            {:ok, generated} <-
              flow_state.req_llm.generate_object(
@@ -562,19 +561,24 @@ if Code.ensure_loaded?(ReqLLM) do
     defp unwrap_result(value), do: value
 
     defp build_context(input, opts, context) do
-      prompt = Keyword.get(opts, :prompt, @prompt_template)
+      case Keyword.get(opts, :prompt) do
+        nil ->
+          # The default template renders every argument that was set, so report one
+          # that can't be serialized as an argument error rather than a render crash.
+          with {:ok, _arguments} <- AshAi.Actions.Arguments.dump(input) do
+            {:ok, normalize_to_context(@prompt_template, input, context, true)}
+          end
 
-      case prompt do
         func when is_function(func, 2) ->
           # Content returned from the prompt function is produced at runtime and
           # is frequently built from action arguments (user input). Running it
           # through EEx would compile that text as Elixir source (RCE), so it is
           # used verbatim. EEx templating remains available for the statically
           # configured prompt forms in the other clause.
-          normalize_to_context(func.(input, context), input, context, false)
+          {:ok, normalize_to_context(func.(input, context), input, context, false)}
 
         other ->
-          normalize_to_context(other, input, context, true)
+          {:ok, normalize_to_context(other, input, context, true)}
       end
     end
 

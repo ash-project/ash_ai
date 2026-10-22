@@ -229,6 +229,26 @@ defmodule AshAi.Actions.PromptTest do
       ]
   end
 
+  defmodule Unembeddable do
+    @moduledoc "A type whose values cannot be dumped to their embedded form"
+    use Ash.Type
+
+    @impl true
+    def storage_type(_), do: :string
+
+    @impl true
+    def cast_input(value, _), do: {:ok, value}
+
+    @impl true
+    def cast_stored(value, _), do: {:ok, value}
+
+    @impl true
+    def dump_to_native(value, _), do: {:ok, value}
+
+    @impl true
+    def dump_to_embedded(_value, _), do: {:error, message: "cannot be embedded"}
+  end
+
   defmodule TestResource do
     use Ash.Resource,
       domain: TestDomain,
@@ -328,6 +348,21 @@ defmodule AshAi.Actions.PromptTest do
                 }
               end
             )
+      end
+
+      action :analyze_with_default_prompt, :string do
+        description("Test the default prompt template")
+        argument(:text, :string, allow_nil?: false)
+        argument(:avoid, :string)
+
+        run prompt("openai:gpt-4o", req_llm: FakeReqLLM)
+      end
+
+      action :analyze_unembeddable_with_default_prompt, :string do
+        description("Test the default prompt template with an unembeddable argument")
+        argument(:payload, Unembeddable, allow_nil?: false)
+
+        run prompt("openai:gpt-4o", req_llm: FakeReqLLM)
       end
 
       action :analyze_with_function_prompt, :string do
@@ -609,6 +644,52 @@ defmodule AshAi.Actions.PromptTest do
                message.role == :tool &&
                  ReqLLM.ToolResult.output_from_message(message) == %{"echo" => "from extra tool"}
              end)
+    end
+  end
+
+  describe "default prompt" do
+    test "omits optional arguments that were not set" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:analyze_with_default_prompt, %{text: "hello world"})
+        |> Ash.run_action!()
+
+      assert result == "test_result"
+
+      assert_receive {:generate_object_called, _model, context}
+      user_message = Enum.find(context.messages, &(&1.role == :user))
+      assert content_contains?(user_message.content, ~s(- text: "hello world"))
+      refute content_contains?(user_message.content, "- avoid:")
+    end
+
+    test "includes optional arguments that were set" do
+      TestResource
+      |> Ash.ActionInput.for_action(:analyze_with_default_prompt, %{
+        text: "hello world",
+        avoid: "spoilers"
+      })
+      |> Ash.run_action!()
+
+      assert_receive {:generate_object_called, _model, context}
+      user_message = Enum.find(context.messages, &(&1.role == :user))
+      assert content_contains?(user_message.content, ~s(- avoid: "spoilers"))
+    end
+
+    test "returns an argument error when an argument cannot be serialized" do
+      assert {:error, %Ash.Error.Invalid{errors: [error]}} =
+               TestResource
+               |> Ash.ActionInput.for_action(:analyze_unembeddable_with_default_prompt, %{
+                 payload: "opaque"
+               })
+               |> Ash.run_action()
+
+      assert %Ash.Error.Action.InvalidArgument{
+               field: :payload,
+               message: "cannot be embedded",
+               value: "opaque"
+             } = error
+
+      refute_received {:generate_object_called, _, _}
     end
   end
 

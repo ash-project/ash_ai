@@ -174,6 +174,9 @@ defmodule AshAi.Tools do
       %{tool | callback: fn arguments -> callback.(arguments, context) end}
     end
 
+    # `ReqLLM.Tool.execute/2` is specced as `{:ok, _} | {:error, _}`, but it returns
+    # whatever the callback returns, and tool callbacks (e.g. MCP clients) can pause.
+    @dialyzer {:nowarn_function, normalize_extra_tool_result: 1}
     defp normalize_extra_tool_result({:ok, content}), do: {:ok, content, content}
     defp normalize_extra_tool_result({:pause, reason}), do: {:pause, reason}
 

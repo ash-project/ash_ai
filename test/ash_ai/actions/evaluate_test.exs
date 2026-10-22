@@ -21,6 +21,26 @@ defmodule AshAi.Actions.EvaluateTest do
       values: [animals: "Living creatures", plants: "Flora", dogs: "Canines", cats: "Felines"]
   end
 
+  defmodule Unembeddable do
+    @moduledoc "A type whose values cannot be dumped to their embedded form"
+    use Ash.Type
+
+    @impl true
+    def storage_type(_), do: :string
+
+    @impl true
+    def cast_input(value, _), do: {:ok, value}
+
+    @impl true
+    def cast_stored(value, _), do: {:ok, value}
+
+    @impl true
+    def dump_to_native(value, _), do: {:ok, value}
+
+    @impl true
+    def dump_to_embedded(_value, _), do: {:error, message: "cannot be embedded"}
+  end
+
   defmodule FakeReqLLM do
     @moduledoc "Fake ReqLLM that captures the request and answers every question"
 
@@ -112,6 +132,13 @@ defmodule AshAi.Actions.EvaluateTest do
         argument(:ticket, :string, allow_nil?: false)
 
         run evaluate(fn _input, _ctx -> "typesafe:jev-1.13.0" end, req_llm: FakeReqLLM)
+      end
+
+      action :urgent_unembeddable, AshAi.Evaluate.Noul do
+        description("Does the payload convey urgency?")
+        argument(:payload, AshAi.Actions.EvaluateTest.Unembeddable, allow_nil?: false)
+
+        run evaluate("typesafe:jev-latest", req_llm: FakeReqLLM)
       end
 
       action :urgent, AshAi.Evaluate.Noul do
@@ -308,6 +335,18 @@ defmodule AshAi.Actions.EvaluateTest do
                       }, []}
 
       assert %Choice{value: :billing} = result
+    end
+
+    test "an argument that cannot be serialized into the state is an argument error" do
+      assert {:error, %Ash.Error.Invalid{errors: [error]}} =
+               TestResource
+               |> Ash.ActionInput.for_action(:urgent_unembeddable, %{payload: "opaque"})
+               |> Ash.run_action()
+
+      assert %Ash.Error.Action.InvalidArgument{field: :payload, message: "cannot be embedded"} =
+               error
+
+      refute_received {:evaluate_called, _, _, _, _}
     end
 
     test "state override" do

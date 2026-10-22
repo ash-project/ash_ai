@@ -387,20 +387,9 @@ if Code.ensure_loaded?(ReqLLM) do
       do: {:error, "state must be a string, map, or list, got: #{inspect(other)}"}
 
     defp default_state(input) do
-      Enum.reduce_while(input.action.arguments, {:ok, %{}}, fn argument, {:ok, acc} ->
-        with {:ok, value} <- Ash.ActionInput.fetch_argument(input, argument.name),
-             {:ok, dumped} <-
-               Ash.Type.dump_to_embedded(argument.type, value, argument.constraints) do
-          {:cont, {:ok, Map.put(acc, argument.name, dumped)}}
-        else
-          :error ->
-            {:cont, {:ok, acc}}
-
-          {:error, error} ->
-            {:halt,
-             {:error, "could not serialize argument `#{argument.name}`: #{inspect(error)}"}}
-        end
-      end)
+      with {:ok, arguments} <- AshAi.Actions.Arguments.dump(input) do
+        {:ok, Map.new(arguments)}
+      end
     end
   end
 else
