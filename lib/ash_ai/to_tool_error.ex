@@ -24,6 +24,29 @@ defprotocol AshAi.ToToolError do
   def to_tool_error(error)
 end
 
+defmodule AshAi.ToToolError.Message do
+  @moduledoc false
+
+  @spec interpolate(map()) :: String.t() | nil
+  def interpolate(%{message: message} = error) when is_binary(message) do
+    error
+    |> Map.get(:vars)
+    |> List.wrap()
+    |> Enum.reduce(message, fn {key, value}, acc ->
+      String.replace(acc, "%{#{key}}", format_value(value))
+    end)
+  end
+
+  def interpolate(error), do: Map.get(error, :message)
+
+  defp format_value(value) when is_list(value), do: Enum.map_join(value, ", ", &format_value/1)
+  defp format_value(%Regex{} = value), do: Regex.source(value)
+
+  defp format_value(value) do
+    if String.Chars.impl_for(value), do: to_string(value), else: inspect(value)
+  end
+end
+
 defimpl AshAi.ToToolError, for: Ash.Error.Changes.Required do
   def to_tool_error(_error) do
     "is required"
@@ -38,31 +61,31 @@ end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Changes.InvalidAttribute do
   def to_tool_error(error) do
-    error.message || "is invalid"
+    AshAi.ToToolError.Message.interpolate(error) || "is invalid"
   end
 end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Changes.InvalidChanges do
   def to_tool_error(error) do
-    error.message || "is invalid"
+    AshAi.ToToolError.Message.interpolate(error) || "is invalid"
   end
 end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Changes.InvalidArgument do
   def to_tool_error(error) do
-    error.message || "is invalid"
+    AshAi.ToToolError.Message.interpolate(error) || "is invalid"
   end
 end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidArgument do
   def to_tool_error(error) do
-    error.message || "is invalid"
+    AshAi.ToToolError.Message.interpolate(error) || "is invalid"
   end
 end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Action.InvalidArgument do
   def to_tool_error(error) do
-    error.message || "is invalid"
+    AshAi.ToToolError.Message.interpolate(error) || "is invalid"
   end
 end
 
@@ -74,7 +97,7 @@ end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidQuery do
   def to_tool_error(error) do
-    error.message || "invalid query"
+    AshAi.ToToolError.Message.interpolate(error) || "invalid query"
   end
 end
 
@@ -101,8 +124,8 @@ defimpl AshAi.ToToolError, for: Ash.Error.Query.NoSuchFilterPredicate do
 end
 
 defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidFilterValue do
-  def to_tool_error(%{value: value, message: message}) do
-    ["invalid filter value #{inspect(value)}", message]
+  def to_tool_error(%{value: value} = error) do
+    ["invalid filter value #{inspect(value)}", AshAi.ToToolError.Message.interpolate(error)]
     |> Enum.reject(&(&1 in [nil, ""]))
     |> Enum.join(": ")
   end
