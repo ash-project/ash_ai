@@ -40,6 +40,84 @@ defmodule AshAi.ToToolErrorTest do
     end
   end
 
+  describe "var interpolation" do
+    test "inserts strings, numbers, decimals and atoms as plain text" do
+      error =
+        Ash.Error.Changes.InvalidAttribute.exception(
+          field: :score,
+          message: "%{label} must be at most %{max} or %{price}, not %{status}",
+          vars: [label: "score", max: 200, price: Decimal.new("10"), status: :active]
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) ==
+               "score must be at most 200 or 10, not active"
+    end
+
+    test "joins a list with commas" do
+      error =
+        Ash.Error.Changes.InvalidAttribute.exception(
+          field: :status,
+          message: "must be one of %{allowed}",
+          vars: [allowed: [:draft, "sent", 3]]
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) == "must be one of draft, sent, 3"
+    end
+
+    test "inserts the source of a regex" do
+      error =
+        Ash.Error.Changes.InvalidAttribute.exception(
+          field: :code,
+          message: "must match %{match}",
+          vars: [match: ~r/^a+$/]
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) == "must match ^a+$"
+    end
+
+    test "leaves a message without vars unchanged" do
+      error =
+        Ash.Error.Changes.InvalidAttribute.exception(field: :email, message: "must be 100% valid")
+
+      assert AshAi.ToToolError.to_tool_error(error) == "must be 100% valid"
+    end
+
+    test "leaves unknown placeholders intact" do
+      error =
+        Ash.Error.Changes.InvalidAttribute.exception(
+          field: :score,
+          message: "must be at most %{max} and %{unknown}",
+          vars: [max: 5]
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) == "must be at most 5 and %{unknown}"
+    end
+
+    test "interpolates the other affected error types" do
+      for module <- [
+            Ash.Error.Changes.InvalidChanges,
+            Ash.Error.Changes.InvalidArgument,
+            Ash.Error.Query.InvalidArgument,
+            Ash.Error.Action.InvalidArgument,
+            Ash.Error.Query.InvalidQuery
+          ] do
+        error = module.exception(message: "must be at most %{max}", vars: [max: 7])
+        assert AshAi.ToToolError.to_tool_error(error) == "must be at most 7"
+      end
+    end
+
+    test "interpolates the invalid filter value message" do
+      error =
+        Ash.Error.Query.InvalidFilterValue.exception(
+          value: 9,
+          message: "must be at most %{max}",
+          vars: [max: 7]
+        )
+
+      assert AshAi.ToToolError.to_tool_error(error) == "invalid filter value 9: must be at most 7"
+    end
+  end
+
   describe "Ash.Error.Changes.InvalidChanges" do
     test "returns the message when present" do
       error = Ash.Error.Changes.InvalidChanges.exception(message: "dates must not overlap")
