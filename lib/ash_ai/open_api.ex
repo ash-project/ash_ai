@@ -547,11 +547,9 @@ defmodule AshAi.OpenApi do
     %{type: :string, format: :date}
   end
 
-  defp resource_attribute_type(%{type: Ash.Type.UtcDatetime}, _resource) do
-    %{type: :string, format: :"date-time"}
-  end
-
-  defp resource_attribute_type(%{type: Ash.Type.UtcDatetimeUsec}, _resource) do
+  # `:utc_datetime` and `:utc_datetime_usec` are NewTypes over this, so they
+  # reach it through NewType unwrapping.
+  defp resource_attribute_type(%{type: Ash.Type.DateTime}, _resource) do
     %{type: :string, format: :"date-time"}
   end
 

@@ -149,6 +149,29 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule Event do
+    use Ash.Resource,
+      domain: Music,
+      data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id, writable?: true
+      attribute :datetime, :datetime, public?: true
+      attribute :utc_datetime, :utc_datetime, public?: true
+      attribute :utc_datetime_usec, :utc_datetime_usec, public?: true
+      attribute :naive_datetime, :naive_datetime, public?: true
+    end
+
+    actions do
+      default_accept [:datetime, :utc_datetime, :utc_datetime_usec, :naive_datetime]
+      defaults [:create, :read]
+    end
+  end
+
   defmodule Music do
     use Ash.Domain,
       extensions: [AshAi]
@@ -156,6 +179,8 @@ defmodule AshAi.OpenApiTest do
     tools do
       tool :list_widgets, Widget, :read
       tool :list_gadgets, Gadget, :read
+      tool :create_event, Event, :create
+      tool :list_events, Event, :read
     end
 
     resources do
@@ -163,6 +188,7 @@ defmodule AshAi.OpenApiTest do
       resource Album
       resource Widget
       resource Gadget
+      resource Event
     end
   end
 
@@ -457,6 +483,44 @@ defmodule AshAi.OpenApiTest do
                ],
                "extra"
              )
+    end
+  end
+
+  describe "datetime attributes" do
+    @datetime_fields ~w(datetime utc_datetime utc_datetime_usec naive_datetime)
+
+    test "are date-time strings in write input schemas" do
+      tool =
+        [actions: [{Event, [:create]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["input"]["properties"]
+
+      for field <- @datetime_fields do
+        assert properties[field] == %{"type" => "string", "format" => "date-time"},
+               "expected #{field} to be a date-time string, got: #{inspect(properties[field])}"
+      end
+    end
+
+    test "are date-time strings in filter schemas" do
+      tool =
+        [actions: [{Event, [:read]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+        |> struct(full_filter_schema?: true)
+
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["filter"]["properties"]
+
+      for field <- @datetime_fields do
+        assert properties[field]["properties"]["eq"] == %{
+                 "type" => "string",
+                 "format" => "date-time"
+               },
+               "expected #{field} to filter as a date-time string, got: #{inspect(properties[field])}"
+      end
     end
   end
 
