@@ -105,34 +105,52 @@ defmodule AshAi.ToolTest do
 
       # Disabled: no identifier in the schema at all
       tool :update_no_identity, IdentityResource, :update, identity: false
+
+      tool :destroy_by_pk, IdentityResource, :destroy
     end
   end
 
   describe "identity in update/destroy schemas" do
-    defp identity_tool(name) do
-      AshAi.list_tools(actions: [{IdentityResource, [:update]}], strict: false)
+    defp identity_tool(name, opts \\ [strict: false]) do
+      AshAi.list_tools([actions: [{IdentityResource, [:update, :destroy]}]] ++ opts)
       |> Enum.find(&(&1.name == to_string(name)))
     end
 
-    test "default (no identity:) includes the primary key" do
-      props = identity_tool(:update_by_pk).parameter_schema["properties"]
+    test "default (no identity:) includes and requires the primary key" do
+      schema = identity_tool(:update_by_pk).parameter_schema
 
-      assert Map.has_key?(props, "id")
-      refute Map.has_key?(props, "public_id")
+      assert Map.has_key?(schema["properties"], "id")
+      refute Map.has_key?(schema["properties"], "public_id")
+      assert Enum.sort(schema["required"]) == ["id", "input"]
     end
 
-    test "identity: <non-pk identity> includes the identity key, not the primary key" do
-      props = identity_tool(:update_by_public_id).parameter_schema["properties"]
+    test "identity: <non-pk identity> includes and requires the identity key, not the primary key" do
+      schema = identity_tool(:update_by_public_id).parameter_schema
 
-      assert Map.has_key?(props, "public_id")
-      refute Map.has_key?(props, "id")
+      assert Map.has_key?(schema["properties"], "public_id")
+      refute Map.has_key?(schema["properties"], "id")
+      assert Enum.sort(schema["required"]) == ["input", "public_id"]
     end
 
     test "identity: false includes neither the primary key nor an identity" do
-      props = identity_tool(:update_no_identity).parameter_schema["properties"]
+      schema = identity_tool(:update_no_identity).parameter_schema
 
-      refute Map.has_key?(props, "id")
-      refute Map.has_key?(props, "public_id")
+      refute Map.has_key?(schema["properties"], "id")
+      refute Map.has_key?(schema["properties"], "public_id")
+      assert schema["required"] == ["input"]
+    end
+
+    test "destroy tools require the primary key" do
+      schema = identity_tool(:destroy_by_pk).parameter_schema
+
+      assert Map.keys(schema["properties"]) == ["id"]
+      assert schema["required"] == ["id"]
+    end
+
+    test "strict mode keeps the identity key non-nullable" do
+      schema = identity_tool(:update_by_pk, strict: true).parameter_schema
+
+      assert schema["properties"]["id"]["type"] == "integer"
     end
   end
 
@@ -189,6 +207,23 @@ defmodule AshAi.ToolTest do
 
       assert updated.id == 2
       assert updated.name == "Renamed"
+    end
+
+    test "returns a tool error when an identity argument is missing" do
+      {_tools, registry} =
+        AshAi.build_tools_and_registry(
+          actions: [{IdentityResource, [:update, :destroy]}],
+          strict: false
+        )
+
+      assert {:error, "Missing required identity argument: id"} =
+               registry["update_by_pk"].(%{"input" => %{"name" => "Renamed"}}, context())
+
+      assert {:error, "Missing required identity argument: public_id"} =
+               registry["update_by_public_id"].(%{"input" => %{"name" => "Renamed"}}, context())
+
+      assert {:error, "Missing required identity argument: id"} =
+               registry["destroy_by_pk"].(%{}, context())
     end
 
     test "returns a tool error when an identity value is not castable" do

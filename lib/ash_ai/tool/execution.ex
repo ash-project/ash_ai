@@ -587,9 +587,10 @@ defmodule AshAi.Tool.Execution do
   end
 
   defp identity_value(resource, key, arguments) do
-    arguments
-    |> Map.get(to_string(key))
-    |> then(&cast_lookup_value!(resource, key, &1, "identity"))
+    case Map.get(arguments, to_string(key)) do
+      nil -> throw({:tool_error, "Missing required identity argument: #{key}"})
+      value -> cast_lookup_value!(resource, key, value, "identity")
+    end
   end
 
   defp get_by_filter(resource, get_by, arguments) do

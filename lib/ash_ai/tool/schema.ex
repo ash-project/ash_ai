@@ -58,6 +58,15 @@ defmodule AshAi.Tool.Schema do
         []
       end
 
+    # Mirror `AshAi.Tool.Execution.identity_filter/3`: address records by the
+    # configured identity (or the primary key by default, or nothing when `false`).
+    identity_keys =
+      if action.type in [:update, :destroy] do
+        AshAi.Tool.identity_keys(resource, identity)
+      else
+        []
+      end
+
     attributes =
       if action.type in [:action, :read] do
         %{}
@@ -130,11 +139,11 @@ defmodule AshAi.Tool.Schema do
       properties:
         add_action_specific_properties(props_with_input, resource, action, action_parameters,
           strict?: strict?,
-          identity: identity,
+          identity_keys: identity_keys,
           get_by_fields: get_by_fields,
           full_filter_schema?: Keyword.get(opts, :full_filter_schema?, false)
         ),
-      required: Map.keys(props_with_input) ++ Enum.map(get_by_fields, & &1.name),
+      required: Map.keys(props_with_input) ++ Enum.map(get_by_fields, & &1.name) ++ identity_keys,
       additionalProperties: false
     }
     |> Jason.encode!()
@@ -289,13 +298,9 @@ defmodule AshAi.Tool.Schema do
          opts
        )
        when type in [:update, :destroy] do
-    identity = Keyword.get(opts, :identity, nil)
-
-    # Mirror `AshAi.Tool.Execution.identity_filter/3`: address records by the
-    # configured identity (or the primary key by default, or nothing when `false`).
     identity_properties =
-      resource
-      |> AshAi.Tool.identity_keys(identity)
+      opts
+      |> Keyword.get(:identity_keys, [])
       |> Map.new(fn key ->
         value =
           Ash.Resource.Info.attribute(resource, key)
