@@ -75,6 +75,19 @@ defmodule AshAi.ToolLoadSelectTest do
         load: [albums: [:title]],
         load_strict?: true
 
+      # Non-read actions apply the load strictly as well
+      tool :create_album_strict, Album, :create,
+        load: [artist: [:name]],
+        load_strict?: true
+
+      tool :update_album_strict, Album, :update,
+        load: [artist: [:name]],
+        load_strict?: true
+
+      tool :destroy_album_strict, Album, :destroy,
+        load: [artist: [:name]],
+        load_strict?: true
+
       # Restrict the serialized top-level fields
       tool :read_artists_select, Artist, :read, select: [:name]
 
@@ -147,6 +160,28 @@ defmodule AshAi.ToolLoadSelectTest do
       assert serialized_album["title"] == "Kind of Blue"
       refute Map.has_key?(serialized_album, "year")
       refute Map.has_key?(serialized_album, "notes")
+    end
+
+    test "true selects only the listed fields on the relationship for write actions", %{
+      artist: artist,
+      album: album,
+      registry: registry
+    } do
+      for {tool, args} <- [
+            {"create_album_strict",
+             %{"input" => %{"title" => "Sketches of Spain", "artist_id" => artist.id}}},
+            {"update_album_strict",
+             %{"id" => album.id, "input" => %{"title" => "Kind of Blue (Remastered)"}}},
+            {"destroy_album_strict", %{"id" => album.id}}
+          ] do
+        {:ok, json, record} = registry[tool].(args, context())
+
+        assert record.artist.name == "Miles Davis"
+        assert match?(%Ash.NotLoaded{}, record.artist.bio)
+
+        assert Jason.decode!(json)["artist"] == %{"id" => artist.id, "name" => "Miles Davis"},
+               "#{tool} returned unlisted artist fields"
+      end
     end
   end
 
@@ -221,7 +256,7 @@ defmodule AshAi.ToolLoadSelectTest do
   defp registry do
     {_tools, registry} =
       AshAi.build_tools_and_registry(
-        actions: [{Artist, [:read, :create, :update]}],
+        actions: [{Artist, [:read, :create, :update]}, {Album, [:create, :update, :destroy]}],
         strict: false
       )
 

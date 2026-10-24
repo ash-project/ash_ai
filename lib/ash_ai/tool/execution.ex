@@ -243,6 +243,22 @@ defmodule AshAi.Tool.Execution do
   defp put_select(opts, %Context{select: nil}), do: opts
   defp put_select(opts, %Context{select: select}), do: Keyword.put(opts, :select, select)
 
+  defp write_load(resource, %Context{load_strict?: true, load: load})
+       when load not in [nil, []] do
+    strict_loads = Ash.Query.load(resource, load, strict?: true).load
+
+    load
+    |> List.wrap()
+    |> Enum.reject(&Keyword.has_key?(strict_loads, load_name(&1)))
+    |> Enum.concat(strict_loads)
+  end
+
+  defp write_load(_resource, %Context{load: load}), do: load
+
+  defp load_name({name, _}) when is_atom(name), do: name
+  defp load_name(name) when is_atom(name), do: name
+  defp load_name(_), do: nil
+
   defp apply_filter(query, nil), do: query
   defp apply_filter(query, []), do: query
   defp apply_filter(query, filter) when is_map(filter) and map_size(filter) == 0, do: query
@@ -471,7 +487,7 @@ defmodule AshAi.Tool.Execution do
     resource
     |> Ash.Changeset.for_create(action.name, input, opts)
     |> apply_changeset_select(ctx)
-    |> Ash.create!(load: ctx.load)
+    |> Ash.create!(load: write_load(resource, ctx))
     |> serialize_record(resource, ctx)
   end
 
@@ -488,7 +504,7 @@ defmodule AshAi.Tool.Execution do
         return_errors?: true,
         notify?: true,
         strategy: [:atomic, :stream, :atomic_batches],
-        load: ctx.load,
+        load: write_load(resource, ctx),
         allow_stream_with: :full_read,
         return_records?: true
       )
@@ -515,7 +531,7 @@ defmodule AshAi.Tool.Execution do
       Keyword.merge(opts,
         return_errors?: true,
         notify?: true,
-        load: ctx.load,
+        load: write_load(resource, ctx),
         strategy: [:atomic, :stream, :atomic_batches],
         allow_stream_with: :full_read,
         return_records?: true
