@@ -70,6 +70,11 @@ defmodule AshAi.Serializer do
     serialize_fields(value, constraints, domain, opts)
   end
 
+  # `Duration` has no JSON encoding; ISO 8601 is what `Ash.Type.Duration` casts from.
+  defp serialize_typed_value(%Duration{} = value, Ash.Type.Duration, _constraints, _domain, _opts) do
+    Duration.to_iso8601(value)
+  end
+
   defp serialize_typed_value(value, type, _constraints, domain, opts) do
     if Ash.Resource.Info.resource?(type) do
       serialize_resource(value, domain, opts)

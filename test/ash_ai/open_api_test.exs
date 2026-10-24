@@ -172,6 +172,45 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule Shipment do
+    use Ash.Resource,
+      domain: Music,
+      data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id, writable?: true
+
+      attribute :package, :keyword,
+        public?: true,
+        constraints: [
+          fields: [
+            label: [type: :string, allow_nil?: false],
+            weight: [type: :integer]
+          ]
+        ]
+
+      attribute :destination, :tuple,
+        public?: true,
+        constraints: [
+          fields: [
+            lat: [type: :float, allow_nil?: false],
+            lng: [type: :float, allow_nil?: false]
+          ]
+        ]
+
+      attribute :transit_time, :duration, public?: true
+    end
+
+    actions do
+      default_accept [:package, :destination, :transit_time]
+      defaults [:create, :read]
+    end
+  end
+
   defmodule Music do
     use Ash.Domain,
       extensions: [AshAi]
@@ -181,6 +220,7 @@ defmodule AshAi.OpenApiTest do
       tool :list_gadgets, Gadget, :read
       tool :create_event, Event, :create
       tool :list_events, Event, :read
+      tool :create_shipment, Shipment, :create
     end
 
     resources do
@@ -189,6 +229,7 @@ defmodule AshAi.OpenApiTest do
       resource Widget
       resource Gadget
       resource Event
+      resource Shipment
     end
   end
 
@@ -521,6 +562,77 @@ defmodule AshAi.OpenApiTest do
                },
                "expected #{field} to filter as a date-time string, got: #{inspect(properties[field])}"
       end
+    end
+  end
+
+  describe "keyword, tuple and duration attributes" do
+    setup do
+      tool =
+        [actions: [{Shipment, [:create]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      %{tool: tool}
+    end
+
+    test "keywords and tuples are objects of their fields in input schemas", %{tool: tool} do
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["input"]["properties"]
+
+      assert properties["package"] == %{
+               "type" => "object",
+               "properties" => %{
+                 "label" => %{"type" => "string"},
+                 "weight" => %{"anyOf" => [%{"type" => "integer"}, %{"type" => "null"}]}
+               },
+               "required" => ["label", "weight"]
+             }
+
+      assert properties["destination"] == %{
+               "type" => "object",
+               "properties" => %{
+                 "lat" => %{"type" => "number", "format" => "float"},
+                 "lng" => %{"type" => "number", "format" => "float"}
+               },
+               "required" => ["lat", "lng"]
+             }
+    end
+
+    test "durations are ISO 8601 duration strings in input schemas", %{tool: tool} do
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["input"]["properties"]
+
+      assert properties["transit_time"] == %{"type" => "string", "format" => "duration"}
+    end
+
+    test "keyword and duration input casts, and is returned in the same shape", %{tool: tool} do
+      assert {:ok, json, _} =
+               AshAi.Tools.execute(
+                 tool,
+                 %{
+                   "input" => %{
+                     "package" => %{"label" => "books", "weight" => 3},
+                     "transit_time" => "P2DT4H"
+                   }
+                 },
+                 %{}
+               )
+
+      assert %{
+               "package" => %{"label" => "books", "weight" => 3},
+               "transit_time" => "P2DT4H"
+             } = Jason.decode!(json)
+    end
+
+    test "tuple input casts from an object, and is returned as one", %{tool: tool} do
+      assert {:ok, json, _} =
+               AshAi.Tools.execute(
+                 tool,
+                 %{"input" => %{"destination" => %{"lat" => 51.5, "lng" => -0.12}}},
+                 %{}
+               )
+
+      assert %{"destination" => %{"lat" => 51.5, "lng" => -0.12}} = Jason.decode!(json)
     end
   end
 

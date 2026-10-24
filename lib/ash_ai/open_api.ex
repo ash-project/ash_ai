@@ -47,11 +47,14 @@ defmodule AshAi.OpenApi do
     |> with_attribute_description(attr)
   end
 
+  # Keywords and tuples take the same `fields` constraint as maps, and cast
+  # from a map keyed by field name.
   def resource_write_attribute_type(
-        %{type: Ash.Type.Map, constraints: constraints} = attr,
+        %{type: type, constraints: constraints} = attr,
         resource,
         action_type
-      ) do
+      )
+      when type in [Ash.Type.Map, Ash.Type.Keyword, Ash.Type.Tuple] do
     if constraints[:fields] && constraints[:fields] != [] do
       %{
         type: :object,
@@ -506,9 +509,10 @@ defmodule AshAi.OpenApi do
   end
 
   defp resource_attribute_type(
-         %{type: Ash.Type.Map, constraints: constraints} = attr,
+         %{type: type, constraints: constraints} = attr,
          resource
-       ) do
+       )
+       when type in [Ash.Type.Map, Ash.Type.Keyword, Ash.Type.Tuple] do
     if constraints[:fields] && constraints[:fields] != [] do
       %{
         type: :object,
@@ -555,6 +559,10 @@ defmodule AshAi.OpenApi do
 
   defp resource_attribute_type(%{type: Ash.Type.NaiveDatetime}, _resource) do
     %{type: :string, format: :"date-time"}
+  end
+
+  defp resource_attribute_type(%{type: Ash.Type.Duration}, _resource) do
+    %{type: :string, format: :duration}
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Time}, _resource) do
