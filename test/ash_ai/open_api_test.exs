@@ -722,6 +722,24 @@ defmodule AshAi.OpenApiTest do
                "minLength" => 5
              }
     end
+
+    test "strips minLength and maxLength in strict tool parameter schemas" do
+      tool =
+        [actions: [{Profile, [:create]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: true)["properties"]["input"]["properties"]
+
+      assert properties["username"] == %{"type" => ["string", "null"]}
+      assert properties["bio"] == %{"type" => ["string", "null"]}
+      assert properties["code"] == %{"type" => ["string", "null"]}
+      refute Map.has_key?(properties["username"], "minLength")
+      refute Map.has_key?(properties["username"], "maxLength")
+      refute Map.has_key?(properties["bio"], "maxLength")
+      refute Map.has_key?(properties["code"], "minLength")
+    end
   end
 
   defp get_action_specific_properties(%{type: :read}, resource, module) do
