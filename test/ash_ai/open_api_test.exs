@@ -5,7 +5,7 @@
 defmodule AshAi.OpenApiTest do
   use ExUnit.Case, async: true
 
-  alias __MODULE__.{Music, Artist, Album}
+  alias __MODULE__.{Music, Artist, Album, Profile}
 
   defmodule Bio do
     use Ash.Resource, data_layer: :embedded
@@ -211,6 +211,36 @@ defmodule AshAi.OpenApiTest do
     end
   end
 
+  defmodule Profile do
+    use Ash.Resource,
+      domain: Music,
+      data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id, writable?: true
+      attribute :username, :string, public?: true, constraints: [min_length: 3, max_length: 20]
+      attribute :bio, :ci_string, public?: true, constraints: [max_length: 500]
+      attribute :code, :string, public?: true, constraints: [min_length: 5]
+    end
+
+    actions do
+      default_accept [:*]
+      defaults [:create, :read]
+
+      action :validate_code, :string do
+        argument :code, :string, allow_nil?: false, constraints: [min_length: 4, max_length: 8]
+
+        run fn input, _ ->
+          {:ok, input.arguments.code}
+        end
+      end
+    end
+  end
+
   defmodule Music do
     use Ash.Domain,
       extensions: [AshAi]
@@ -221,6 +251,7 @@ defmodule AshAi.OpenApiTest do
       tool :create_event, Event, :create
       tool :list_events, Event, :read
       tool :create_shipment, Shipment, :create
+      tool :create_profile, Profile, :create
     end
 
     resources do
@@ -230,6 +261,7 @@ defmodule AshAi.OpenApiTest do
       resource Gadget
       resource Event
       resource Shipment
+      resource Profile
     end
   end
 
@@ -633,6 +665,62 @@ defmodule AshAi.OpenApiTest do
                )
 
       assert %{"destination" => %{"lat" => 51.5, "lng" => -0.12}} = Jason.decode!(json)
+    end
+  end
+
+  describe "string attributes and arguments with length constraints" do
+    test "exposes minLength and maxLength in resource_write_attribute_type/3" do
+      create_action = Ash.Resource.Info.action(Profile, :create)
+
+      properties =
+        get_parameter_schema_properties(
+          create_action,
+          Profile,
+          &AshAi.OpenApi.resource_write_attribute_type/3
+        )
+
+      assert properties[:username] == %{type: :string, minLength: 3, maxLength: 20}
+      assert properties[:bio] == %{type: :string, maxLength: 500}
+      assert properties[:code] == %{type: :string, minLength: 5}
+    end
+
+    test "exposes minLength and maxLength for action arguments" do
+      validate_code_action = Ash.Resource.Info.action(Profile, :validate_code)
+
+      properties =
+        get_parameter_schema_properties(
+          validate_code_action,
+          Profile,
+          &AshAi.OpenApi.resource_write_attribute_type/3
+        )
+
+      assert properties[:code] == %{type: :string, minLength: 4, maxLength: 8}
+    end
+
+    test "exposes minLength and maxLength in tool parameter schemas" do
+      tool =
+        [actions: [{Profile, [:create]}]]
+        |> AshAi.exposed_tools()
+        |> hd()
+
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: false)["properties"]["input"]["properties"]
+
+      assert properties["username"] == %{
+               "type" => "string",
+               "minLength" => 3,
+               "maxLength" => 20
+             }
+
+      assert properties["bio"] == %{
+               "type" => "string",
+               "maxLength" => 500
+             }
+
+      assert properties["code"] == %{
+               "type" => "string",
+               "minLength" => 5
+             }
     end
   end
 
