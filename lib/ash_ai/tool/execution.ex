@@ -622,9 +622,6 @@ defmodule AshAi.Tool.Execution do
 
   # Values arrive as JSON primitives, so they are cast to the field's type before
   # filtering. Mirrors what `Ash.CodeInterface` does for `get_by` code interfaces.
-  # A missing argument stays `nil` here, so the caller decides how to handle it.
-  defp cast_lookup_value!(_resource, _field_name, nil, _label), do: nil
-
   defp cast_lookup_value!(resource, field_name, value, label) do
     {type, constraints} = lookup_field_type(resource, field_name)
 
