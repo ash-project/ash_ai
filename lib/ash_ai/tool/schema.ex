@@ -160,7 +160,12 @@ defmodule AshAi.Tool.Schema do
   # Recursively transforms a JSON schema to be OpenAI strict-mode compliant:
   # - Every object gets `additionalProperties: false`
   # - Every non-required property is made nullable
+  # - Unsupported validation keywords (like `minLength` and `maxLength`) are stripped
   defp make_strict_schema(schema) when is_map(schema) do
+    schema =
+      schema
+      |> Map.drop(["minLength", "maxLength", :minLength, :maxLength])
+
     schema =
       if schema["type"] == "object" && is_map(schema["properties"]) do
         already_required = MapSet.new(schema["required"] || [])

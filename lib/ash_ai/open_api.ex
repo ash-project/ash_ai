@@ -487,12 +487,14 @@ defmodule AshAi.OpenApi do
     )
   end
 
-  defp resource_attribute_type(%{type: Ash.Type.String}, _resource) do
+  defp resource_attribute_type(%{type: Ash.Type.String} = attr, _resource) do
     %{type: :string}
+    |> add_string_constraints(Map.get(attr, :constraints))
   end
 
-  defp resource_attribute_type(%{type: Ash.Type.CiString}, _resource) do
+  defp resource_attribute_type(%{type: Ash.Type.CiString} = attr, _resource) do
     %{type: :string}
+    |> add_string_constraints(Map.get(attr, :constraints))
   end
 
   defp resource_attribute_type(%{type: Ash.Type.Boolean}, _resource) do
@@ -784,6 +786,21 @@ defmodule AshAi.OpenApi do
 
       {:less_than, exclusive_max}, schema ->
         Map.put(schema, :exclusiveMaximum, exclusive_max)
+    end)
+  end
+
+  defp add_string_constraints(schema, constraints) do
+    (constraints || [])
+    |> Keyword.take([:min_length, :max_length])
+    |> Enum.reduce(schema, fn
+      {:min_length, min}, schema when is_integer(min) ->
+        Map.put(schema, :minLength, min)
+
+      {:max_length, max}, schema when is_integer(max) ->
+        Map.put(schema, :maxLength, max)
+
+      _, schema ->
+        schema
     end)
   end
 
