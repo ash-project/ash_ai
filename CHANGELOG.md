@@ -11,6 +11,21 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.4.1](https://github.com/ash-project/ash_ai/compare/v1.4.0...v1.4.1) (2026-10-25)
+
+
+
+
+### Bug Fixes:
+
+* support more attribute types by [@zachdaniel](https://github.com/zachdaniel)
+
+* ensure all datetime types get proper open api schema handling by [@zachdaniel](https://github.com/zachdaniel)
+
+* honor strict load request on write actions by [@zachdaniel](https://github.com/zachdaniel)
+
+* require identity in update/destroy tool input by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.4.0](https://github.com/ash-project/ash_ai/compare/v1.3.0...v1.4.0) (2026-10-22)
 
 
