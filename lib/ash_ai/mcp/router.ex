@@ -23,6 +23,10 @@ if Code.ensure_loaded?(Plug) do
     the resolved `%AshAi.Tool{}`, its argument map, and the request's Ash tool
     context. It must return `{:ok, arguments}` or `{:error, message}`. Rejections
     are rendered as ordinary MCP tool errors in the selected protocol envelope.
+
+    `tools/list` and `resources/list` return every entry by default. Pass
+    `list_page_size: n` to return at most `n` entries per response, with a
+    `nextCursor` for the next page.
     """
 
     use Plug.Router, copy_opts_to_assign: :router_opts

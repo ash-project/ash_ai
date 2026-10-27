@@ -43,6 +43,8 @@ defmodule AshAi.Mcp.Server do
   # Protocol revisions that negotiate their version via `initialize`, newest
   # first: `initialize` falls back to the head
   @initialize_based_versions ["2025-11-25", "2025-06-18", "2025-03-26"]
+
+  @list_methods ["tools/list", "resources/list", "resources/templates/list"]
   @supported_protocol_versions @per_request_versions ++ @initialize_based_versions
 
   @meta_protocol_version "io.modelcontextprotocol/protocolVersion"
@@ -424,9 +426,10 @@ defmodule AshAi.Mcp.Server do
     response_2026_07_28(conn, 200, id, result)
   end
 
-  defp dispatch_2026_07_28(conn, "tools/list", id, _params, opts) do
+  defp dispatch_2026_07_28(conn, "tools/list", id, params, opts) do
     result =
-      %{"tools" => tool_definitions(opts)}
+      params
+      |> tools_list_result(opts)
       |> cacheable_result(opts, :list)
       |> result_2026_07_28(opts)
 
@@ -443,9 +446,19 @@ defmodule AshAi.Mcp.Server do
     end
   end
 
-  defp dispatch_2026_07_28(conn, "resources/list", id, _params, opts) do
+  defp dispatch_2026_07_28(conn, "resources/list", id, params, opts) do
     result =
-      %{"resources" => resource_definitions(opts)}
+      params
+      |> resources_list_result(opts)
+      |> cacheable_result(opts, :list)
+      |> result_2026_07_28(opts)
+
+    response_2026_07_28(conn, 200, id, result)
+  end
+
+  defp dispatch_2026_07_28(conn, "resources/templates/list", id, _params, opts) do
+    result =
+      resource_templates_list_result()
       |> cacheable_result(opts, :list)
       |> result_2026_07_28(opts)
 
@@ -892,6 +905,16 @@ defmodule AshAi.Mcp.Server do
        when not is_map(capabilities) and not is_nil(capabilities),
        do: "Invalid params: capabilities must be an object"
 
+  # Checked whether or not paging is enabled, so a client never mistakes an
+  # ignored cursor for the start of the list
+  defp invalid_params(method, %{"cursor" => cursor})
+       when method in @list_methods and not is_nil(cursor) do
+    case decode_cursor(cursor) do
+      {:ok, _after_key} -> nil
+      :error -> "Invalid params: invalid cursor"
+    end
+  end
+
   defp invalid_params(_method, _params), do: nil
 
   defp do_process_message(message, session_id, opts) do
@@ -942,14 +965,20 @@ defmodule AshAi.Mcp.Server do
         # TODO: Cancel request?
         {:no_response, nil, session_id}
 
-      # TODO: this can support paginaton via params later
       %{"method" => "resources/list", "id" => id} ->
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "result" => %{
-            "resources" => resource_definitions(opts)
-          }
+          "result" => resources_list_result(message["params"], opts)
+        }
+
+        {:json_response, Jason.encode!(response), session_id}
+
+      %{"method" => "resources/templates/list", "id" => id} ->
+        response = %{
+          "jsonrpc" => "2.0",
+          "id" => id,
+          "result" => resource_templates_list_result()
         }
 
         {:json_response, Jason.encode!(response), session_id}
@@ -998,9 +1027,7 @@ defmodule AshAi.Mcp.Server do
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "result" => %{
-            "tools" => tool_definitions(opts)
-          }
+          "result" => tools_list_result(message["params"], opts)
         }
 
         {:json_response, Jason.encode!(response), session_id}
@@ -1146,9 +1173,78 @@ defmodule AshAi.Mcp.Server do
     |> AshAi.exposed_mcp_ui_resources()
   end
 
+  # Tools are paged before their schemas are built, so a page only pays for its own entries
+  defp tools_list_result(params, opts) do
+    {tools, next_cursor} =
+      opts
+      |> listed_tools()
+      |> page(&to_string(&1.name), params, opts)
+
+    maybe_put(
+      %{"tools" => Enum.map(tools, &tool_definition(&1, opts))},
+      "nextCursor",
+      next_cursor
+    )
+  end
+
+  defp resources_list_result(params, opts) do
+    {resources, next_cursor} = page(resource_definitions(opts), & &1["uri"], params, opts)
+    maybe_put(%{"resources" => resources}, "nextCursor", next_cursor)
+  end
+
+  # Resource templates aren't supported yet, but the `resources` capability
+  # implies this method, and some clients call it on connect
+  defp resource_templates_list_result, do: %{"resourceTemplates" => []}
+
+  # Keyset pagination over the deterministic list order: a cursor carries the
+  # key of the last entry served, so entries that appear or disappear between
+  # requests don't shift later pages. Without `list_page_size` every entry
+  # after the cursor is returned.
+  defp page(entries, key_fun, params, opts) do
+    entries =
+      case params do
+        %{"cursor" => cursor} when is_binary(cursor) ->
+          {:ok, after_key} = decode_cursor(cursor)
+          Enum.drop_while(entries, &(key_fun.(&1) <= after_key))
+
+        _ ->
+          entries
+      end
+
+    case Keyword.get(opts, :list_page_size) do
+      nil ->
+        {entries, nil}
+
+      size when is_integer(size) and size > 0 ->
+        case Enum.split(entries, size) do
+          {page, []} -> {page, nil}
+          {page, _rest} -> {page, page |> List.last() |> key_fun.() |> encode_cursor()}
+        end
+
+      other ->
+        raise ArgumentError,
+              "list_page_size must be a positive integer or nil, got: #{inspect(other)}"
+    end
+  end
+
+  defp encode_cursor(after_key) do
+    Base.url_encode64(Jason.encode!(%{"after" => after_key}), padding: false)
+  end
+
+  defp decode_cursor(cursor) when is_binary(cursor) do
+    with {:ok, json} <- Base.url_decode64(cursor, padding: false),
+         {:ok, %{"after" => after_key}} when is_binary(after_key) <- Jason.decode(json) do
+      {:ok, after_key}
+    else
+      _ -> :error
+    end
+  end
+
+  defp decode_cursor(_cursor), do: :error
+
   # Deterministic ordering per 2026-07-28 (enables client caching and
   # improves upstream LLM prompt-cache hit rates); harmless for older revisions.
-  defp tool_definitions(opts) do
+  defp listed_tools(opts) do
     opts
     |> Keyword.take([:otp_app, :tools, :actor, :context, :tenant, :actions, :dev_tool_domains])
     |> Keyword.update(
@@ -1157,26 +1253,27 @@ defmodule AshAi.Mcp.Server do
       &Map.put(&1, :otp_app, opts[:otp_app])
     )
     |> tools()
-    |> Enum.map(fn %Tool{} = tool ->
-      # MCP schemas are advisory (no grammar-constrained sampling), so the
-      # OpenAI strict transformation defaults off here.
-      result =
-        %{
-          "name" => to_string(tool.name),
-          "description" => AshAi.Tools.description(tool),
-          "inputSchema" =>
-            AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
-        }
-        |> maybe_put("title", tool.title)
-        |> maybe_put("annotations", tool_annotations(tool))
+    |> Enum.sort_by(&to_string(&1.name))
+  end
 
-      if Tool.has_meta?(tool) do
-        Map.put(result, "_meta", tool._meta)
-      else
-        result
-      end
-    end)
-    |> Enum.sort_by(& &1["name"])
+  defp tool_definition(%Tool{} = tool, opts) do
+    # MCP schemas are advisory (no grammar-constrained sampling), so the
+    # OpenAI strict transformation defaults off here.
+    result =
+      %{
+        "name" => to_string(tool.name),
+        "description" => AshAi.Tools.description(tool),
+        "inputSchema" =>
+          AshAi.Tools.parameter_schema(tool, strict: Keyword.get(opts, :strict, false))
+      }
+      |> maybe_put("title", tool.title)
+      |> maybe_put("annotations", tool_annotations(tool))
+
+    if Tool.has_meta?(tool) do
+      Map.put(result, "_meta", tool._meta)
+    else
+      result
+    end
   end
 
   @tool_annotations [
