@@ -22,6 +22,9 @@ defmodule AshAi.Tool.Execution do
       :load,
       :select,
       :domain,
+      :filterable_fields,
+      :sortable_fields,
+      :aggregatable_fields,
       encode?: true,
       load_strict?: false
     ]
@@ -47,7 +50,7 @@ defmodule AshAi.Tool.Execution do
           identity: identity,
           get_by: get_by,
           arguments: tool_arguments
-        },
+        } = tool,
         client_arguments,
         context,
         run_opts \\ []
@@ -73,6 +76,9 @@ defmodule AshAi.Tool.Execution do
         load_strict?: load_strict?,
         select: select,
         domain: domain,
+        filterable_fields: tool.filterable_fields,
+        sortable_fields: tool.sortable_fields,
+        aggregatable_fields: tool.aggregatable_fields,
         encode?: Keyword.get(run_opts, :encode?, true)
       }
 
@@ -119,6 +125,9 @@ defmodule AshAi.Tool.Execution do
   defp serialize_opts(ctx), do: [load: ctx.load, select: ctx.select]
 
   defp run_read(resource, action, arguments, input, opts, nil, ctx) do
+    ensure_allowed_fields!(ctx.filterable_fields, filter_fields(arguments["filter"]), "filter on")
+    ensure_allowed_fields!(ctx.sortable_fields, sort_fields(arguments["sort"]), "sort on")
+
     sort = build_sort(arguments["sort"])
     limit = build_limit(arguments["limit"], action.pagination)
 
@@ -162,6 +171,48 @@ defmodule AshAi.Tool.Execution do
   end
 
   defp build_sort(_), do: ""
+
+  # A tool's `filterable_fields`, `sortable_fields` and `aggregatable_fields` narrow
+  # what its schema offers; requests naming any other field are refused rather
+  # than quietly honored
+  defp ensure_allowed_fields!(nil, _requested, _use), do: :ok
+
+  defp ensure_allowed_fields!(allowed, requested, use) do
+    allowed_names = Enum.map(allowed, &to_string/1)
+
+    case Enum.reject(requested, &(to_string(&1) in allowed_names)) do
+      [] ->
+        :ok
+
+      [field | _] ->
+        throw(
+          {:tool_error,
+           "Cannot #{use} `#{field}`. Allowed fields: #{Enum.join(allowed_names, ", ")}"}
+        )
+    end
+  end
+
+  defp sort_fields(sort) when is_list(sort) do
+    for %{"field" => field} <- sort, do: field
+  end
+
+  defp sort_fields(_sort), do: []
+
+  # Accepts both the documented condition form and Ash's native filter input,
+  # which the filter parameter also passes through to `Ash.Query.filter_input/2`
+  defp filter_fields(conditions) when is_list(conditions),
+    do: Enum.flat_map(conditions, &filter_fields/1)
+
+  defp filter_fields(%{"field" => field, "operator" => _, "value" => _}), do: [field]
+
+  defp filter_fields(filter) when is_map(filter) do
+    Enum.flat_map(filter, fn
+      {combinator, nested} when combinator in ["and", "or", "not"] -> filter_fields(nested)
+      {field, _condition} -> [field]
+    end)
+  end
+
+  defp filter_fields(_filter), do: []
 
   defp build_limit(limit, pagination) do
     case {limit, pagination} do
@@ -368,6 +419,8 @@ defmodule AshAi.Tool.Execution do
     if !aggregate["field"] do
       raise "missing field argument"
     end
+
+    ensure_allowed_fields!(ctx.aggregatable_fields, [aggregate["field"]], "aggregate")
 
     field = Ash.Resource.Info.field(resource, aggregate["field"])
 

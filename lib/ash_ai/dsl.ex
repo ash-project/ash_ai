@@ -63,11 +63,32 @@ defmodule AshAi.Dsl do
       doc:
         "A list of action specific parameters to allow for the underlying action. Only relevant for reads, and defaults to allowing `[:sort, :offset, :limit, :result_type, :filter]`. Paginated actions always expose their page controls (`offset`, and/or `after`/`before` keyset cursors) regardless of this list, since the returned page hands back the value to pass for the next page. `:result_type` may also be given as `result_type: [:count]` to restrict which result types are offered; `:run_query` is always included."
     ],
+    filterable_fields: [
+      type: {:list, :atom},
+      doc:
+        "For read tools, the fields the tool may filter on. Defaults to every public, filterable attribute, calculation and aggregate. Narrowing the list keeps the tool definition small on wide resources; filters on any other field are refused. An empty list removes the `filter` parameter."
+    ],
+    sortable_fields: [
+      type: {:list, :atom},
+      doc:
+        "For read tools, the fields the tool may sort on. Defaults to every public, sortable attribute, calculation and aggregate. Sorts on any other field are refused. An empty list removes the `sort` parameter."
+    ],
+    aggregatable_fields: [
+      type: {:list, :atom},
+      doc:
+        "For read tools, the fields the tool may aggregate with `result_type`. Defaults to every public attribute, calculation and aggregate. Aggregates of any other field are refused. An empty list removes the aggregate result type."
+    ],
     full_filter_schema?: [
       type: :boolean,
       default: false,
       doc:
         "Whether to generate the full JSON schema for the `filter` parameter of read actions. When `false` (the default), the filter is a free-form object whose shape is explained in the parameter description, keeping the tool definition much smaller. Set to `true` when you need a fully-specified schema, e.g. for strict/grammar-constrained tool calling."
+    ],
+    compact_field_list?: [
+      type: :boolean,
+      default: false,
+      doc:
+        "For read tools, whether to list the names of the fields that can be filtered, sorted and aggregated once, in the schema description, instead of in the `filter` description and the `sort` and aggregate `field` enums. Keeps the tool definition much smaller on wide resources. Has no effect with `full_filter_schema?: true`, which keeps every list."
     ],
     load: [
       type: :any,

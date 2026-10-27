@@ -32,7 +32,11 @@ defmodule AshAi.Tool.Schema do
       strict?: strict?,
       identity: identity,
       get_by: get_by,
-      full_filter_schema?: Map.get(tool, :full_filter_schema?, false)
+      full_filter_schema?: Map.get(tool, :full_filter_schema?, false),
+      compact_field_list?: Map.get(tool, :compact_field_list?, false),
+      filterable_fields: tool.filterable_fields,
+      sortable_fields: tool.sortable_fields,
+      aggregatable_fields: tool.aggregatable_fields
     )
   end
 
@@ -134,18 +138,31 @@ defmodule AshAi.Tool.Schema do
         }
       end
 
+    {properties, fields_description} =
+      add_action_specific_properties(props_with_input, resource, action, action_parameters,
+        strict?: strict?,
+        identity_keys: identity_keys,
+        get_by_fields: get_by_fields,
+        full_filter_schema?: Keyword.get(opts, :full_filter_schema?, false),
+        compact_field_list?: Keyword.get(opts, :compact_field_list?, false),
+        filterable_fields: Keyword.get(opts, :filterable_fields),
+        sortable_fields: Keyword.get(opts, :sortable_fields),
+        aggregatable_fields: Keyword.get(opts, :aggregatable_fields)
+      )
+
     %{
       type: :object,
-      properties:
-        add_action_specific_properties(props_with_input, resource, action, action_parameters,
-          strict?: strict?,
-          identity_keys: identity_keys,
-          get_by_fields: get_by_fields,
-          full_filter_schema?: Keyword.get(opts, :full_filter_schema?, false)
-        ),
+      properties: properties,
       required: Map.keys(props_with_input) ++ Enum.map(get_by_fields, & &1.name) ++ identity_keys,
       additionalProperties: false
     }
+    |> then(fn schema ->
+      if fields_description do
+        Map.put(schema, :description, fields_description)
+      else
+        schema
+      end
+    end)
     |> Jason.encode!()
     |> Jason.decode!()
     |> then(fn schema ->
@@ -277,7 +294,7 @@ defmodule AshAi.Tool.Schema do
         |> Map.new(fn field ->
           {field.name, AshAi.OpenApi.resource_write_attribute_type(field, resource, :create)}
         end)
-        |> then(&Map.merge(properties, &1))
+        |> then(&{Map.merge(properties, &1), nil})
 
       [] ->
         strict? = Keyword.get(opts, :strict?, true)
@@ -314,11 +331,11 @@ defmodule AshAi.Tool.Schema do
         {key, value}
       end)
 
-    Map.merge(properties, identity_properties)
+    {Map.merge(properties, identity_properties), nil}
   end
 
   defp add_action_specific_properties(properties, _resource, _action, _action_parameters, _opts),
-    do: properties
+    do: {properties, nil}
 
   defp read_query_properties(
          properties,
@@ -329,14 +346,27 @@ defmodule AshAi.Tool.Schema do
          allowed_result_types,
          opts
        ) do
+    full_schema? = Keyword.get(opts, :full_filter_schema?, false)
+    compact? = Keyword.get(opts, :compact_field_list?, false) and not full_schema?
+
     aggregate_fields =
-      Ash.Resource.Info.fields(resource, [
-        :attributes,
-        :aggregates,
-        :calculations
-      ])
-      |> Enum.filter(& &1.public?)
+      resource
+      |> AshAi.Tool.query_fields(:aggregatable_fields, opts[:aggregatable_fields])
       |> Enum.map(& &1.name)
+
+    sortable_candidates =
+      AshAi.Tool.query_fields(resource, :sortable_fields, opts[:sortable_fields])
+
+    sortable_fields = Enum.map(sortable_candidates, & &1.name)
+
+    filterable_candidates =
+      AshAi.Tool.query_fields(resource, :filterable_fields, opts[:filterable_fields])
+
+    # An explicitly empty allow-list leaves nothing to aggregate
+    allowed_result_types =
+      if opts[:aggregatable_fields] == [],
+        do: List.delete(allowed_result_types, :aggregate),
+        else: allowed_result_types
 
     paginated? = match?(%Ash.Resource.Actions.Read.Pagination{}, pagination)
 
@@ -377,11 +407,7 @@ defmodule AshAi.Tool.Schema do
           description: "The aggregate function to use",
           enum: [:max, :min, :sum, :avg, :count]
         },
-        field: %{
-          type: :string,
-          description: "The field to aggregate",
-          enum: aggregate_fields
-        }
+        field: field_name_schema("The field to aggregate", aggregate_fields, compact?)
       }
     }
 
@@ -411,10 +437,7 @@ defmodule AshAi.Tool.Schema do
       end
 
     {filterable_fields, available_operators} =
-      Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
-      |> Enum.filter(
-        &(&1.public? && &1.filterable? && AshAi.OpenApi.filterable_field?(&1, resource))
-      )
+      filterable_candidates
       |> Enum.reduce({[], MapSet.new()}, fn field, {fields, ops} ->
         case AshAi.OpenApi.raw_filter_type(field, resource) do
           nil ->
@@ -434,7 +457,7 @@ defmodule AshAi.Tool.Schema do
 
     filter_schema =
       cond do
-        !Keyword.get(opts, :full_filter_schema?, false) ->
+        !full_schema? ->
           %{
             type: :object,
             description: """
@@ -443,7 +466,7 @@ defmodule AshAi.Tool.Schema do
             {"and": [...]} / {"or": [...]} group of conditions and groups (nestable). \
             Operators: #{Enum.join(available_operators, ", ")}. \
             For 'is_nil' the value is true or false; for 'in' the value is an array. \
-            Fields: #{Enum.join(filterable_fields, ", ")}.\
+            Fields: #{if compact?, do: "those listed for filtering in the input schema's description", else: Enum.join(filterable_fields, ", ")}.\
             """
           }
 
@@ -509,17 +532,14 @@ defmodule AshAi.Tool.Schema do
             type: :object,
             description: "Filter results",
             properties:
-              Ash.Resource.Info.fields(resource, [:attributes, :aggregates, :calculations])
-              |> Enum.filter(
-                &(&1.public? && &1.filterable? && AshAi.OpenApi.filterable_field?(&1, resource))
-              )
-              |> Map.new(fn field ->
+              Map.new(filterable_candidates, fn field ->
                 {field.name, AshAi.OpenApi.raw_filter_type(field, resource)}
               end)
           }
       end
 
-    Map.merge(properties, %{
+    properties
+    |> Map.merge(%{
       filter: filter_schema,
       result_type: result_type_schema,
       limit: %{
@@ -545,29 +565,24 @@ defmodule AshAi.Tool.Schema do
           required: [:field, :direction],
           properties:
             %{
-              field: %{
-                type: :string,
-                description: "The field to sort by",
-                enum:
-                  Ash.Resource.Info.fields(resource, [
-                    :attributes,
-                    :calculations,
-                    :aggregates
-                  ])
-                  |> Enum.filter(&(&1.public? && &1.sortable?))
-                  |> Enum.map(& &1.name)
-              },
+              field: field_name_schema("The field to sort by", sortable_fields, compact?),
               direction: %{
                 type: :string,
                 description: "The direction to sort by",
                 enum: ["asc", "desc"]
               }
             }
-            |> add_input_for_fields(resource)
+            |> add_input_for_fields(sortable_candidates, resource)
         }
       }
     })
     |> Map.merge(query_offset_property(pagination))
+    # An explicitly empty allow-list removes the parameter it would feed
+    |> Map.drop(
+      for {key, option} <- [filter: :filterable_fields, sort: :sortable_fields],
+          opts[option] == [],
+          do: key
+    )
     |> then(fn map ->
       if action_parameters do
         Map.take(map, action_parameters ++ [:input])
@@ -575,7 +590,67 @@ defmodule AshAi.Tool.Schema do
         map
       end
     end)
-    |> Map.merge(pagination_properties(pagination))
+    |> then(fn map ->
+      uses =
+        Enum.filter(
+          [
+            {"filter", :filter, filterable_fields},
+            {"sort", :sort, sortable_fields},
+            {"aggregate", :result_type, aggregate_fields}
+          ],
+          fn
+            {"aggregate", key, _fields} ->
+              Map.has_key?(map, key) and :aggregate in allowed_result_types
+
+            {_use, key, _fields} ->
+              Map.has_key?(map, key)
+          end
+        )
+
+      description = if compact?, do: fields_description(resource, uses)
+
+      {Map.merge(map, pagination_properties(pagination)), description}
+    end)
+  end
+
+  # With `compact_field_list?` the field names are listed once, in the schema
+  # description, rather than in every parameter that takes one
+  defp field_name_schema(description, _fields, true = _compact?) do
+    %{
+      type: :string,
+      description: "#{description}, from the field list in the input schema's description"
+    }
+  end
+
+  defp field_name_schema(description, fields, false = _compact?),
+    do: %{type: :string, description: description, enum: fields}
+
+  # Each field appears once, annotated only when it can't be used for everything offered
+  defp fields_description(_resource, []), do: nil
+
+  defp fields_description(resource, uses) do
+    entries =
+      resource
+      |> Ash.Resource.Info.fields([:attributes, :aggregates, :calculations])
+      |> Enum.flat_map(fn %{name: name} ->
+        case for({use, _key, fields} <- uses, name in fields, do: use) do
+          [] -> []
+          supported when length(supported) == length(uses) -> [to_string(name)]
+          supported -> ["#{name} (#{Enum.join(supported, " and ")} only)"]
+        end
+      end)
+
+    if entries != [] do
+      uses = Enum.map(uses, &elem(&1, 0))
+      "Fields that can be used to #{join_uses(uses)}: #{Enum.join(entries, ", ")}."
+    end
+  end
+
+  defp join_uses([use]), do: use
+
+  defp join_uses(uses) do
+    {rest, [last]} = Enum.split(uses, -1)
+    Enum.join(rest, ", ") <> " or " <> last
   end
 
   # Non-paginated actions accept an `offset` applied directly to the query; it is
@@ -640,10 +715,9 @@ defmodule AshAi.Tool.Schema do
 
   defp pagination_properties(_pagination), do: %{}
 
-  defp add_input_for_fields(sort_obj, resource) do
-    resource
-    |> Ash.Resource.Info.fields([:calculations])
-    |> Enum.filter(&(&1.public? && &1.sortable? && !Enum.empty?(&1.arguments)))
+  defp add_input_for_fields(sort_obj, sortable_fields, resource) do
+    sortable_fields
+    |> Enum.filter(&match?(%Ash.Resource.Calculation{arguments: [_ | _]}, &1))
     |> case do
       [] ->
         sort_obj

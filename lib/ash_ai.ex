@@ -39,8 +39,12 @@ defmodule AshAi do
       :arguments,
       :_meta,
       :ui,
+      :filterable_fields,
+      :sortable_fields,
+      :aggregatable_fields,
       annotations: [],
       full_filter_schema?: false,
+      compact_field_list?: false,
       load_strict?: false,
       __spark_metadata__: nil
     ]
@@ -131,6 +135,73 @@ defmodule AshAi do
           {:ok, field}
       end
     end
+
+    @query_field_uses %{
+      filterable_fields: "filtered on",
+      sortable_fields: "sorted on",
+      aggregatable_fields: "aggregated"
+    }
+
+    @doc false
+    # The fields a read tool offers for filtering, sorting or aggregating: every eligible
+    # public field, narrowed to `allowed` when the tool sets an allow-list for that use.
+    # Raises ArgumentError if `allowed` names a field that is not eligible.
+    def query_fields(resource, kind, allowed \\ nil) do
+      eligible =
+        resource
+        |> Ash.Resource.Info.fields(query_field_types(kind))
+        |> Enum.filter(&(&1.public? && eligible_query_field?(&1, kind)))
+
+      case allowed do
+        nil ->
+          eligible
+
+        allowed ->
+          Enum.each(allowed, fn field_name ->
+            with {:error, message} <- validate_query_field(resource, kind, field_name) do
+              raise ArgumentError, message
+            end
+          end)
+
+          Enum.filter(eligible, &(&1.name in allowed))
+      end
+    end
+
+    @doc false
+    # `resource` may be a resource module or its Spark.Dsl state, so this can run while the
+    # resource itself is being compiled.
+    def validate_query_field(resource, kind, field_name) do
+      use = Map.fetch!(@query_field_uses, kind)
+
+      case Ash.Resource.Info.field(resource, field_name) do
+        %struct{} = field
+        when struct in [Ash.Resource.Attribute, Ash.Resource.Aggregate, Ash.Resource.Calculation] ->
+          cond do
+            !field.public? ->
+              {:error, "`#{inspect(field_name)}` is not public, so it cannot be #{use}"}
+
+            !eligible_query_field?(field, kind) ->
+              {:error, "`#{inspect(field_name)}` cannot be #{use}"}
+
+            true ->
+              {:ok, field}
+          end
+
+        _ ->
+          {:error,
+           "`#{inspect(field_name)}` is not a valid attribute, calculation or aggregate on #{inspect(resource_module(resource))}"}
+      end
+    end
+
+    # Kept in the order each list has always been emitted, so schemas stay byte-identical
+    defp query_field_types(:sortable_fields), do: [:attributes, :calculations, :aggregates]
+    defp query_field_types(_kind), do: [:attributes, :aggregates, :calculations]
+
+    defp eligible_query_field?(field, :filterable_fields),
+      do: field.filterable? && AshAi.OpenApi.filterable_field?(field, nil)
+
+    defp eligible_query_field?(field, :sortable_fields), do: field.sortable?
+    defp eligible_query_field?(_field, :aggregatable_fields), do: true
 
     defp resource_module(resource) when is_atom(resource), do: resource
 

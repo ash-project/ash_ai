@@ -57,9 +57,66 @@ defmodule AshAi.Transformers.ResourceTools do
   defp validate_tools!(dsl_state, module, resource_dsl?) do
     dsl_state
     |> Transformer.get_entities([:tools])
-    |> Enum.each(&validate_get_by!(&1, dsl_state, module, resource_dsl?))
+    |> Enum.each(fn tool ->
+      validate_get_by!(tool, dsl_state, module, resource_dsl?)
+      validate_query_fields!(tool, dsl_state, module, resource_dsl?)
+    end)
 
     dsl_state
+  end
+
+  @query_field_options [:filterable_fields, :sortable_fields, :aggregatable_fields]
+
+  defp validate_query_fields!(tool, dsl_state, module, resource_dsl?) do
+    case Enum.filter(@query_field_options, &Map.get(tool, &1)) do
+      [] ->
+        :ok
+
+      options ->
+        case fetch_action(tool, dsl_state, resource_dsl?) do
+          :deferred ->
+            :ok
+
+          %{type: :read} when not is_nil(tool.get_by) ->
+            raise_query_fields_error!(
+              tool,
+              module,
+              hd(options),
+              "`#{hd(options)}` cannot be combined with `get_by`, which does not expose filtering, sorting or aggregates."
+            )
+
+          %{type: :read} ->
+            source = if resource_dsl?, do: dsl_state, else: tool.resource
+
+            for option <- options, field_name <- Map.fetch!(tool, option) do
+              with {:error, message} <-
+                     AshAi.Tool.validate_query_field(source, option, field_name) do
+                raise_query_fields_error!(tool, module, option, message)
+              end
+            end
+
+            :ok
+
+          # A missing action is reported by `validate_get_by!/4` or when the schema is built
+          nil ->
+            :ok
+
+          _action ->
+            raise_query_fields_error!(
+              tool,
+              module,
+              hd(options),
+              "`#{hd(options)}` can only be used with read tools."
+            )
+        end
+    end
+  end
+
+  defp raise_query_fields_error!(tool, module, option, message) do
+    raise Spark.Error.DslError,
+      module: module,
+      path: [:tools, tool.name, option],
+      message: message
   end
 
   defp validate_get_by!(%{get_by: nil}, _dsl_state, _module, _resource_dsl?), do: :ok
