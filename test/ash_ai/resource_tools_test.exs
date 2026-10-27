@@ -6,10 +6,14 @@ defmodule AshAi.ResourceToolsTest do
   use ExUnit.Case, async: true
 
   alias __MODULE__.{
+    BlogDomain,
+    BlogPost,
     DuplicateNameDomain,
     DuplicateNameResource,
     ResourceToolDomain,
-    ResourceToolResource
+    ResourceToolResource,
+    ShopDomain,
+    ShopProduct
   }
 
   defmodule ResourceToolResource do
@@ -78,6 +82,60 @@ defmodule AshAi.ResourceToolsTest do
     tools do
       tool :duplicate_name, DuplicateNameResource, :read,
         description: "Domain-level tool description"
+    end
+  end
+
+  defmodule BlogPost do
+    use Ash.Resource,
+      domain: BlogDomain,
+      data_layer: Ash.DataLayer.Ets,
+      validate_domain_inclusion?: false
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+    end
+
+    actions do
+      defaults([:read])
+    end
+  end
+
+  defmodule BlogDomain do
+    use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+    resources do
+      resource BlogPost
+    end
+
+    tools do
+      tool :search, BlogPost, :read
+    end
+  end
+
+  defmodule ShopProduct do
+    use Ash.Resource,
+      domain: ShopDomain,
+      data_layer: Ash.DataLayer.Ets,
+      validate_domain_inclusion?: false
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+    end
+
+    actions do
+      defaults([:read])
+    end
+  end
+
+  defmodule ShopDomain do
+    use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+    resources do
+      resource ShopProduct
+    end
+
+    tools do
+      tool :search, ShopProduct, :read
     end
   end
 
@@ -235,6 +293,34 @@ defmodule AshAi.ResourceToolsTest do
       assert_raise ArgumentError, ~r/Duplicate tool names found/, fn ->
         AshAi.exposed_tools(actions: [{DuplicateNameResource, :*}])
       end
+    end
+
+    test "raises for duplicate tool names across the otp_app's domains" do
+      otp_app = :"ash_ai_duplicate_tools_#{System.unique_integer([:positive])}"
+      Application.put_env(otp_app, :ash_domains, [BlogDomain, ShopDomain])
+      on_exit(fn -> Application.delete_env(otp_app, :ash_domains) end)
+
+      error =
+        assert_raise ArgumentError, fn ->
+          AshAi.exposed_tools(otp_app: otp_app)
+        end
+
+      assert error.message =~ "Duplicate tool names found across domains"
+      assert error.message =~ "- search: #{inspect(BlogDomain)}, #{inspect(ShopDomain)}"
+    end
+
+    test "raises for duplicate tool names across domains reached through actions" do
+      assert_raise ArgumentError, ~r/Duplicate tool names found across domains/, fn ->
+        AshAi.exposed_tools(actions: [{BlogPost, :*}, {ShopProduct, :*}])
+      end
+    end
+
+    test "excluding one of the colliding tools resolves the conflict" do
+      assert [%{name: :search, domain: BlogDomain}] =
+               AshAi.exposed_tools(
+                 actions: [{BlogPost, :*}, {ShopProduct, :*}],
+                 exclude_actions: [{ShopProduct, :read}]
+               )
     end
   end
 end

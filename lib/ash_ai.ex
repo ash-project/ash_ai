@@ -730,6 +730,7 @@ defmodule AshAi do
         allowed_tools -> Enum.filter(tools, &(&1.name in allowed_tools))
       end
     end)
+    |> ensure_unique_exposed_tool_names!()
     |> Enum.filter(
       &can?(
         opts.actor,
@@ -794,6 +795,31 @@ defmodule AshAi do
         Tool names must be unique per domain across both:
         - domain-level `tools do ... end`
         - resource-level `tools do ... end`
+        """
+    end
+  end
+
+  # Domains compile independently, so names that collide across domains can only
+  # be caught once every exposed domain is known
+  defp ensure_unique_exposed_tool_names!(tools) do
+    duplicates =
+      tools
+      |> Enum.group_by(& &1.name)
+      |> Enum.filter(fn {_name, tools} -> Enum.count(tools) > 1 end)
+      |> Enum.sort_by(&elem(&1, 0))
+
+    case duplicates do
+      [] ->
+        tools
+
+      duplicates ->
+        raise ArgumentError, """
+        Duplicate tool names found across domains:
+
+        #{Enum.map_join(duplicates, "\n", fn {name, tools} -> "- #{name}: #{Enum.map_join(tools, ", ", &inspect(&1.domain))}" end)}
+
+        Tool names must be unique across every exposed domain. Rename one of the
+        tools, or narrow the exposed tools with the `tools` or `exclude_actions` options.
         """
     end
   end
