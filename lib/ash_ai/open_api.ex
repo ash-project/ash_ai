@@ -107,7 +107,7 @@ defmodule AshAi.OpenApi do
       end)
 
     %{
-      "anyOf" => subtypes
+      "anyOf" => reject_unmatchable_members(subtypes)
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)
@@ -180,6 +180,16 @@ defmodule AshAi.OpenApi do
   end
 
   defp with_union_type_tag(schema, _config), do: schema
+
+  # A member with an empty `enum` (e.g. an enum whose values were all retired) can
+  # never match. Members are only dropped while at least one remains, so a union of
+  # nothing but empty enums still rejects every value instead of becoming "any".
+  defp reject_unmatchable_members(subtypes) do
+    case Enum.reject(subtypes, &(Map.get(&1, :enum, Map.get(&1, "enum")) == [])) do
+      [] -> subtypes
+      matchable -> matchable
+    end
+  end
 
   defp add_null_for_non_required(%{required: required} = schema)
        when is_list(required) do
@@ -627,7 +637,7 @@ defmodule AshAi.OpenApi do
       end)
 
     %{
-      "anyOf" => subtypes
+      "anyOf" => reject_unmatchable_members(subtypes)
     }
     |> unwrap_any_of()
     |> with_attribute_description(attr)

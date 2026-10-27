@@ -14,6 +14,15 @@ defmodule AshAi.UnionInputSchemaTest do
     end
   end
 
+  defmodule CurrentRating do
+    use Ash.Type.Enum, values: [:low, :high]
+  end
+
+  # Every value was retired
+  defmodule ArchivedRating do
+    use Ash.Type.Enum, values: []
+  end
+
   test "fieldless union members have distinct, required discriminators" do
     schema =
       schema(
@@ -45,10 +54,49 @@ defmodule AshAi.UnionInputSchemaTest do
     assert Enum.sort(branches) == Enum.sort([%{"type" => "string"}, %{"type" => "integer"}])
   end
 
+  describe "members that can never match" do
+    test "empty enum members are dropped" do
+      assert schema(archived: [type: ArchivedRating], current: [type: CurrentRating]) ==
+               %{"type" => "string", "enum" => ["low", "high"]}
+    end
+
+    test "empty atom one_of members are dropped" do
+      assert schema(retired: [type: :atom, constraints: [one_of: []]], text: [type: :string]) ==
+               %{"type" => "string"}
+    end
+
+    test "a union of only empty enums still rejects every value" do
+      assert schema(archived: [type: ArchivedRating]) == %{"type" => "string", "enum" => []}
+    end
+
+    test "empty enum members are dropped from unions nested in typed maps" do
+      {:ok, constraints} =
+        Ash.Type.init(:map,
+          fields: [
+            rating: [
+              type: :union,
+              allow_nil?: false,
+              constraints: [
+                types: [archived: [type: ArchivedRating], current: [type: CurrentRating]]
+              ]
+            ]
+          ]
+        )
+
+      assert %{"properties" => %{"rating" => rating}} =
+               encode(%{type: Ash.Type.Map, constraints: constraints})
+
+      assert rating == %{"type" => "string", "enum" => ["low", "high"]}
+    end
+  end
+
   defp schema(types) do
     {:ok, constraints} = Ash.Type.init(:union, types: types)
+    encode(%{type: Ash.Type.Union, constraints: constraints})
+  end
 
-    %{type: Ash.Type.Union, constraints: constraints}
+  defp encode(attr) do
+    attr
     |> AshAi.OpenApi.resource_write_attribute_type(Empty, :create)
     |> Jason.encode!()
     |> Jason.decode!()
