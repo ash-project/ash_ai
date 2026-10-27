@@ -84,6 +84,12 @@ defmodule AshAi.Dsl do
       doc:
         "Whether to generate the full JSON schema for the `filter` parameter of read actions. When `false` (the default), the filter is a free-form object whose shape is explained in the parameter description, keeping the tool definition much smaller. Set to `true` when you need a fully-specified schema, e.g. for strict/grammar-constrained tool calling."
     ],
+    output_schema?: [
+      type: :boolean,
+      default: false,
+      doc:
+        "Whether to publish an MCP `outputSchema` describing the tool's structured result. Supported for generic actions that return an object (a map, struct, typed struct or resource) with `allow_nil? false`, for read tools with `get_by`, and for create, update and destroy tools. Requires a static `load` list. The schema is derived from the result's type and is never stricter than what the tool returns, since clients reject results that don't match it."
+    ],
     compact_field_list?: [
       type: :boolean,
       default: false,

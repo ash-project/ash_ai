@@ -60,9 +60,29 @@ defmodule AshAi.Transformers.ResourceTools do
     |> Enum.each(fn tool ->
       validate_get_by!(tool, dsl_state, module, resource_dsl?)
       validate_query_fields!(tool, dsl_state, module, resource_dsl?)
+      validate_output_schema!(tool, dsl_state, module, resource_dsl?)
     end)
 
     dsl_state
+  end
+
+  defp validate_output_schema!(%{output_schema?: false}, _dsl_state, _module, _resource_dsl?),
+    do: :ok
+
+  defp validate_output_schema!(tool, dsl_state, module, resource_dsl?) do
+    case fetch_action(tool, dsl_state, resource_dsl?) do
+      action when is_struct(action) ->
+        with {:error, message} <- AshAi.Tool.OutputSchema.validate(tool, action) do
+          raise Spark.Error.DslError,
+            module: module,
+            path: [:tools, tool.name, :output_schema?],
+            message: message
+        end
+
+      # Deferred or missing actions are checked again when the schema is built
+      _ ->
+        :ok
+    end
   end
 
   @query_field_options [:filterable_fields, :sortable_fields, :aggregatable_fields]

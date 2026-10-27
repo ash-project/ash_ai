@@ -1268,6 +1268,7 @@ defmodule AshAi.Mcp.Server do
       }
       |> maybe_put("title", tool.title)
       |> maybe_put("annotations", tool_annotations(tool))
+      |> maybe_put("outputSchema", AshAi.Tool.OutputSchema.for_tool(tool))
 
     if Tool.has_meta?(tool) do
       Map.put(result, "_meta", tool._meta)

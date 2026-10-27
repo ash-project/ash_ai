@@ -45,6 +45,7 @@ defmodule AshAi do
       annotations: [],
       full_filter_schema?: false,
       compact_field_list?: false,
+      output_schema?: false,
       load_strict?: false,
       __spark_metadata__: nil
     ]
