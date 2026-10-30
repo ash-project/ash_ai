@@ -100,6 +100,7 @@ if Code.ensure_loaded?(Req) do
     @type result :: %{
             content: [map()],
             structured_content: term(),
+            meta: map() | nil,
             is_error: boolean()
           }
 
@@ -154,7 +155,8 @@ if Code.ensure_loaded?(Req) do
     `req_llm_tools/3`. Pass the tool's definition as `definition:` so the
     client can mirror `x-mcp-header` parameters into headers.
 
-    Returns `{:ok, %{content: blocks, structured_content: value, is_error: boolean}}`.
+    Returns `{:ok, %{content: blocks, structured_content: value, meta: map, is_error: boolean}}`,
+    where `meta` is the result's `_meta` (or `nil`).
     A tool that failed while running is still `{:ok, %{is_error: true}}`;
     `{:error, reason}` means the request itself failed.
     """
@@ -179,6 +181,7 @@ if Code.ensure_loaded?(Req) do
          %{
            content: List.wrap(result["content"]),
            structured_content: result["structuredContent"],
+           meta: result["_meta"],
            is_error: result["isError"] == true
          }}
       end

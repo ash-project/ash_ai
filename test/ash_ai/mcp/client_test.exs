@@ -198,6 +198,7 @@ defmodule AshAi.Mcp.ClientTest do
       assert result.is_error == false
       assert [%{"type" => "text", "text" => text}] = result.content
       assert text =~ "echo: hi"
+      assert is_map(result.meta["io.modelcontextprotocol/serverInfo"])
 
       [discover, list, call] = requests()
 

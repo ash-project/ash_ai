@@ -197,6 +197,12 @@ defmodule AshAi.Dsl do
       type: {:or, [:atom, :string]},
       doc:
         "The `mcp_ui_resource` name (atom) or a `ui://` URI string for MCP Apps. Shortcut for setting `_meta.ui.resourceUri`. When an atom is given, the URI is resolved from the matching `mcp_ui_resource` declaration."
+    ],
+    result_meta: [
+      type:
+        {:spark_function_behaviour, AshAi.Tool.ResultMeta, {AshAi.Tool.ResultMeta.Function, 2}},
+      doc:
+        "Per-call `_meta` for the tool's MCP `tools/call` result, for data the tool's view needs but the model shouldn't read. A module implementing `AshAi.Tool.ResultMeta`, or a function taking the action's unserialized result and an `AshAi.Tool.ResultMeta.Context` and returning a map or `nil`. The map is deep-merged over `_meta`. See `AshAi.Tool.ResultMeta`."
     ]
   ]
 
@@ -322,7 +328,8 @@ defmodule AshAi.Dsl do
       end
       """,
       ~s|tool :get_board, Board, :read, _meta: %{"openai/outputTemplate" => "ui://widget/kanban-board.html", "openai/toolInvocation/invoking" => "Preparing the board…", "openai/toolInvocation/invoked" => "Board ready."}|,
-      ~s(tool :list_artists, Artist, :read, ui: "ui://artists/list.html")
+      ~s(tool :list_artists, Artist, :read, ui: "ui://artists/list.html"),
+      ~s(tool :artist_chart, Artist, :read, ui: :artist_chart, result_meta: &MyAppWeb.McpViews.artist_chart/2)
     ],
     target: AshAi.Tool,
     schema: @tool_schema,

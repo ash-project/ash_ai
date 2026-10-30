@@ -80,6 +80,10 @@ tool :get_board, Board, :read, _meta: %{"openai/outputTemplate" => "ui://widget/
 tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 ```
 
+```
+tool :artist_chart, Artist, :read, ui: :artist_chart, result_meta: &MyAppWeb.McpViews.artist_chart/2
+```
+
 
 
 ### Arguments
@@ -111,6 +115,7 @@ tool :list_artists, Artist, :read, ui: "ui://artists/list.html"
 | [`annotations`](#tools-tool-annotations){: #tools-tool-annotations } | `keyword` | `[]` | MCP tool annotations: an optional `title` and the hints a client uses to decide whether to ask the person before a call and how to present the tool. The MCP specification treats the hints as untrusted, not as security guarantees. Only what you set is sent, so the client applies its own defaults to the rest. |
 | [`_meta`](#tools-tool-_meta){: #tools-tool-_meta } | `any` | `%{}` | Optional metadata map for tool integrations. Supports provider-specific extensions like OpenAI metadata. Keys and values should be strings to comply with JSON-RPC serialization. |
 | [`ui`](#tools-tool-ui){: #tools-tool-ui } | `atom \| String.t` |  | The `mcp_ui_resource` name (atom) or a `ui://` URI string for MCP Apps. Shortcut for setting `_meta.ui.resourceUri`. When an atom is given, the URI is resolved from the matching `mcp_ui_resource` declaration. |
+| [`result_meta`](#tools-tool-result_meta){: #tools-tool-result_meta } | `(any, any -> any) \| module` |  | Per-call `_meta` for the tool's MCP `tools/call` result, for data the tool's view needs but the model shouldn't read. A module implementing `AshAi.Tool.ResultMeta`, or a function taking the action's unserialized result and an `AshAi.Tool.ResultMeta.Context` and returning a map or `nil`. The map is deep-merged over `_meta`. See `AshAi.Tool.ResultMeta`. |
 
 
 ### tools.tool.argument

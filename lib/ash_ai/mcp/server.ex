@@ -437,7 +437,10 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp dispatch_2026_07_28(conn, "tools/call", id, params, opts) do
-    case execute_tool_call(params, nil, opts, structured_lists?: true) do
+    case execute_tool_call(params, nil, opts,
+           structured_lists?: true,
+           client_capabilities: client_capabilities_2026_07_28(params)
+         ) do
       {:ok, result} ->
         response_2026_07_28(conn, 200, id, result_2026_07_28(result, opts))
 
@@ -1361,9 +1364,18 @@ defmodule AshAi.Mcp.Server do
 
   defp execute_resolved_tool(tool, arguments, context, call_opts) do
     case AshAi.Tools.execute(tool, arguments, context, encode?: false) do
-      {:ok, result, _} ->
+      {:ok, result, raw_result} ->
         case encode_tool_result(tool, result) do
           {:ok, encoded_result} ->
+            result_meta_context = %AshAi.Tool.ResultMeta.Context{
+              tool: tool,
+              arguments: arguments,
+              actor: context[:actor],
+              tenant: context[:tenant],
+              context: context[:context],
+              client_capabilities: call_opts[:client_capabilities]
+            }
+
             result =
               %{
                 "isError" => false,
@@ -1374,12 +1386,9 @@ defmodule AshAi.Mcp.Server do
                 encoded_result,
                 Keyword.get(call_opts, :structured_lists?, false)
               )
+              |> put_result_meta(tool, raw_result, result_meta_context)
 
-            if Tool.has_meta?(tool) do
-              {:ok, Map.put(result, "_meta", tool._meta)}
-            else
-              {:ok, result}
-            end
+            {:ok, result}
 
           {:error, error_text} ->
             {:ok, tool_error_result(error_text)}
@@ -1388,6 +1397,23 @@ defmodule AshAi.Mcp.Server do
       {:error, error_text} ->
         {:ok, tool_error_result(error_text)}
     end
+  end
+
+  defp put_result_meta(result, tool, raw_result, context) do
+    meta =
+      deep_merge(
+        if(Tool.has_meta?(tool), do: tool._meta, else: %{}),
+        AshAi.Tool.ResultMeta.run(tool, raw_result, context)
+      )
+
+    if meta == %{}, do: result, else: Map.put(result, "_meta", meta)
+  end
+
+  defp deep_merge(left, right) do
+    Map.merge(left, right, fn
+      _key, %{} = left, %{} = right -> deep_merge(left, right)
+      _key, _left, right -> right
+    end)
   end
 
   defp encode_tool_result(%{action: %{type: :action, returns: nil}}, result), do: {:ok, result}

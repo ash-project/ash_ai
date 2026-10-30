@@ -39,6 +39,7 @@ defmodule AshAi do
       :arguments,
       :_meta,
       :ui,
+      :result_meta,
       :filterable_fields,
       :sortable_fields,
       :aggregatable_fields,
