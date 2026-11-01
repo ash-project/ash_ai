@@ -17,7 +17,8 @@
 
     {:check_formatter, command: "mix spark.formatter --check"},
     {:doctor, false},
-    {:reuse, command: ["pipx", "run", "reuse", "lint", "-q"]}
+    {:reuse,
+     command: ["pipx", "run", "--spec", "reuse[charset-normalizer]", "reuse", "lint", "-q"]}
     ## custom new tools may be added (mix tasks or arbitrary commands)
     # {:my_mix_task, command: "mix release", env: %{"MIX_ENV" => "prod"}},
     # {:my_arbitrary_tool, command: "npm test", cd: "assets"},

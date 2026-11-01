@@ -28,7 +28,13 @@ defmodule AshAi.MixProject do
       dialyzer: [plt_add_apps: [:ash, :mix]],
       description: @description,
       source_url: @source_url,
-      homepage_url: @source_url
+      homepage_url: @source_url,
+      hex: [
+        # assent's Sign in with Apple advisory. The fix is assent 0.3.2, which
+        # ash_authentication 4.x can't use (it pins `< 0.3.0`). ash_authentication
+        # is an optional dependency here, so this lock never reaches users.
+        ignore_advisories: ["EEF-CVE-2026-117656"]
+      ]
     ]
   end
 
