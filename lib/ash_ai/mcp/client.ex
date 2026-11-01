@@ -25,6 +25,14 @@ if Code.ensure_loaded?(Req) do
 
         AshAi.ToolLoop.run(messages, extra_tools: tools, ...)
 
+    ## Resources
+
+    `list_resources/1`, `list_resource_templates/1`, and `read_resource/2` reach
+    the server's resources, and `format_resource/1` turns a read into text or
+    ReqLLM content parts, for example to attach a resource a person picked to
+    their message. To let the model list and read them itself, pass
+    `resources: true` to `req_llm_tools/3`.
+
     ## Protocol versions
 
     The client prefers revision `2026-07-28`, which carries the protocol version,
@@ -60,8 +68,9 @@ if Code.ensure_loaded?(Req) do
     implemented. A `2026-07-28` result asking for input
     (`resultType: "input_required"`) returns `{:error, {:input_required, result}}`.
     A legacy server's requests on a response stream are answered with
-    JSON-RPC "method not found", except `ping`. `subscriptions/listen` and the
-    deprecated HTTP+SSE transport aren't supported.
+    JSON-RPC "method not found", except `ping`. `subscriptions/listen`,
+    resource subscriptions (`resources/subscribe`), and the deprecated HTTP+SSE
+    transport aren't supported.
     """
 
     require Logger
@@ -84,8 +93,8 @@ if Code.ensure_loaded?(Req) do
     # must not fall back to `initialize`.
     @modern_error_codes [-32_020, -32_021, -32_022]
 
-    # Bounds `tools/list` pagination against a server that never stops
-    # returning a cursor
+    # Bounds list pagination against a server that never stops returning a
+    # cursor
     @max_pages 100
 
     # Bounds the requests a legacy server can make the client answer while it
@@ -103,6 +112,8 @@ if Code.ensure_loaded?(Req) do
             meta: map() | nil,
             is_error: boolean()
           }
+
+    @type resource_result :: %{contents: [map()], meta: map() | nil}
 
     @doc "The protocol versions this client supports, newest first."
     @spec supported_protocol_versions() :: [String.t()]
@@ -183,6 +194,58 @@ if Code.ensure_loaded?(Req) do
            structured_content: result["structuredContent"],
            meta: result["_meta"],
            is_error: result["isError"] == true
+         }}
+      end
+    end
+
+    @doc """
+    Lists the server's resources, following `nextCursor` pagination.
+
+    Returns the resource entries as the server sent them (string keys), leaving
+    out any without a string `uri`. Templated resources are listed separately,
+    by `list_resource_templates/1`.
+    """
+    @spec list_resources(Connection.t()) :: {:ok, [map()]} | {:error, term()}
+    def list_resources(%Connection{} = conn) do
+      with {:ok, resources} <- paginate(conn, "resources/list", "resources", nil, [], 0) do
+        {:ok, Enum.filter(resources, &is_binary(&1["uri"]))}
+      end
+    end
+
+    @doc """
+    Lists the server's resource templates, following `nextCursor` pagination.
+
+    Returns the template entries as the server sent them (string keys), leaving
+    out any without a string `uriTemplate`. Each `uriTemplate` is an RFC 6570
+    URI template: expand it and pass the URI to `read_resource/2`.
+    """
+    @spec list_resource_templates(Connection.t()) :: {:ok, [map()]} | {:error, term()}
+    def list_resource_templates(%Connection{} = conn) do
+      with {:ok, templates} <-
+             paginate(conn, "resources/templates/list", "resourceTemplates", nil, [], 0) do
+        {:ok, Enum.filter(templates, &is_binary(&1["uriTemplate"]))}
+      end
+    end
+
+    @doc """
+    Reads a resource from the server.
+
+    Returns `{:ok, %{contents: items, meta: map}}`, where each item is a map
+    with a `"uri"`, an optional `"mimeType"`, and either `"text"` or a base64
+    `"blob"`, as the server sent it, and `meta` is the result's `_meta` (or
+    `nil`). A resource the server doesn't have is a JSON-RPC error: `-32602`
+    from `2026-07-28` servers, `-32002` from earlier ones.
+
+    `format_resource/1` turns the result into text or ReqLLM content parts.
+    """
+    @spec read_resource(Connection.t(), String.t()) ::
+            {:ok, resource_result()} | {:error, term()}
+    def read_resource(%Connection{} = conn, uri) when is_binary(uri) do
+      with {:ok, result} <- request(conn, "resources/read", %{"uri" => uri}) do
+        {:ok,
+         %{
+           contents: result["contents"] |> List.wrap() |> Enum.filter(&is_map/1),
+           meta: result["_meta"]
          }}
       end
     end
@@ -374,13 +437,20 @@ if Code.ensure_loaded?(Req) do
       defp format_content(block, _images?), do: Jason.encode!(block)
 
       defp image_part(data, block) do
+        case decode_image(data) do
+          {:ok, part} -> part
+          :error -> format_content(block, false)
+        end
+      end
+
+      defp decode_image(data) do
         with true <- is_binary(data),
              {:ok, image} <- Base.decode64(data, ignore: :whitespace),
              true <- byte_size(image) <= @max_image_bytes,
              type when is_binary(type) <- image_type(image) do
-          ContentPart.image(image, type)
+          {:ok, ContentPart.image(image, type)}
         else
-          _ -> format_content(block, false)
+          _ -> :error
         end
       end
 
@@ -412,6 +482,53 @@ if Code.ensure_loaded?(Req) do
       end
 
       @doc """
+      Turns a `read_resource/2` result into text or ReqLLM content parts, for a
+      tool result or a message.
+
+      Text items come back as their text. Blobs are handled as `format_result/1`
+      handles embedded resources: PNG, JPEG, GIF, and WebP images up to 3.75 MB
+      become image parts, typed by their contents, and other blobs are
+      described without their data. When the read returned several items, each
+      is introduced by a line naming its URI. A result with images comes back
+      as content parts, and any other as one string.
+      """
+      @spec format_resource(resource_result()) :: {:ok, String.t() | [ContentPart.t()]}
+      def format_resource(%{contents: contents}) do
+        label? = match?([_, _ | _], contents)
+        parts = Enum.flat_map(contents, &resource_parts(&1, label?))
+
+        if Enum.any?(parts, &is_struct(&1, ContentPart)),
+          do: {:ok, merge_text(parts)},
+          else: {:ok, Enum.join(parts, "\n")}
+      end
+
+      defp resource_parts(item, label?) do
+        label =
+          if label? and is_binary(item["uri"]), do: ["Contents of #{item["uri"]}:"], else: []
+
+        label ++ [resource_part(item)]
+      end
+
+      defp resource_part(%{"text" => text}) when is_binary(text), do: text
+
+      defp resource_part(%{"blob" => data, "mimeType" => "image/" <> _} = item) do
+        case decode_image(data) do
+          {:ok, part} -> part
+          :error -> describe_blob(item)
+        end
+      end
+
+      defp resource_part(%{"blob" => _} = item), do: describe_blob(item)
+      defp resource_part(item), do: Jason.encode!(item)
+
+      defp describe_blob(item) do
+        item
+        |> Map.delete("blob")
+        |> Map.put("note", "binary content omitted")
+        |> Jason.encode!()
+      end
+
+      @doc """
       Builds ReqLLM tools for `definitions`, for `AshAi.ToolLoop`'s `extra_tools`.
 
       Returns `[{%ReqLLM.Tool{}, callback}]`, sorted by name so the same
@@ -426,12 +543,32 @@ if Code.ensure_loaded?(Req) do
       the one it negotiated before (`Connection.protocol_version`) and a
       2026-07-28 server needs no extra request per call.
 
+      ## Resources
+
+      With `resources: true`, two more tools let the model read the server's
+      resources:
+
+      * `mcp__<server>__list_resources` lists one page of the server's
+        resources, plus its resource templates on the first page. It takes the
+        `nextCursor` of a previous page as `cursor`.
+      * `mcp__<server>__read_resource` reads a resource by URI, formatted by
+        `format_resource/1`: one that was listed, one built from a template,
+        or a `resource_link` in one of the server's tool results.
+
+      MCP leaves it to the app to decide which resources reach the model, so
+      these are off by default. Only add them for servers whose resources the
+      model may read. If the server has tools of its own with these names, its
+      tools are kept and a warning is logged.
+
       ## Options
 
       * `:provider_options` - ReqLLM provider options for every tool, such as
         `[anthropic: [defer_loading: true]]`, or a function of the definition
-        returning them.
+        returning them. For the resource tools, the function gets a definition
+        named `"list_resources"` or `"read_resource"`.
       * `:format_result` - replaces `format_result/1`.
+      * `:resources` - adds the resource tools described above. Defaults to `false`.
+      * `:format_resource` - replaces `format_resource/1`.
       """
       @spec req_llm_tools(Connection.t() | Server.t(), [map()], keyword()) ::
               [{ReqLLM.Tool.t(), (map(), map() -> {:ok, term()} | {:error, term()})}]
@@ -439,30 +576,158 @@ if Code.ensure_loaded?(Req) do
           when is_struct(conn, Connection) or is_struct(conn, Server) do
         format = Keyword.get(opts, :format_result, &format_result/1)
 
-        definitions
-        |> normalize_definitions()
-        |> Enum.map(fn definition ->
-          run = fn arguments -> run_tool(conn, definition, arguments, format) end
+        tools =
+          definitions
+          |> normalize_definitions()
+          |> Enum.map(fn definition ->
+            req_llm_tool(conn, definition, opts, fn arguments ->
+              run(
+                conn,
+                &call_tool(&1, definition["name"], arguments, definition: definition),
+                format
+              )
+            end)
+          end)
+          # A server could name one tool to match another's shortened name.
+          # Keeping the first stops that from failing the whole tools array.
+          |> Enum.uniq_by(fn {tool, _callback} -> tool.name end)
 
-          tool =
-            ReqLLM.Tool.new!(
-              name: tool_name(conn, definition["name"]),
-              description: description(conn, definition),
-              parameter_schema: clean_schema(definition["inputSchema"] || %{"type" => "object"}),
-              callback: run,
-              strict: false,
-              provider_options: provider_options(opts[:provider_options], definition)
-            )
-
-          {tool, fn arguments, _context -> run.(arguments) end}
-        end)
-        # A server could name one tool to match another's shortened name.
-        # Keeping the first stops that from failing the whole tools array.
-        |> Enum.uniq_by(fn {tool, _callback} -> tool.name end)
+        if opts[:resources], do: add_resource_tools(tools, conn, opts), else: tools
       end
 
-      defp run_tool(conn, definition, arguments, format) do
-        case call_on(conn, definition, arguments) do
+      defp req_llm_tool(conn, definition, opts, run) do
+        tool =
+          ReqLLM.Tool.new!(
+            name: tool_name(conn, definition["name"]),
+            description: description(conn, definition),
+            parameter_schema: clean_schema(definition["inputSchema"] || %{"type" => "object"}),
+            callback: run,
+            strict: false,
+            provider_options: provider_options(opts[:provider_options], definition)
+          )
+
+        {tool, fn arguments, _context -> run.(arguments) end}
+      end
+
+      defp add_resource_tools(tools, conn, opts) do
+        taken = MapSet.new(tools, fn {tool, _callback} -> tool.name end)
+
+        {shadowed, resource_tools} =
+          conn
+          |> resource_tools(opts)
+          |> Enum.split_with(fn {tool, _callback} -> tool.name in taken end)
+
+        for {tool, _callback} <- shadowed do
+          Logger.warning(
+            "The #{server_name(conn)} MCP server has its own #{tool.name} tool, " <>
+              "so that tool is kept and #{tool.name} won't read resources"
+          )
+        end
+
+        Enum.sort_by(tools ++ resource_tools, fn {tool, _callback} -> tool.name end)
+      end
+
+      defp resource_tools(conn, opts) do
+        read_name = tool_name(conn, "read_resource")
+        list_name = tool_name(conn, "list_resources")
+        format = Keyword.get(opts, :format_resource, &format_resource/1)
+
+        list = %{
+          "name" => "list_resources",
+          "description" =>
+            "Lists the resources the #{server_name(conn)} MCP server offers, such as files " <>
+              "or records, by URI, and on the first page the URI templates (RFC 6570) " <>
+              "it reads others by. Read one with #{read_name}. When the result has a " <>
+              "nextCursor, pass it as cursor for the next page.",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "cursor" => %{
+                "type" => "string",
+                "description" => "The nextCursor of the previous page"
+              }
+            }
+          }
+        }
+
+        read = %{
+          "name" => "read_resource",
+          "description" =>
+            "Reads a resource from the #{server_name(conn)} MCP server by its URI: one " <>
+              "listed by #{list_name}, one built from a URI template it lists, or one " <>
+              "linked from another of the server's tool results.",
+          "inputSchema" => %{
+            "type" => "object",
+            "properties" => %{
+              "uri" => %{"type" => "string", "description" => "The resource's URI"}
+            },
+            "required" => ["uri"]
+          }
+        }
+
+        [
+          req_llm_tool(conn, list, opts, fn arguments ->
+            run(
+              conn,
+              &resource_page(&1, argument(arguments, "cursor")),
+              &{:ok, Jason.encode!(&1)}
+            )
+          end),
+          req_llm_tool(conn, read, opts, fn arguments ->
+            case argument(arguments, "uri") do
+              uri when is_binary(uri) and uri != "" -> run(conn, &read_resource(&1, uri), format)
+              _uri -> {:error, Jason.encode!(%{error: "uri must be a non-empty string"})}
+            end
+          end)
+        ]
+      end
+
+      defp argument(%{} = arguments, key), do: arguments[key]
+      defp argument(_arguments, _key), do: nil
+
+      # One page per call, so a server with many resources can't flood the
+      # context. Templates are few, so the first page carries all of them.
+      defp resource_page(conn, cursor) do
+        params = if is_binary(cursor) and cursor != "", do: %{"cursor" => cursor}, else: %{}
+
+        with {:ok, result} <- request(conn, "resources/list", params),
+             {:ok, templates} <- page_templates(conn, params) do
+          page =
+            %{
+              "resources" =>
+                for(
+                  %{"uri" => uri} = entry when is_binary(uri) <- List.wrap(result["resources"]),
+                  do: listed_fields(entry)
+                )
+            }
+
+          page = if templates, do: Map.put(page, "resourceTemplates", templates), else: page
+
+          case result["nextCursor"] do
+            next when is_binary(next) and next != "" -> {:ok, Map.put(page, "nextCursor", next)}
+            _done -> {:ok, page}
+          end
+        end
+      end
+
+      defp page_templates(_conn, %{"cursor" => _}), do: {:ok, nil}
+
+      defp page_templates(conn, _params) do
+        case list_resource_templates(conn) do
+          {:ok, templates} -> {:ok, Enum.map(templates, &listed_fields/1)}
+          # Servers without templates may not implement the method
+          {:error, {:jsonrpc_error, -32_601, _message, _data}} -> {:ok, []}
+          error -> error
+        end
+      end
+
+      # Icons can be data URIs, and `_meta` is for the app, not the model
+      @listed_fields ~w(uri uriTemplate name title description mimeType size annotations)
+      defp listed_fields(entry), do: Map.take(entry, @listed_fields)
+
+      # Connects per call when given a `Server`
+      defp run(conn, request, format) do
+        case with_connection(conn, request) do
           {:ok, result} ->
             format.(result)
 
@@ -477,13 +742,12 @@ if Code.ensure_loaded?(Req) do
         end
       end
 
-      defp call_on(%Connection{} = conn, definition, arguments),
-        do: call_tool(conn, definition["name"], arguments, definition: definition)
+      defp with_connection(%Connection{} = conn, request), do: request.(conn)
 
-      defp call_on(%Server{} = server, definition, arguments) do
+      defp with_connection(%Server{} = server, request) do
         with {:ok, conn} <- connect(server) do
           try do
-            call_on(conn, definition, arguments)
+            request.(conn)
           after
             close(conn)
           end

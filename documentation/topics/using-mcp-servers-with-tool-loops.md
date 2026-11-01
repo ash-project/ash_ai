@@ -361,6 +361,48 @@ end,
 > `:approve` or `{:deny, reason}`. Calls that were approved and then paused come back in
 > `Result.approvals`. Store them and pass them back, so the user isn't asked twice.
 
+## Let the model read resources
+
+Besides tools, MCP servers can offer resources: files, records, or other content, each with a URI.
+Some tools also return links to resources instead of their contents. To let the model list and
+read a server's resources, pass `resources: true` when building its tools:
+
+```elixir
+AshAi.Mcp.Client.req_llm_tools(conn, definitions, resources: true)
+```
+
+That adds two tools, `mcp__linear__list_resources` and `mcp__linear__read_resource`. Text comes
+back as text, and images as images, for models that accept them in tool results. MCP leaves it to
+the app to decide which resources the model sees, so only turn this on for servers whose resources
+you're happy for it to read.
+
+The approval rule above asks about these too, since their names start with `mcp__`. They only
+read, so you may want to let them through:
+
+```elixir
+approve_tool_call: fn
+  %{name: "mcp__linear__" <> tool}, _context
+  when tool in ["list_resources", "read_resource", "list_issues", "get_issue"] ->
+    :ok
+
+  %{name: "mcp__" <> _}, _context ->
+    :ask
+
+  _call, _context ->
+    :ok
+end,
+```
+
+You can read resources yourself, too, for example to attach one a user picked to their message:
+
+```elixir
+{:ok, [resource | _]} = AshAi.Mcp.Client.list_resources(conn)
+{:ok, result} = AshAi.Mcp.Client.read_resource(conn, resource["uri"])
+
+# Text, or content parts when the resource includes images
+{:ok, content} = AshAi.Mcp.Client.format_resource(result)
+```
+
 ## Disconnecting
 
 Disconnecting from `/connections` revokes the user's tokens at the authorization server, if it
