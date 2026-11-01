@@ -2,9 +2,9 @@
 #
 # SPDX-License-Identifier: MIT
 
-defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
+defmodule AshAi.Verifiers.McpResourceActionsTest do
   @moduledoc """
-  Tests for the MCP resource verifier that ensures actions return strings.
+  Tests for the verifier that checks each mcp_resource can be read.
 
   Note: This verifier runs at compile-time, so we test it by capturing compile output
   rather than catching runtime exceptions.
@@ -13,7 +13,7 @@ defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
 
   import ExUnit.CaptureIO
 
-  describe "McpResourceActionsReturnString verifier" do
+  describe "McpResourceActions verifier" do
     test "produces error when mcp_resource action does not return a string" do
       output =
         capture_io(:stderr, fn ->
@@ -48,8 +48,9 @@ defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
         end)
 
       # Verify the error message appears in output
-      assert output =~ "All mcp resource actions must return strings"
+      assert output =~ "Invalid mcp_resources"
       assert output =~ ":invalid_resource"
+      assert output =~ "must return :string (sent as text) or :binary (sent as a blob)"
     end
 
     test "does not produce error when mcp_resource action returns a string" do
@@ -86,7 +87,7 @@ defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
         end)
 
       # Should not contain the error message
-      refute output =~ "All mcp resource actions must return strings"
+      refute output =~ "Invalid mcp_resources"
     end
 
     test "error message includes all invalid mcp_resource names" do
@@ -138,7 +139,7 @@ defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
       # Verify the error message includes both resource names
       assert output =~ ":first_invalid"
       assert output =~ ":second_invalid"
-      assert output =~ "All mcp resource actions must return strings"
+      assert output =~ "Invalid mcp_resources"
     end
 
     test "allows resource with mixed actions when only valid ones are exposed" do
@@ -183,7 +184,162 @@ defmodule AshAi.Verifiers.McpResourceActionsReturnStringTest do
         end)
 
       # Should not complain about the integer_action since it's not exposed
-      refute output =~ "All mcp resource actions must return strings"
+      refute output =~ "Invalid mcp_resources"
+    end
+
+    test "allows a binary action without `contents`" do
+      output =
+        capture_io(:stderr, fn ->
+          defmodule BinaryResource do
+            use Ash.Resource, domain: nil
+
+            actions do
+              action :bytes, :binary do
+                run fn _input, _context -> {:ok, <<0, 1, 2>>} end
+              end
+            end
+          end
+
+          defmodule BinaryMcpResourceDomain do
+            use Ash.Domain, extensions: [AshAi]
+
+            mcp_resources do
+              mcp_resource :bytes, "file://bytes", BinaryResource, :bytes, title: "Bytes"
+            end
+
+            resources do
+              resource BinaryResource
+            end
+          end
+        end)
+
+      refute output =~ "Invalid mcp_resources"
+    end
+
+    test "allows any return type with `contents`, but not an action that returns nothing" do
+      output =
+        capture_io(:stderr, fn ->
+          defmodule ContentsResource do
+            use Ash.Resource, domain: nil
+
+            actions do
+              action :count, :integer do
+                run fn _input, _context -> {:ok, 1} end
+              end
+
+              action :nothing do
+                run fn _input, _context -> :ok end
+              end
+            end
+          end
+
+          defmodule ContentsMcpResourceDomain do
+            use Ash.Domain, extensions: [AshAi]
+
+            mcp_resources do
+              mcp_resource :count, "file://count", ContentsResource, :count,
+                title: "Count",
+                contents: &__MODULE__.render/2
+
+              mcp_resource :nothing, "file://nothing", ContentsResource, :nothing,
+                title: "Nothing",
+                contents: &__MODULE__.render/2
+            end
+
+            resources do
+              resource ContentsResource
+            end
+
+            def render(result, _context), do: AshAi.McpResource.Contents.text(to_string(result))
+          end
+        end)
+
+      assert output =~ ":nothing - :nothing must return a value"
+      refute output =~ ":count -"
+    end
+
+    test "rejects a missing action and a non-generic action" do
+      output =
+        capture_io(:stderr, fn ->
+          defmodule ReadOnlyResource do
+            use Ash.Resource, domain: nil
+
+            attributes do
+              uuid_primary_key :id
+            end
+
+            actions do
+              defaults [:read]
+            end
+          end
+
+          defmodule WrongActionsMcpResourceDomain do
+            use Ash.Domain, extensions: [AshAi]
+
+            mcp_resources do
+              mcp_resource :missing, "file://missing", ReadOnlyResource, :nope, title: "Missing"
+              mcp_resource :read, "file://read", ReadOnlyResource, :read, title: "Read"
+            end
+
+            resources do
+              resource ReadOnlyResource
+            end
+          end
+        end)
+
+      assert output =~ ":missing - #{inspect(__MODULE__.ReadOnlyResource)} has no action :nope"
+      assert output =~ ":read - :read is a read action; resources must use a generic action"
+    end
+
+    test "rejects a URI template variable that isn't an action argument" do
+      output =
+        capture_io(:stderr, fn ->
+          defmodule TemplatedResource do
+            use Ash.Resource, domain: nil
+
+            actions do
+              action :photo, :string do
+                argument :id, :string, allow_nil?: false
+                run fn input, _context -> {:ok, input.arguments.id} end
+              end
+            end
+          end
+
+          defmodule TemplatedMcpResourceDomain do
+            use Ash.Domain, extensions: [AshAi]
+
+            mcp_resources do
+              mcp_resource :good, "photos://{id}", TemplatedResource, :photo, title: "Good"
+
+              mcp_resource :bad, "photos://{id}/{size}{?format}", TemplatedResource, :photo,
+                title: "Bad"
+            end
+
+            resources do
+              resource TemplatedResource
+            end
+          end
+        end)
+
+      assert output =~ ":bad - the URI template variable `size` isn't an argument of :photo"
+      assert output =~ ":bad - the URI template variable `format` isn't an argument of :photo"
+      refute output =~ ":good -"
+    end
+
+    test "rejects an unsupported URI template when the domain compiles" do
+      error =
+        assert_raise Spark.Error.DslError, fn ->
+          defmodule InvalidTemplateMcpResourceDomain do
+            use Ash.Domain, extensions: [AshAi], validate_config_inclusion?: false
+
+            mcp_resources do
+              mcp_resource :bad, "photos://{/id}", TemplatedResource, :photo, title: "Bad"
+            end
+          end
+        end
+
+      assert Exception.message(error) =~ ~s(Invalid URI template "photos://{/id}")
+      assert Exception.message(error) =~ "the `/` operator, which isn't supported"
     end
   end
 end

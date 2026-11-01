@@ -221,12 +221,20 @@ defmodule AshAi.Dsl do
     uri: [
       type: :string,
       required: true,
-      doc: "The URI where the resource can be accessed."
+      doc:
+        "The URI where the resource can be accessed, or an RFC 6570 URI template such as `\"photos://{id}\"` whose variables are passed to the action as arguments. Templates support `{var}`, `{+var}` and a trailing `{?var,...}`. See `AshAi.McpResource`."
     ],
     mime_type: [
       type: :string,
-      default: "text/plain",
-      doc: "The MIME type of the resource, e.g. 'application/json', 'image/png', etc."
+      doc:
+        "The MIME type of the resource, e.g. 'application/json', 'image/png', etc. Defaults to `text/plain` for an action returning `:string`, and `application/octet-stream` for one returning `:binary`. With `contents` there is no default, since each read's items can carry their own."
+    ],
+    contents: [
+      type:
+        {:spark_function_behaviour, AshAi.McpResource.Contents,
+         {AshAi.McpResource.Contents.Function, 2}},
+      doc:
+        "Builds the `resources/read` contents from the action's result, for binary data with a MIME type that differs per read, or several items. A module implementing `AshAi.McpResource.Contents`, or a function taking the action's result and an `AshAi.McpResource.Contents.Context` and returning items built with `AshAi.McpResource.Contents.text/2` or `blob/2`. With it, the action may return any type."
     ],
     resource: [type: {:spark, Ash.Resource}, required: true],
     action: [type: :atom, required: true]
@@ -435,9 +443,11 @@ defmodule AshAi.Dsl do
     examples: [
       ~s(mcp_resource :artist_card, "file://info/artist_info.txt", Artist, :artist_info),
       ~s(mcp_resource :artist_card, "file://ui/artist_card.html", Artist, :artist_card, mime_type: "text/html"),
-      ~s(mcp_resource :artist_data, "file://data/artist.json", Artist, :to_json, description: "Artist metadata as JSON", mime_type: "application/json")
+      ~s(mcp_resource :artist_data, "file://data/artist.json", Artist, :to_json, description: "Artist metadata as JSON", mime_type: "application/json"),
+      ~s(mcp_resource :artist_photo, "artists://{id}/photo", Artist, :photo, contents: &MyAppWeb.McpViews.artist_photo/2)
     ],
     target: AshAi.McpResource,
+    transform: {AshAi.McpResource, :transform, []},
     schema: @mcp_resource_schema,
     args: [:name, :uri, :resource, :action]
   }

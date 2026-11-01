@@ -254,6 +254,10 @@ mcp_resource :artist_card, "file://ui/artist_card.html", Artist, :artist_card, m
 mcp_resource :artist_data, "file://data/artist.json", Artist, :to_json, description: "Artist metadata as JSON", mime_type: "application/json"
 ```
 
+```
+mcp_resource :artist_photo, "artists://{id}/photo", Artist, :photo, contents: &MyAppWeb.McpViews.artist_photo/2
+```
+
 
 
 ### Arguments
@@ -261,7 +265,7 @@ mcp_resource :artist_data, "file://data/artist.json", Artist, :to_json, descript
 | Name | Type | Default | Docs |
 |------|------|---------|------|
 | [`name`](#mcp_resources-mcp_resource-name){: #mcp_resources-mcp_resource-name .spark-required} | `atom` |  |  |
-| [`uri`](#mcp_resources-mcp_resource-uri){: #mcp_resources-mcp_resource-uri .spark-required} | `String.t` |  | The URI where the resource can be accessed. |
+| [`uri`](#mcp_resources-mcp_resource-uri){: #mcp_resources-mcp_resource-uri .spark-required} | `String.t` |  | The URI where the resource can be accessed, or an RFC 6570 URI template such as `"photos://{id}"` whose variables are passed to the action as arguments. Templates support `{var}`, `{+var}` and a trailing `{?var,...}`. See `AshAi.McpResource`. |
 | [`resource`](#mcp_resources-mcp_resource-resource){: #mcp_resources-mcp_resource-resource .spark-required} | `module` |  |  |
 | [`action`](#mcp_resources-mcp_resource-action){: #mcp_resources-mcp_resource-action .spark-required} | `atom` |  |  |
 ### Options
@@ -270,7 +274,8 @@ mcp_resource :artist_data, "file://data/artist.json", Artist, :to_json, descript
 |------|------|---------|------|
 | [`title`](#mcp_resources-mcp_resource-title){: #mcp_resources-mcp_resource-title .spark-required} | `String.t` |  | A short, human-readable title for the resource. |
 | [`description`](#mcp_resources-mcp_resource-description){: #mcp_resources-mcp_resource-description } | `String.t` |  | A description of the resource. This is important for LLM to determine what the resource is and when to call it. Defaults to the Action's description if not provided. |
-| [`mime_type`](#mcp_resources-mcp_resource-mime_type){: #mcp_resources-mcp_resource-mime_type } | `String.t` | `"text/plain"` | The MIME type of the resource, e.g. 'application/json', 'image/png', etc. |
+| [`mime_type`](#mcp_resources-mcp_resource-mime_type){: #mcp_resources-mcp_resource-mime_type } | `String.t` |  | The MIME type of the resource, e.g. 'application/json', 'image/png', etc. Defaults to `text/plain` for an action returning `:string`, and `application/octet-stream` for one returning `:binary`. With `contents` there is no default, since each read's items can carry their own. |
+| [`contents`](#mcp_resources-mcp_resource-contents){: #mcp_resources-mcp_resource-contents } | `(any, any -> any) \| module` |  | Builds the `resources/read` contents from the action's result, for binary data with a MIME type that differs per read, or several items. A module implementing `AshAi.McpResource.Contents`, or a function taking the action's result and an `AshAi.McpResource.Contents.Context` and returning items built with `AshAi.McpResource.Contents.text/2` or `blob/2`. With it, the action may return any type. |
 
 
 

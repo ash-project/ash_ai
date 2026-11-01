@@ -459,9 +459,10 @@ defmodule AshAi.Mcp.Server do
     response_2026_07_28(conn, 200, id, result)
   end
 
-  defp dispatch_2026_07_28(conn, "resources/templates/list", id, _params, opts) do
+  defp dispatch_2026_07_28(conn, "resources/templates/list", id, params, opts) do
     result =
-      resource_templates_list_result()
+      params
+      |> resource_templates_list_result(opts)
       |> cacheable_result(opts, :list)
       |> result_2026_07_28(opts)
 
@@ -470,9 +471,9 @@ defmodule AshAi.Mcp.Server do
 
   defp dispatch_2026_07_28(conn, "resources/read", id, %{"uri" => uri} = params, opts) do
     case read_resource_content(uri, params, nil, opts) do
-      {:ok, content} ->
+      {:ok, contents} ->
         result =
-          %{"contents" => [content]}
+          %{"contents" => contents}
           |> cacheable_result(opts, :read)
           |> result_2026_07_28(opts)
 
@@ -981,19 +982,19 @@ defmodule AshAi.Mcp.Server do
         response = %{
           "jsonrpc" => "2.0",
           "id" => id,
-          "result" => resource_templates_list_result()
+          "result" => resource_templates_list_result(message["params"], opts)
         }
 
         {:json_response, Jason.encode!(response), session_id}
 
       %{"method" => "resources/read", "id" => id, "params" => %{"uri" => uri} = params} ->
         case read_resource_content(uri, params, session_id, opts) do
-          {:ok, content} ->
+          {:ok, contents} ->
             response = %{
               "jsonrpc" => "2.0",
               "id" => id,
               "result" => %{
-                "contents" => [content]
+                "contents" => contents
               }
             }
 
@@ -1195,9 +1196,17 @@ defmodule AshAi.Mcp.Server do
     maybe_put(%{"resources" => resources}, "nextCursor", next_cursor)
   end
 
-  # Resource templates aren't supported yet, but the `resources` capability
-  # implies this method, and some clients call it on connect
-  defp resource_templates_list_result, do: %{"resourceTemplates" => []}
+  defp resource_templates_list_result(params, opts) do
+    {templates, next_cursor} =
+      opts
+      |> mcp_action_resources()
+      |> Enum.filter(& &1.uri_template)
+      |> Enum.map(&resource_template_to_map/1)
+      |> Enum.sort_by(& &1["uriTemplate"])
+      |> page(& &1["uriTemplate"], params, opts)
+
+    maybe_put(%{"resourceTemplates" => templates}, "nextCursor", next_cursor)
+  end
 
   # Keyset pagination over the deterministic list order: a cursor carries the
   # key of the last entry served, so entries that appear or disappear between
@@ -1305,6 +1314,7 @@ defmodule AshAi.Mcp.Server do
     action_resources =
       opts
       |> mcp_action_resources()
+      |> Enum.reject(& &1.uri_template)
       |> Enum.map(&action_resource_to_map/1)
 
     ui_resources =
@@ -1454,65 +1464,58 @@ defmodule AshAi.Mcp.Server do
         &Map.put(&1, :mcp_session_id, session_id)
       )
 
-    with {:ok, resource} <- find_mcp_resource_by_uri(uri, opts),
-         {:ok, text} <- read_mcp_resource(resource, params, opts) do
-      mime_type =
-        case resource do
-          %AshAi.McpUiResource{} -> AshAi.McpUiResource.mime_type()
-          %AshAi.McpResource{mime_type: mt} -> mt
-        end
+    with {:ok, resource, variables} <- find_mcp_resource_by_uri(uri, opts) do
+      read_mcp_resource(resource, uri, variables, params, opts)
+    end
+  end
 
-      content =
-        %{"uri" => uri, "mimeType" => mime_type, "text" => text}
-        |> then(fn content ->
-          case resource do
-            %AshAi.McpUiResource{} = mcp_ui_resource ->
-              ui_meta = build_ui_meta(mcp_ui_resource, opts)
-              put_if(content, "_meta", if(ui_meta != %{}, do: %{"ui" => ui_meta}))
+  # A resource whose URI is exactly `uri` wins over a template matching it.
+  # Templates are tried in declaration order.
+  defp find_mcp_resource_by_uri(uri, opts) do
+    resources = mcp_resources(opts)
 
-            _ ->
-              content
-          end
+    case Enum.find(resources, &(not templated?(&1) and &1.uri == uri)) do
+      nil ->
+        Enum.find_value(resources, {:error, :not_found}, fn
+          %AshAi.McpResource{uri_template: %AshAi.Mcp.UriTemplate{} = template} = resource ->
+            case AshAi.Mcp.UriTemplate.match(template, uri) do
+              {:ok, variables} -> {:ok, resource, variables}
+              :error -> nil
+            end
+
+          _resource ->
+            nil
         end)
 
-      {:ok, content}
+      resource ->
+        {:ok, resource, %{}}
     end
   end
 
-  defp find_mcp_resource_by_uri(uri, opts) do
-    case Enum.find(mcp_resources(opts), &(&1.uri == uri)) do
-      nil -> {:error, :not_found}
-      resource -> {:ok, resource}
-    end
-  end
+  defp templated?(%AshAi.McpResource{uri_template: %AshAi.Mcp.UriTemplate{}}), do: true
+  defp templated?(_resource), do: false
 
-  defp read_mcp_resource(%AshAi.McpUiResource{html: {module, function, args}}, _params, _opts) do
-    case apply(module, function, args) do
-      html when is_binary(html) -> {:ok, html}
-      {:error, message} when is_binary(message) -> {:error, message}
-      _ -> {:error, "MCP UI HTML renderer must return a string or {:error, message}."}
-    end
-  end
+  defp read_mcp_resource(%AshAi.McpUiResource{} = resource, uri, _variables, _params, opts) do
+    with {:ok, html} <- read_mcp_ui_html(resource) do
+      ui_meta = build_ui_meta(resource, opts)
 
-  # sobelow_skip ["Traversal.FileModule"]
-  # `html_path` is a developer-configured DSL value, not user-supplied input.
-  defp read_mcp_resource(%AshAi.McpUiResource{html_path: path}, _params, _opts) do
-    case File.read(path) do
-      {:ok, _contents} = ok -> ok
-      {:error, reason} -> {:error, "Failed to read file: #{inspect(reason)}"}
+      content =
+        %{"uri" => uri, "mimeType" => AshAi.McpUiResource.mime_type(), "text" => html}
+        |> put_if("_meta", if(ui_meta != %{}, do: %{"ui" => ui_meta}))
+
+      {:ok, [content]}
     end
   end
 
   defp read_mcp_resource(
-         %AshAi.McpResource{
-           domain: _domain,
-           resource: resource,
-           action: action
-         },
+         %AshAi.McpResource{resource: resource, action: action} = mcp_resource,
+         uri,
+         variables,
          params,
          opts
        ) do
-    params = take_valid_params(params, action)
+    # Template variables win over request params of the same name
+    arguments = params |> take_valid_params(action) |> Map.merge(variables)
 
     ash_opts =
       Keyword.take(opts, [
@@ -1528,14 +1531,50 @@ defmodule AshAi.Mcp.Server do
       ])
 
     resource
-    |> Ash.ActionInput.for_action(action.name, params, ash_opts)
+    |> Ash.ActionInput.for_action(action.name, arguments, ash_opts)
     |> Ash.run_action()
     |> case do
-      {:error, error} ->
-        {:error, AshAi.Tool.Errors.format(error)}
+      {:ok, nil} ->
+        {:error, :not_found}
 
-      result ->
-        result
+      {:ok, result} ->
+        AshAi.McpResource.Contents.run(mcp_resource, result, %AshAi.McpResource.Contents.Context{
+          mcp_resource: mcp_resource,
+          uri: uri,
+          arguments: arguments,
+          actor: opts[:actor],
+          tenant: opts[:tenant],
+          context: opts[:context]
+        })
+
+      {:error, error} ->
+        if not_found_error?(error),
+          do: {:error, :not_found},
+          else: {:error, AshAi.Tool.Errors.format(error)}
+    end
+  end
+
+  defp read_mcp_ui_html(%AshAi.McpUiResource{html: {module, function, args}}) do
+    case apply(module, function, args) do
+      html when is_binary(html) -> {:ok, html}
+      {:error, message} when is_binary(message) -> {:error, message}
+      _ -> {:error, "MCP UI HTML renderer must return a string or {:error, message}."}
+    end
+  end
+
+  # sobelow_skip ["Traversal.FileModule"]
+  # `html_path` is a developer-configured DSL value, not user-supplied input.
+  defp read_mcp_ui_html(%AshAi.McpUiResource{html_path: path}) do
+    case File.read(path) do
+      {:ok, _contents} = ok -> ok
+      {:error, reason} -> {:error, "Failed to read file: #{inspect(reason)}"}
+    end
+  end
+
+  defp not_found_error?(error) do
+    case Ash.Error.to_error_class(error) do
+      %{errors: errors} -> Enum.any?(errors, &match?(%Ash.Error.Query.NotFound{}, &1))
+      _error -> false
     end
   end
 
@@ -1543,9 +1582,19 @@ defmodule AshAi.Mcp.Server do
     %{
       "name" => Atom.to_string(resource.name),
       "uri" => resource.uri,
-      "title" => resource.title,
-      "mimeType" => resource.mime_type
+      "title" => resource.title
     }
+    |> put_if("mimeType", resource.mime_type)
+    |> put_if("description", resource.description)
+  end
+
+  defp resource_template_to_map(%AshAi.McpResource{} = resource) do
+    %{
+      "name" => Atom.to_string(resource.name),
+      "uriTemplate" => resource.uri,
+      "title" => resource.title
+    }
+    |> put_if("mimeType", resource.mime_type)
     |> put_if("description", resource.description)
   end
 

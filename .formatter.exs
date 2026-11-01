@@ -15,6 +15,7 @@ spark_locals_without_parens = [
   attributes: 1,
   compact_field_list?: 1,
   constraints: 1,
+  contents: 1,
   csp: 1,
   default: 1,
   define_update_action_for_manual_strategy?: 1,

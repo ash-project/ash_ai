@@ -19,7 +19,7 @@ defmodule AshAi do
       AshAi.Transformers.ResourceTools,
       AshAi.Transformers.McpApps
     ],
-    verifiers: [AshAi.Verifiers.McpResourceActionsReturnString]
+    verifiers: [AshAi.Verifiers.McpResourceActions]
 
   defmodule Tool do
     @moduledoc "An action exposed to LLM agents"
@@ -238,8 +238,30 @@ defmodule AshAi do
     end
     ```
 
-    The action is called when an MCP client requests the resource, and its return value
-    (which must be a string) is sent to the client with the specified MIME type.
+    The action is called when an MCP client reads the resource. An action that
+    returns `:string` is sent as text and one that returns `:binary` as a base64
+    blob, with the resource's MIME type. To choose per read, such as a photo's MIME
+    type, set `contents` (see `AshAi.McpResource.Contents`). An action that returns
+    `nil` or fails with `Ash.Error.Query.NotFound` is sent as resource not found.
+
+    ## URI templates
+
+    A URI containing `{...}` is an RFC 6570 URI template. It is listed by
+    `resources/templates/list` instead of `resources/list`, and each variable is
+    passed to the action as the argument of the same name, percent-decoded:
+
+    ```elixir
+    mcp_resource :photo, "photos://{id}{?size}", Photo, :get do
+      title "Photo"
+      contents &MyAppWeb.McpViews.photo/2
+    end
+    ```
+
+    Supported are `{var}` (one path segment), `{+var}` (may span segments) and a
+    trailing `{?var,...}` (optional query variables; a query naming any other key
+    doesn't match). A URI matching a resource exactly is read from that resource;
+    otherwise templates are tried in the order they're declared. Validate template
+    variables like any other input: a client can put anything in them.
 
     ## Description Behavior
 
@@ -255,7 +277,9 @@ defmodule AshAi do
             title: String.t(),
             description: String.t(),
             uri: String.t(),
-            mime_type: String.t()
+            uri_template: AshAi.Mcp.UriTemplate.t() | nil,
+            mime_type: String.t() | nil,
+            contents: {module(), Keyword.t()} | nil
           }
 
     defstruct [
@@ -266,9 +290,23 @@ defmodule AshAi do
       :title,
       :description,
       :uri,
+      :uri_template,
       :mime_type,
+      :contents,
       __spark_metadata__: nil
     ]
+
+    @doc false
+    def transform(%__MODULE__{uri: uri} = mcp_resource) do
+      if AshAi.Mcp.UriTemplate.template?(uri) do
+        case AshAi.Mcp.UriTemplate.parse(uri) do
+          {:ok, template} -> {:ok, %{mcp_resource | uri_template: template}}
+          {:error, message} -> {:error, "Invalid URI template #{inspect(uri)}: #{message}"}
+        end
+      else
+        {:ok, mcp_resource}
+      end
+    end
   end
 
   defmodule McpUiResource do
@@ -660,11 +698,19 @@ defmodule AshAi do
           mcp_resource
           | domain: domain,
             action: action,
-            description: mcp_resource.description || action.description
+            description: mcp_resource.description || action.description,
+            mime_type: mcp_resource.mime_type || default_mime_type(mcp_resource, action)
         }
       end)
     end)
   end
+
+  # With `contents`, each read's items carry their own MIME type
+  defp default_mime_type(%McpResource{contents: nil}, %{returns: Ash.Type.Binary}),
+    do: "application/octet-stream"
+
+  defp default_mime_type(%McpResource{contents: nil}, _action), do: "text/plain"
+  defp default_mime_type(%McpResource{}, _action), do: nil
 
   @doc false
   def exposed_mcp_ui_resources(opts) when is_list(opts) do

@@ -303,7 +303,7 @@ defmodule MyApp.Blog do
 
     # Return JSON data with custom description
     mcp_resource :post_metadata, "file://data/post.json", Post, :metadata do
-      description "Metadata about the post including author and tags",
+      description "Metadata about the post including author and tags"
       mime_type "application/json"
     end
   end
@@ -313,6 +313,29 @@ end
 Resources are exposed via the MCP server at `/mcp` and can be accessed by MCP-compatible clients. The action is called when the resource is read, and its return value is sent to the LLM.
 
 **Description Behavior**: Resource descriptions default to the action's description. You can override this by providing a `description` option in the DSL, which takes precedence.
+
+### Resource templates and binary contents
+
+A URI containing `{...}` is an [RFC 6570](https://datatracker.ietf.org/doc/html/rfc6570) URI template. Templated resources are listed by `resources/templates/list`, and each template variable is passed to the action as the argument with the same name. Templates support `{var}` (one path segment), `{+var}` (which can span segments), and a trailing `{?var,...}` (optional query parameters). Variables are client input, so validate them like any other argument.
+
+An action that returns `:binary` is sent as a base64 blob. When the MIME type varies per read, as it does for photos, set `contents` to build the result yourself:
+
+```elixir
+mcp_resources do
+  # photos://42?size=thumb reads the :get action with id: "42", size: "thumb"
+  mcp_resource :photo, "photos://{id}{?size}", Photo, :get do
+    title "Photo"
+    contents &MyAppWeb.McpViews.photo/2
+  end
+end
+
+# in MyAppWeb.McpViews
+def photo(%Photo{} = photo, _context) do
+  AshAi.McpResource.Contents.blob(MyApp.Storage.read!(photo.key), mime_type: photo.mime_type)
+end
+```
+
+A resource whose action returns `nil` or fails with `Ash.Error.Query.NotFound` is reported as not found. See `AshAi.McpResource` and `AshAi.McpResource.Contents` for the details.
 
 ### Tool titles and annotations
 
