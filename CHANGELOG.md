@@ -11,6 +11,41 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.0](https://github.com/ash-project/ash_ai/compare/v1.4.1...v1.5.0) (2026-11-02)
+
+
+
+
+### Features:
+
+* opt-in outputSchema for tools with typed results by [@zachdaniel](https://github.com/zachdaniel)
+
+* cursor pagination for tools/list and resources/list by [@zachdaniel](https://github.com/zachdaniel)
+
+* support string length constraints in OpenAPI schema (#261) by Kyushu21 [(#261)](https://github.com/ash-project/ash_ai/pull/261)
+
+### Improvements:
+
+* support MCP resources in the tool loop by [@zachdaniel](https://github.com/zachdaniel)
+
+* URI templates, blobs, and content types on tools by [@zachdaniel](https://github.com/zachdaniel)
+
+* add `result_meta` by [@zachdaniel](https://github.com/zachdaniel)
+
+* support filter/sort/aggregate allowlists by [@zachdaniel](https://github.com/zachdaniel)
+
+* add `compact_field_list?` by [@zachdaniel](https://github.com/zachdaniel)
+
+### Bug Fixes:
+
+* tools: name the path of an error inside an embedded argument by [@Munksgaard](https://github.com/Munksgaard) [(#241)](https://github.com/ash-project/ash_ai/pull/241)
+
+* drop empty enum union members from tool schemas by [@zachdaniel](https://github.com/zachdaniel)
+
+* ensure unique tool names by [@zachdaniel](https://github.com/zachdaniel)
+
+* fill in error vars when building tool error messages by MuhammedEl-Sayed [(#257)](https://github.com/ash-project/ash_ai/pull/257)
+
 ## [v1.4.1](https://github.com/ash-project/ash_ai/compare/v1.4.0...v1.4.1) (2026-10-25)
 
 
