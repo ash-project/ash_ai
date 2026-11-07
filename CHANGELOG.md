@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.1](https://github.com/ash-project/ash_ai/compare/v1.5.0...v1.5.1) (2026-11-07)
+
+
+
+
+### Bug Fixes:
+
+* send an error id, not the error's text, for tool errors ToToolError doesn't describe (CVE-2026-119613) by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.5.0](https://github.com/ash-project/ash_ai/compare/v1.4.1...v1.5.0) (2026-11-02)
 
 
