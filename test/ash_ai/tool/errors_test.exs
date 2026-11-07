@@ -45,6 +45,7 @@ defmodule AshAi.Tool.ErrorsTest do
       assert result =~ "\n"
     end
 
+    @tag :capture_log
     test "returns a string for any error input" do
       result = Errors.format("something went wrong")
       assert is_binary(result)
@@ -111,18 +112,47 @@ defmodule AshAi.Tool.ErrorsTest do
 
     test "names the path of an error that has a path but no field" do
       error =
-        Ash.Error.Unknown.UnknownError.exception(
-          error: "is invalid",
-          path: [:recommendations, 0, :severity]
-        )
+        Ash.Error.Query.NotFound.exception(resource: SomeResource)
+        |> Ash.Error.set_path([:recommendations, 0, :severity])
 
-      assert Errors.format(error) == "recommendations.0.severity: is invalid"
+      assert Errors.format(error) == "recommendations.0.severity: could not be found"
     end
 
     test "returns just the message of an error with neither path nor field" do
-      error = Ash.Error.Unknown.UnknownError.exception(error: "is invalid")
+      error = Ash.Error.Query.NotFound.exception(resource: SomeResource)
 
-      assert Errors.format(error) == "is invalid"
+      assert Errors.format(error) == "could not be found"
+    end
+
+    test "keeps the path but not the text of an unknown error" do
+      error =
+        Ash.Error.Unknown.UnknownError.exception(
+          error: "internal detail",
+          path: [:recommendations, 0, :severity]
+        )
+
+      {result, log} = ExUnit.CaptureLog.with_log(fn -> Errors.format(error) end)
+
+      assert result =~
+               ~r/^recommendations\.0\.severity: unexpected error occurred \(error id: [^)]+\)$/
+
+      refute result =~ "internal detail"
+      assert log =~ "internal detail"
+    end
+
+    test "never returns the text of a raised exception" do
+      error =
+        try do
+          raise ArgumentError, "secret value 1234"
+        rescue
+          e -> Ash.Error.to_error_class(e, stacktrace: __STACKTRACE__)
+        end
+
+      {result, log} = ExUnit.CaptureLog.with_log(fn -> Errors.format(error) end)
+      [_, error_id] = Regex.run(~r/^unexpected error occurred \(error id: ([^)]+)\)$/, result)
+
+      assert log =~ error_id
+      assert log =~ "secret value 1234"
     end
 
     test "still prefixes path and field when both are present" do

@@ -251,11 +251,17 @@ defmodule AshAi.Mcp.ResourceTemplatesTest do
       end
     end
 
-    test "other action errors are read errors", %{opts: opts} do
-      assert {200, %{"error" => %{"code" => -32_603, "data" => %{"error" => error}}}} =
-               request(:initialize_based, "resources/read", %{"uri" => "photos://broken"}, opts)
+    test "other action errors are read errors, without their text", %{opts: opts} do
+      {response, log} =
+        with_log(fn ->
+          request(:initialize_based, "resources/read", %{"uri" => "photos://broken"}, opts)
+        end)
 
-      assert error =~ "storage unavailable"
+      assert {200, %{"error" => %{"code" => -32_603, "data" => %{"error" => error}}}} = response
+      assert [_, error_id] = Regex.run(~r/unexpected error occurred \(error id: ([^)]+)\)/, error)
+      refute error =~ "storage unavailable"
+      assert log =~ error_id
+      assert log =~ "storage unavailable"
     end
   end
 

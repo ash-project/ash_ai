@@ -38,13 +38,7 @@ defmodule AshAi.Tool.Errors do
       if AshAi.ToToolError.impl_for(error) do
         AshAi.ToToolError.to_tool_error(error)
       else
-        Logger.warning("""
-        AshAi.ToToolError not implemented for #{inspect(error.__struct__)}, returning a generic error message.
-
-        #{Exception.format(:error, error)}\
-        """)
-
-        "unexpected error occurred"
+        unexpected_error(error)
       end
 
     case {Map.get(error, :path, []), Map.get(error, :field)} do
@@ -54,5 +48,26 @@ defmodule AshAi.Tool.Errors do
       {[], field} -> "#{field}: #{msg}"
       {path, field} -> "#{Enum.join(path ++ [field], ".")}: #{msg}"
     end
+  end
+
+  # The error's text can name internal modules and carry values the caller
+  # could never read (raised exceptions, `{:error, term}` returns, results that
+  # failed to encode), so the caller only gets an id to match against the log.
+  defp unexpected_error(error) do
+    error_id = Ash.UUID.generate()
+
+    stacktrace =
+      case error do
+        %{stacktrace: %{stacktrace: stacktrace}} when is_list(stacktrace) -> stacktrace
+        _ -> []
+      end
+
+    Logger.warning("""
+    `#{error_id}`: AshAi.ToToolError not implemented for #{inspect(error.__struct__)}, returning a generic error message.
+
+    #{Exception.format(:error, error, stacktrace)}\
+    """)
+
+    "unexpected error occurred (error id: #{error_id})"
   end
 end

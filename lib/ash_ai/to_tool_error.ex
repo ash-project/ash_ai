@@ -6,7 +6,14 @@ defprotocol AshAi.ToToolError do
   @moduledoc """
   Converts Ash errors into concise readable tool error messages.
 
-  Implementations should return a concise error description.
+  Implementations should return a concise error description. The text is sent
+  to the tool's caller, so it must not include internal details such as module
+  names, stacktraces or values the caller could not otherwise read.
+
+  Errors without an implementation, including `Ash.Error.Unknown.UnknownError`
+  (raised exceptions and bare `{:error, term}` returns), are logged with an
+  error id and sent to the caller as "unexpected error occurred (error id: ...)".
+  Implement this protocol for your own exceptions to send their text instead.
 
   ## Example
 
@@ -115,20 +122,6 @@ defimpl AshAi.ToToolError, for: Ash.Error.Query.InvalidFilterReference do
 
   def to_tool_error(%{field: field}) do
     "#{field} cannot be referenced in filters"
-  end
-end
-
-defimpl AshAi.ToToolError, for: Ash.Error.Unknown.UnknownError do
-  def to_tool_error(%{error: error}) when is_binary(error) and error != "" do
-    error
-  end
-
-  def to_tool_error(%{error: nil}) do
-    "is invalid"
-  end
-
-  def to_tool_error(error) do
-    Exception.message(error)
   end
 end
 

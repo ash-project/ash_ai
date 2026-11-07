@@ -4,6 +4,7 @@
 
 defmodule AshAi.Mcp.StructuredOutputsTest do
   use ExUnit.Case, async: true
+  import ExUnit.CaptureLog
   import Plug.{Conn, Test}
 
   alias AshAi.Mcp.Router
@@ -81,6 +82,12 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
         run fn _input, _context -> {:error, "failed intentionally"} end
       end
 
+      action :raising_result, :map do
+        run fn _input, _context ->
+          raise FunctionClauseError, module: InternalSecret, function: :check, arity: 2
+        end
+      end
+
       action :cast_failure, :map do
         argument :count, :integer, allow_nil?: false
         run fn _input, _context -> {:error, "should not execute"} end
@@ -121,6 +128,7 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
       tool :nil_result, Resource, :nil_result
       tool :unencodable_result, Resource, :unencodable_result
       tool :failing_result, Resource, :failing_result
+      tool :raising_result, Resource, :raising_result
       tool :cast_failure, Resource, :cast_failure
       tool :protected_result, Resource, :protected_result
     end
@@ -171,6 +179,7 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
       end
     end
 
+    @tag :capture_log
     test "casting, authorization, and execution errors never contain structured content" do
       session_id = initialize()
 
@@ -189,6 +198,32 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
 
         refute Map.has_key?(call_result, "structuredContent")
       end
+    end
+
+    test "unexpected errors reach the caller as an error id, and the log in full" do
+      session_id = initialize()
+
+      for {name, detail} <- [
+            {"raising_result", "InternalSecret.check/2"},
+            {"failing_result", "failed intentionally"},
+            {"unencodable_result", "#PID<"}
+          ] do
+        {call_result, log} = with_log(fn -> call_tool(session_id, name) end)
+        [%{"type" => "text", "text" => text}] = call_result["content"]
+
+        assert call_result["isError"] == true
+        refute text =~ detail, "#{name} leaked #{inspect(detail)}: #{text}"
+        assert [_, error_id] = Regex.run(~r/unexpected error occurred \(error id: (.+)\)/, text)
+        assert log =~ error_id
+        assert log =~ detail
+      end
+
+      call_result =
+        call_tool(session_id, "cast_failure", %{"input" => %{"count" => "not-an-integer"}})
+
+      [%{"type" => "text", "text" => text}] = call_result["content"]
+      assert text =~ "count"
+      refute text =~ "unexpected error occurred"
     end
   end
 
