@@ -72,6 +72,39 @@ if Code.ensure_loaded?(ReqLLM) do
     - `:extra_tools` - Additional arbitrary `ReqLLM.Tool`s to expose during tool-calling.
     - `:max_iterations` - Maximum tool-loop iterations. Defaults to `:infinity` for prompt actions.
     - `:verbose?` - When true, logs tool-loop lifecycle events with `Logger.debug/1`.
+    - `:response_schema` - A JSON Schema for the result, or a function returning one. See below.
+
+    ## Dynamic response schemas
+
+    By default the structured output schema is derived from the action's return type.
+    When the shape of the result depends on the input, return `:term` (or a `:map`
+    without `fields` constraints) and provide `:response_schema`. It is either a JSON
+    Schema map or a function (`fn input, context -> schema end`, also arity 1 or 0)
+    returning a schema, `{:ok, schema}`, or `{:error, error}`.
+
+    The schema describes the result value itself; it is wrapped in the same
+    `{"result": ...}` envelope used for derived schemas, including `null` when the
+    action has `allow_nil? true`. The model's output is returned as decoded JSON,
+    with string keys.
+
+    ```elixir
+    action :extract, :map do
+      argument :text, :string, allow_nil?: false
+      argument :fields, {:array, :string}, allow_nil?: false
+
+      run prompt("openai:gpt-4o",
+        prompt: {"Extract the requested fields.", "<%= @input.arguments.text %>"},
+        response_schema: fn input, _context ->
+          %{
+            "type" => "object",
+            "properties" => Map.new(input.arguments.fields, &{&1, %{"type" => "string"}}),
+            "required" => input.arguments.fields,
+            "additionalProperties" => false
+          }
+        end
+      )
+    end
+    ```
 
     ## Model metadata
 
@@ -140,12 +173,13 @@ if Code.ensure_loaded?(ReqLLM) do
       model = resolve_model_spec(opts[:model], input, context)
       action = input.action
       {returns, constraints} = AshAi.Actions.Result.unwrap(action.returns, action.constraints)
-      schema = build_json_schema(action.allow_nil?, returns, constraints)
 
       req_llm_module = Keyword.get(opts, :req_llm, ReqLLM)
       req_llm_opts = Keyword.get(opts, :req_llm_opts, [])
 
-      with {:ok, initial_context} <- build_context(input, opts, context),
+      with {:ok, schema} <-
+             build_json_schema(action.allow_nil?, returns, constraints, input, opts, context),
+           {:ok, initial_context} <- build_context(input, opts, context),
            flow_state =
              build_flow_state(initial_context, model, req_llm_module, req_llm_opts, context, opts),
            {:ok, flow_state} <- apply_flow_customizations(flow_state, context, opts),
@@ -441,39 +475,106 @@ if Code.ensure_loaded?(ReqLLM) do
       tool_selection == true or (is_list(tool_selection) and tool_selection != [])
     end
 
-    defp build_json_schema(allow_nil?, returns, constraints) do
-      if returns do
-        inner_schema = return_inner_schema(%{returns: returns, constraints: constraints})
-
-        result_schema =
-          if allow_nil? do
-            %{"anyOf" => [%{"type" => "null"}, inner_schema]}
-          else
-            inner_schema
-          end
-
-        %{
-          "type" => "object",
-          "properties" => %{
-            "result" => result_schema
-          },
-          "required" => ["result"],
-          "additionalProperties" => false
-        }
-        # The return type's schema has atom keys, but providers post-process the
-        # schema by string key (e.g. stripping unsupported `minimum`/`maximum`).
-        |> Jason.encode!()
-        |> Jason.decode!()
-      else
-        %{
-          "type" => "object",
-          "properties" => %{
-            "result" => %{"type" => "null"}
-          },
-          "required" => ["result"],
-          "additionalProperties" => false
-        }
+    defp build_json_schema(allow_nil?, returns, constraints, input, opts, context) do
+      with {:ok, inner_schema} <-
+             result_inner_schema(returns, constraints, opts[:response_schema], input, context) do
+        {:ok, wrap_result_schema(allow_nil?, inner_schema)}
       end
+    end
+
+    defp wrap_result_schema(_allow_nil?, nil) do
+      %{
+        "type" => "object",
+        "properties" => %{
+          "result" => %{"type" => "null"}
+        },
+        "required" => ["result"],
+        "additionalProperties" => false
+      }
+    end
+
+    defp wrap_result_schema(allow_nil?, inner_schema) do
+      result_schema =
+        if allow_nil? do
+          %{"anyOf" => [%{"type" => "null"}, inner_schema]}
+        else
+          inner_schema
+        end
+
+      %{
+        "type" => "object",
+        "properties" => %{
+          "result" => result_schema
+        },
+        "required" => ["result"],
+        "additionalProperties" => false
+      }
+      # The return type's schema has atom keys, but providers post-process the
+      # schema by string key (e.g. stripping unsupported `minimum`/`maximum`).
+      |> Jason.encode!()
+      |> Jason.decode!()
+    end
+
+    defp result_inner_schema(nil, _constraints, nil, _input, _context), do: {:ok, nil}
+
+    defp result_inner_schema(returns, constraints, nil, _input, _context) do
+      {:ok, return_inner_schema(%{returns: returns, constraints: constraints})}
+    end
+
+    defp result_inner_schema(returns, constraints, response_schema, input, context) do
+      if dynamic_schema_return?(returns, constraints) do
+        resolve_response_schema(response_schema, input, context)
+      else
+        {:error,
+         Ash.Error.Unknown.UnknownError.exception(
+           error: """
+           `response_schema` requires the action to return `:term` or a `:map` without `fields` constraints.
+           Got: #{inspect(returns)} with constraints #{inspect(constraints)}
+           """
+         )}
+      end
+    end
+
+    # A custom schema can only be honored when casting the model's output won't
+    # contradict it, so it is limited to return types that accept any shape.
+    defp dynamic_schema_return?(nil, _constraints), do: false
+
+    defp dynamic_schema_return?(returns, constraints) do
+      case Ash.Type.get_type(returns) do
+        Ash.Type.Term -> true
+        Ash.Type.Map -> unconstrained_map_return?(constraints)
+        _ -> false
+      end
+    end
+
+    defp resolve_response_schema(response_schema, input, context)
+         when is_function(response_schema, 2) do
+      normalize_response_schema(response_schema.(input, context))
+    end
+
+    defp resolve_response_schema(response_schema, input, _context)
+         when is_function(response_schema, 1) do
+      normalize_response_schema(response_schema.(input))
+    end
+
+    defp resolve_response_schema(response_schema, _input, _context)
+         when is_function(response_schema, 0) do
+      normalize_response_schema(response_schema.())
+    end
+
+    defp resolve_response_schema(response_schema, _input, _context) do
+      normalize_response_schema(response_schema)
+    end
+
+    defp normalize_response_schema({:ok, schema}), do: normalize_response_schema(schema)
+    defp normalize_response_schema({:error, error}), do: {:error, error}
+    defp normalize_response_schema(schema) when is_map(schema), do: {:ok, schema}
+
+    defp normalize_response_schema(other) do
+      {:error,
+       Ash.Error.Unknown.UnknownError.exception(
+         error: "`response_schema` must be a JSON Schema map, got: #{inspect(other)}"
+       )}
     end
 
     defp return_inner_schema(%{returns: :map} = action) do

@@ -107,6 +107,15 @@ defmodule AshAi.Actions.PromptTest do
     end
   end
 
+  defmodule FakeReqLLMWithDynamicSchema do
+    @moduledoc "Fake ReqLLM that captures the schema and answers with a fixed object"
+
+    def generate_object(_model, _context, schema, _opts \\ []) do
+      send(self(), {:dynamic_schema, schema})
+      {:ok, %{object: %{"result" => %{"title" => "Hello", "tags" => ["a"]}}}}
+    end
+  end
+
   defmodule FakeReqLLMWithoutObject do
     @moduledoc "Fake ReqLLM that returns no structured output, as on a refusal"
 
@@ -452,6 +461,79 @@ defmodule AshAi.Actions.PromptTest do
         run prompt("openai:gpt-4o",
               prompt: "Return a map for: <%= @input.arguments.text %>",
               req_llm: FakeReqLLMWithMapSchema
+            )
+      end
+
+      action :extract_term, :term do
+        argument(:fields, {:array, :string}, allow_nil?: false)
+
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: fn input, _context ->
+                %{
+                  type: :object,
+                  properties: Map.new(input.arguments.fields, &{&1, %{type: :string}}),
+                  required: input.arguments.fields
+                }
+              end
+            )
+      end
+
+      action :extract_map_static, :map do
+        allow_nil? true
+
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{
+                "type" => "object",
+                "properties" => %{"title" => %{"type" => "string"}}
+              }
+            )
+      end
+
+      action :extract_wrapped_term, AshAi.Actions.Result do
+        constraints of: :term
+
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: fn _input -> {:ok, %{"type" => "object"}} end
+            )
+      end
+
+      action :extract_schema_error, :term do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: fn _input, _context -> {:error, "no schema for you"} end
+            )
+      end
+
+      action :extract_invalid_schema, :term do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: fn _input, _context -> "not a schema" end
+            )
+      end
+
+      action :extract_string_with_schema, :string do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "string"}
+            )
+      end
+
+      action :extract_constrained_map_with_schema, :map do
+        constraints fields: [title: [type: :string]]
+
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "object"}
             )
       end
 
@@ -834,6 +916,94 @@ defmodule AshAi.Actions.PromptTest do
 
       assert_receive {:map_schema, schema}
       assert schema["properties"]["result"] in [%{"type" => "object"}, %{type: :object}]
+    end
+  end
+
+  describe "response_schema" do
+    test "a function builds the schema from the input for :term returns" do
+      result =
+        TestResource
+        |> Ash.ActionInput.for_action(:extract_term, %{fields: ["title", "tags"]})
+        |> Ash.run_action!()
+
+      assert result == %{"title" => "Hello", "tags" => ["a"]}
+
+      assert_receive {:dynamic_schema, schema}
+
+      assert schema == %{
+               "type" => "object",
+               "properties" => %{
+                 "result" => %{
+                   "type" => "object",
+                   "properties" => %{
+                     "title" => %{"type" => "string"},
+                     "tags" => %{"type" => "string"}
+                   },
+                   "required" => ["title", "tags"]
+                 }
+               },
+               "required" => ["result"],
+               "additionalProperties" => false
+             }
+    end
+
+    test "a static schema is allowed for unconstrained :map returns and honors allow_nil?" do
+      assert %{"title" => "Hello"} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_map_static, %{})
+               |> Ash.run_action!()
+
+      assert_receive {:dynamic_schema, schema}
+
+      assert schema["properties"]["result"] == %{
+               "anyOf" => [
+                 %{"type" => "null"},
+                 %{"type" => "object", "properties" => %{"title" => %{"type" => "string"}}}
+               ]
+             }
+    end
+
+    test "works with AshAi.Actions.Result wrapping :term" do
+      assert %AshAi.Actions.Result{result: %{"title" => "Hello"}} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_wrapped_term, %{})
+               |> Ash.run_action!()
+
+      assert_receive {:dynamic_schema, schema}
+      assert schema["properties"]["result"] == %{"type" => "object"}
+    end
+
+    test "an error from the function is returned without calling the model" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_schema_error, %{})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "no schema for you"
+      refute_received {:dynamic_schema, _}
+    end
+
+    test "a non-map schema is an error" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_invalid_schema, %{})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "must be a JSON Schema map"
+      refute_received {:dynamic_schema, _}
+    end
+
+    test "is rejected for return types other than :term or an unconstrained :map" do
+      for action <- [:extract_string_with_schema, :extract_constrained_map_with_schema] do
+        assert {:error, error} =
+                 TestResource
+                 |> Ash.ActionInput.for_action(action, %{})
+                 |> Ash.run_action()
+
+        assert Exception.message(error) =~ "`response_schema` requires the action to return"
+      end
+
+      refute_received {:dynamic_schema, _}
     end
   end
 

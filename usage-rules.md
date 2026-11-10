@@ -409,6 +409,11 @@ Other prompt action options: `extra_tools:`, `max_iterations:`, `verbose?: true`
 loop debug logging, `req_llm:` to inject a fake module in tests, and `transform_flow:` to
 customize the `AshAi.Actions.Prompt.FlowState` before the request.
 
+When the result's shape depends on the input, return `:term` (or an unconstrained `:map`) and
+pass `response_schema:` a JSON Schema map or `fn input, context -> schema end`. The schema
+describes the result value only (it is wrapped in the `{"result": ...}` envelope for you), and
+the output comes back as decoded JSON with string keys. Any other return type is an error.
+
 Tool loop failures are returned as action errors rather than raised.
 
 Anthropic models can decline a request through their safety classifiers. A refused prompt
