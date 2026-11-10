@@ -196,6 +196,138 @@ defmodule AshAi.Mcp.ServerTest do
     end
   end
 
+  describe "tool definition transformer" do
+    test "changes what tools/list lists, and with the argument transformer adds an argument the server consumes" do
+      definition_transformer = fn %AshAi.Tool{name: :list_artists}, definition, _context ->
+        put_in(definition, ["inputSchema", "properties", "context"], %{"type" => "string"})
+      end
+
+      argument_transformer = fn _tool, arguments, _context ->
+        send(self(), {:context, arguments["context"]})
+        {:ok, Map.delete(arguments, "context")}
+      end
+
+      opts =
+        @opts
+        |> Keyword.put(:tool_definition_transformer, definition_transformer)
+        |> Keyword.put(:tool_argument_transformer, argument_transformer)
+
+      listed =
+        conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "list", "method" => "tools/list"})
+        |> Router.call(opts)
+
+      assert [%{"name" => "list_artists", "inputSchema" => schema}] =
+               Jason.decode!(listed.resp_body)["result"]["tools"]
+
+      assert schema["properties"]["context"] == %{"type" => "string"}
+
+      called =
+        conn(:post, "/", %{
+          "jsonrpc" => "2.0",
+          "id" => "call",
+          "method" => "tools/call",
+          "params" => %{
+            "name" => "list_artists",
+            "arguments" => %{"context" => "Finding an artist the user mentioned."}
+          }
+        })
+        |> Router.call(opts)
+
+      assert Jason.decode!(called.resp_body)["result"]["isError"] == false
+      assert_received {:context, "Finding an artist the user mentioned."}
+    end
+
+    test "must return a map" do
+      opts =
+        Keyword.put(@opts, :tool_definition_transformer, fn _tool, _definition, _ctx -> nil end)
+
+      error =
+        assert_raise Plug.Conn.WrapperError, fn ->
+          conn(:post, "/", %{"jsonrpc" => "2.0", "id" => "list", "method" => "tools/list"})
+          |> Router.call(opts)
+        end
+
+      assert %ArgumentError{message: message} = error.reason
+      assert message =~ "must return a map"
+    end
+  end
+
+  describe "tool call telemetry" do
+    setup do
+      test_pid = self()
+      handler = "tool-call-telemetry-#{System.unique_integer([:positive])}"
+
+      :telemetry.attach_many(
+        handler,
+        [[:ash_ai, :mcp, :tool_call, :start], [:ash_ai, :mcp, :tool_call, :stop]],
+        fn event, measurements, metadata, _config ->
+          send(test_pid, {:telemetry, event, measurements, metadata})
+        end,
+        nil
+      )
+
+      on_exit(fn -> :telemetry.detach(handler) end)
+    end
+
+    defp call_tool(name, arguments, opts \\ @opts) do
+      conn(:post, "/", %{
+        "jsonrpc" => "2.0",
+        "id" => "call",
+        "method" => "tools/call",
+        "params" => %{"name" => name, "arguments" => arguments}
+      })
+      |> Router.call(opts)
+    end
+
+    test "spans each call, with the arguments as sent, and the result" do
+      transformer = fn _tool, arguments, _context -> {:ok, Map.delete(arguments, "context")} end
+
+      call_tool(
+        "list_artists",
+        %{"context" => "why"},
+        Keyword.put(@opts, :tool_argument_transformer, transformer)
+      )
+
+      assert_received {:telemetry, [:ash_ai, :mcp, :tool_call, :start], %{system_time: _},
+                       %{
+                         tool_name: "list_artists",
+                         tool: %AshAi.Tool{name: :list_artists},
+                         arguments: %{"context" => "why"}
+                       }}
+
+      assert_received {:telemetry, [:ash_ai, :mcp, :tool_call, :stop], %{duration: duration},
+                       %{
+                         tool_name: "list_artists",
+                         is_error: false,
+                         error: nil,
+                         result: %{"isError" => false}
+                       }}
+
+      assert is_integer(duration)
+    end
+
+    test "a call to a tool that doesn't exist, as an error" do
+      call_tool("nope", %{})
+
+      assert_received {:telemetry, [:ash_ai, :mcp, :tool_call, :stop], _measurements,
+                       %{
+                         tool_name: "nope",
+                         tool: nil,
+                         is_error: true,
+                         error: :tool_not_found,
+                         result: nil
+                       }}
+    end
+
+    test "a call the argument transformer rejects, as an error" do
+      transformer = fn _tool, _arguments, _context -> {:error, "No."} end
+      call_tool("list_artists", %{}, Keyword.put(@opts, :tool_argument_transformer, transformer))
+
+      assert_received {:telemetry, [:ash_ai, :mcp, :tool_call, :stop], _measurements,
+                       %{is_error: true, error: nil, result: %{"isError" => true}}}
+    end
+  end
+
   describe "invalid request bodies" do
     @invalid_request "Invalid Request: expected a JSON-RPC request object with a \"method\""
 

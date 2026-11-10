@@ -1269,6 +1269,33 @@ defmodule AshAi.Mcp.Server do
   end
 
   defp tool_definition(%Tool{} = tool, opts) do
+    tool
+    |> base_tool_definition(opts)
+    |> transform_tool_definition(tool, opts)
+  end
+
+  defp transform_tool_definition(definition, tool, opts) do
+    case opts[:tool_definition_transformer] do
+      nil ->
+        definition
+
+      transformer when is_function(transformer, 3) ->
+        case transformer.(tool, definition, tool_context(opts)) do
+          %{} = transformed ->
+            transformed
+
+          other ->
+            raise ArgumentError,
+                  "tool_definition_transformer must return a map, got: #{inspect(other)}"
+        end
+
+      other ->
+        raise ArgumentError,
+              "tool_definition_transformer must be a three-arity function, got: #{inspect(other)}"
+    end
+  end
+
+  defp base_tool_definition(%Tool{} = tool, opts) do
     # MCP schemas are advisory (no grammar-constrained sampling), so the
     # OpenAI strict transformation defaults off here.
     result =
@@ -1327,26 +1354,48 @@ defmodule AshAi.Mcp.Server do
 
   # 2025-06-18 types `structuredContent` as an object; 2026-07-28 allows any
   # JSON value, so only that revision receives list results as structured content
+  # Each call runs in a `[:ash_ai, :mcp, :tool_call]` telemetry span (see
+  # `AshAi.Mcp.Router`), with the arguments as the client sent them, before
+  # `tool_argument_transformer`.
   defp execute_tool_call(params, session_id, opts, call_opts \\ []) do
     tool_name = params["name"]
     tool_args = params["arguments"] || %{}
+    tool = find_tool_by_name(tool_name, session_id, opts)
+    context = tool_context(opts)
 
-    case find_tool_by_name(tool_name, session_id, opts) do
-      %Tool{} = tool ->
-        context = tool_context(opts)
+    metadata = %{
+      tool_name: tool_name,
+      tool: tool,
+      arguments: tool_args,
+      request_meta: params["_meta"],
+      session_id: session_id,
+      actor: context[:actor],
+      tenant: context[:tenant],
+      context: context[:context]
+    }
 
-        case transform_tool_arguments(tool, tool_args, context, opts) do
-          {:ok, transformed_args} ->
-            execute_resolved_tool(tool, transformed_args, context, call_opts)
+    :telemetry.span([:ash_ai, :mcp, :tool_call], metadata, fn ->
+      result = run_tool_call(tool, tool_args, context, opts, call_opts)
+      {result, Map.merge(metadata, tool_call_outcome(result))}
+    end)
+  end
 
-          {:error, error_text} ->
-            {:ok, tool_error_result(error_text)}
-        end
+  defp run_tool_call(nil, _tool_args, _context, _opts, _call_opts), do: {:error, :tool_not_found}
 
-      nil ->
-        {:error, :tool_not_found}
+  defp run_tool_call(%Tool{} = tool, tool_args, context, opts, call_opts) do
+    case transform_tool_arguments(tool, tool_args, context, opts) do
+      {:ok, transformed_args} ->
+        execute_resolved_tool(tool, transformed_args, context, call_opts)
+
+      {:error, error_text} ->
+        {:ok, tool_error_result(error_text)}
     end
   end
+
+  defp tool_call_outcome({:ok, result}),
+    do: %{result: result, is_error: result["isError"] == true, error: nil}
+
+  defp tool_call_outcome({:error, error}), do: %{result: nil, is_error: true, error: error}
 
   defp transform_tool_arguments(tool, arguments, context, opts) do
     case opts[:tool_argument_transformer] do
