@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.2](https://github.com/ash-project/ash_ai/compare/v1.5.1...v1.5.2) (2026-11-10)
+
+
+
+
+### Improvements:
+
+* add `tool_definition_transformer` and MCP telemetry by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.5.1](https://github.com/ash-project/ash_ai/compare/v1.5.0...v1.5.1) (2026-11-07)
 
 
