@@ -412,7 +412,9 @@ customize the `AshAi.Actions.Prompt.FlowState` before the request.
 When the result's shape depends on the input, return `:term` (or an unconstrained `:map`) and
 pass `response_schema:` a JSON Schema map or `fn input, context -> schema end`. The schema
 describes the result value only (it is wrapped in the `{"result": ...}` envelope for you), and
-the output comes back as decoded JSON with string keys. Any other return type is an error.
+the output comes back as decoded JSON with string keys. For any other return type, also pass
+`cast_response: fn response, input, context -> value end` to turn the decoded result into the
+return type; its output is still cast and constraint-checked against the return type.
 
 Tool loop failures are returned as action errors rather than raised.
 

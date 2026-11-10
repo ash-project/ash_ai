@@ -537,6 +537,64 @@ defmodule AshAi.Actions.PromptTest do
             )
       end
 
+      action :extract_string_with_cast, :string do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "object"},
+              cast_response: fn response -> response["title"] end
+            )
+      end
+
+      action :extract_constrained_map_with_cast, :map do
+        argument(:prefix, :string, allow_nil?: false)
+
+        constraints fields: [
+                      title: [type: :string, allow_nil?: false],
+                      tag_count: [type: :integer, allow_nil?: false]
+                    ]
+
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: fn _input, _context -> %{"type" => "object"} end,
+              cast_response: fn response, input, _context ->
+                {:ok,
+                 %{
+                   "title" => input.arguments.prefix <> response["title"],
+                   "tag_count" => length(response["tags"])
+                 }}
+              end
+            )
+      end
+
+      action :extract_cast_error, :string do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "object"},
+              cast_response: fn _response, _input -> {:error, "could not cast"} end
+            )
+      end
+
+      action :extract_cast_wrong_type, :integer do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "object"},
+              cast_response: fn response -> response["title"] end
+            )
+      end
+
+      action :extract_without_return_with_schema do
+        run prompt("openai:gpt-4o",
+              prompt: "Extract",
+              req_llm: FakeReqLLMWithDynamicSchema,
+              response_schema: %{"type" => "object"},
+              cast_response: fn _ -> nil end
+            )
+      end
+
       action :analyze_with_constrained_map_return, :map do
         description("Test constrained map return schema")
         argument(:text, :string, allow_nil?: false)
@@ -1003,6 +1061,53 @@ defmodule AshAi.Actions.PromptTest do
         assert Exception.message(error) =~ "`response_schema` requires the action to return"
       end
 
+      refute_received {:dynamic_schema, _}
+    end
+  end
+
+  describe "cast_response" do
+    test "turns the response into a non-map return type" do
+      assert "Hello" ==
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_string_with_cast, %{})
+               |> Ash.run_action!()
+
+      assert_receive {:dynamic_schema, schema}
+      assert schema["properties"]["result"] == %{"type" => "object"}
+    end
+
+    test "receives the input and its output is cast to the constrained return type" do
+      assert %{title: "Re:Hello", tag_count: 1} ==
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_constrained_map_with_cast, %{prefix: "Re:"})
+               |> Ash.run_action!()
+    end
+
+    test "an error from cast_response is returned" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_cast_error, %{})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "could not cast"
+    end
+
+    test "output that doesn't cast into the return type is an error" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_cast_wrong_type, %{})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "Failed to cast LLM response"
+    end
+
+    test "response_schema still requires a return type" do
+      assert {:error, error} =
+               TestResource
+               |> Ash.ActionInput.for_action(:extract_without_return_with_schema, %{})
+               |> Ash.run_action()
+
+      assert Exception.message(error) =~ "requires the action to declare a return type"
       refute_received {:dynamic_schema, _}
     end
   end

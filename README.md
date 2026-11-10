@@ -482,7 +482,8 @@ Prompt-backed action options to know:
 - `tools:` can be `false`, `true`, or a list of tool names.
 - `max_iterations:` defaults to `:infinity` for prompt actions (set an integer to bound tool loops).
 - `verbose?: true` enables debug logging for tool loop lifecycle events.
-- `response_schema:` takes a JSON Schema map, or `fn input, context -> schema end`, for actions returning `:term` or an unconstrained `:map`, so the output shape can depend on the input.
+- `response_schema:` takes a JSON Schema map, or `fn input, context -> schema end`, so the output shape can depend on the input. Without `cast_response:` it requires a `:term` or unconstrained `:map` return.
+- `cast_response:` takes `fn response, input, context -> value end` to turn the model's decoded result into the action's return type before it is cast.
 - Tool loop failures are returned as action errors (with loop reason details) instead of raising runtime exceptions.
 
 ### Using Custom Types for Structured Outputs
