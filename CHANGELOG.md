@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.4](https://github.com/ash-project/ash_ai/compare/v1.5.3...v1.5.4) (2026-11-10)
+
+
+
+
+### Improvements:
+
+* add `cast_response` option by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.5.3](https://github.com/ash-project/ash_ai/compare/v1.5.2...v1.5.3) (2026-11-10)
 
 
