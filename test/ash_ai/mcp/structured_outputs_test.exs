@@ -61,6 +61,14 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
         run fn _input, _context -> {:ok, "scalar"} end
       end
 
+      action :markdown_result, :string do
+        run fn _input, _context -> {:ok, "# Title\n\nFirst \"quoted\" paragraph."} end
+      end
+
+      action :ci_string_result, :ci_string do
+        run fn _input, _context -> {:ok, Ash.CiString.new("{Case Insensitive}")} end
+      end
+
       action :datetime_result, :utc_datetime do
         run fn _input, _context -> {:ok, ~U[2026-08-11 12:30:00Z]} end
       end
@@ -123,6 +131,8 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
       tool :create_record, Resource, :create_record
       tool :map_result, Resource, :map_result
       tool :scalar_result, Resource, :scalar_result
+      tool :markdown_result, Resource, :markdown_result
+      tool :ci_string_result, Resource, :ci_string_result
       tool :datetime_result, Resource, :datetime_result
       tool :array_result, Resource, :array_result
       tool :nil_result, Resource, :nil_result
@@ -170,12 +180,46 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
     test "preserves text-only behavior for non-object results" do
       session_id = initialize()
 
-      for name <- ["scalar_result", "datetime_result", "array_result", "nil_result"] do
+      for name <- [
+            "scalar_result",
+            "markdown_result",
+            "datetime_result",
+            "array_result",
+            "nil_result"
+          ] do
         call_result = call_tool(session_id, name)
 
         assert call_result["isError"] == false
         assert [%{"type" => "text", "text" => _text}] = call_result["content"]
         refute Map.has_key?(call_result, "structuredContent")
+      end
+    end
+
+    test "returns string results as the text itself, not as a JSON string" do
+      session_id = initialize()
+
+      for {name, text} <- [
+            {"markdown_result", "# Title\n\nFirst \"quoted\" paragraph."},
+            {"ci_string_result", "{Case Insensitive}"}
+          ] do
+        call_result = call_tool(session_id, name)
+
+        assert call_result["isError"] == false
+        assert call_result["content"] == [%{"type" => "text", "text" => text}]
+        refute Map.has_key?(call_result, "structuredContent")
+      end
+    end
+
+    test "keeps other results JSON-encoded" do
+      session_id = initialize()
+
+      for {name, text} <- [
+            {"map_result", ~s({"runtime":"shape"})},
+            {"datetime_result", ~s("2026-08-11T12:30:00Z")},
+            {"array_result", "[1,2]"},
+            {"nil_result", "null"}
+          ] do
+        assert [%{"type" => "text", "text" => ^text}] = call_tool(session_id, name)["content"]
       end
     end
 
