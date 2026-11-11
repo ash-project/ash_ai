@@ -14,7 +14,7 @@ defmodule AshAi.Serializer do
   end
 
   def serialize_value(value, Ash.Type.Decimal, _constraints, _domain, _opts) do
-    Decimal.to_string(value)
+    Decimal.to_string(value, :normal)
   end
 
   def serialize_value(%Ash.Union{type: union_type, value: inner}, type, constraints, domain, opts) do
