@@ -52,6 +52,10 @@ tool :update_artist, Artist, :update, identity: :id, load: [:albums]
 ```
 
 ```
+tool :update_artist, Artist, :update, read_action: :read_in_scope
+```
+
+```
 tool :delete_artist, Artist, :destroy, title: "Delete artist", annotations: [destructive_hint: true, idempotent_hint: true]
 ```
 
@@ -110,6 +114,7 @@ tool :artist_chart, Artist, :read, ui: :artist_chart, result_meta: &MyAppWeb.Mcp
 | [`async`](#tools-tool-async){: #tools-tool-async } | `boolean` | `true` |  |
 | [`description`](#tools-tool-description){: #tools-tool-description } | `String.t` |  | A description for the tool. Defaults to the action's description. |
 | [`identity`](#tools-tool-identity){: #tools-tool-identity } | `atom` |  | The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely. |
+| [`read_action`](#tools-tool-read_action){: #tools-tool-read_action } | `atom` |  | For update/destroy actions, the read action used to find the record. Its filters, preparations and policies apply to the lookup, so a record it cannot see is reported as not found. Defaults to the action's `atomic_upgrade_with`, or the primary read action. |
 | [`get_by`](#tools-tool-get_by){: #tools-tool-get_by } | `atom \| list(atom)` |  | For read actions, a field or list of fields used to fetch a single record. The fields must be filterable attributes, calculations or aggregates. |
 | [`title`](#tools-tool-title){: #tools-tool-title } | `String.t` |  | A short, human-readable name for the tool (MCP `title`). Clients show it instead of the tool's identifier, for example in a confirmation prompt. |
 | [`annotations`](#tools-tool-annotations){: #tools-tool-annotations } | `keyword` | `[]` | MCP tool annotations: an optional `title` and the hints a client uses to decide whether to ask the person before a call and how to present the tool. The MCP specification treats the hints as untrusted, not as security guarantees. Only what you set is sent, so the client applies its own defaults to the rest. |

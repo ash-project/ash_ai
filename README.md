@@ -364,6 +364,7 @@ end
 **Important**: Tools have different access levels for different operations:
 - **Filtering/Sorting/Aggregation**: Only public attributes (`public?: true`) can be used
 - **Single-record lookup**: Use `get_by` on read tools to look up one record by filterable fields
+- **Finding the record to change**: Update and destroy tools find their record through the primary read action. Use `read_action` to find it through another read action, whose filters and policies then apply
 - **Arguments**: Only public action arguments are exposed
 - **Response data**: Public attributes are returned by default
 - **Loading data**: Use the `load` option to include relationships, calculations, or additional attributes (including private ones) in responses

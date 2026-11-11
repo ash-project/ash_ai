@@ -59,6 +59,7 @@ defmodule AshAi.Transformers.ResourceTools do
     |> Transformer.get_entities([:tools])
     |> Enum.each(fn tool ->
       validate_get_by!(tool, dsl_state, module, resource_dsl?)
+      validate_read_action!(tool, dsl_state, module, resource_dsl?)
       validate_query_fields!(tool, dsl_state, module, resource_dsl?)
       validate_output_schema!(tool, dsl_state, module, resource_dsl?)
     end)
@@ -159,6 +160,46 @@ defmodule AshAi.Transformers.ResourceTools do
       _action ->
         raise_get_by_error!(tool, module, "`get_by` can only be used with read tools.")
     end
+  end
+
+  defp validate_read_action!(%{read_action: nil}, _dsl_state, _module, _resource_dsl?), do: :ok
+
+  defp validate_read_action!(tool, dsl_state, module, resource_dsl?) do
+    case fetch_action(tool, dsl_state, resource_dsl?) do
+      %{type: type} when type in [:update, :destroy] ->
+        source = if resource_dsl?, do: dsl_state, else: tool.resource
+
+        case Ash.Resource.Info.action(source, tool.read_action) do
+          %{type: :read} ->
+            :ok
+
+          _ ->
+            raise_read_action_error!(
+              tool,
+              module,
+              "`read_action` must name a read action, but `#{inspect(tool.read_action)}` is not a read action."
+            )
+        end
+
+      %{} ->
+        raise_read_action_error!(
+          tool,
+          module,
+          "`read_action` can only be used with update and destroy tools."
+        )
+
+      # A missing action is reported elsewhere, and domain-level tools whose resource
+      # isn't compiled yet can't be checked here
+      _ ->
+        :ok
+    end
+  end
+
+  defp raise_read_action_error!(tool, module, message) do
+    raise Spark.Error.DslError,
+      module: module,
+      path: [:tools, tool.name, :read_action],
+      message: message
   end
 
   # Domain-level tools reference other modules, which may not be compiled yet. Those are
