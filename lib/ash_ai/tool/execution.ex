@@ -49,6 +49,7 @@ defmodule AshAi.Tool.Execution do
           select: select,
           identity: identity,
           get_by: get_by,
+          read_action: read_action,
           arguments: tool_arguments
         } = tool,
         client_arguments,
@@ -94,10 +95,10 @@ defmodule AshAi.Tool.Execution do
             run_create(resource, action, input, opts, exec_ctx)
 
           :update ->
-            run_update(resource, action, arguments, input, opts, identity, exec_ctx)
+            run_update(resource, action, arguments, input, opts, identity, read_action, exec_ctx)
 
           :destroy ->
-            run_destroy(resource, action, arguments, input, opts, identity, exec_ctx)
+            run_destroy(resource, action, arguments, input, opts, identity, read_action, exec_ctx)
 
           :action ->
             run_generic(resource, action, input, opts, exec_ctx)
@@ -544,7 +545,7 @@ defmodule AshAi.Tool.Execution do
     |> serialize_record(resource, ctx)
   end
 
-  defp run_update(resource, action, arguments, input, opts, identity, ctx) do
+  defp run_update(resource, action, arguments, input, opts, identity, read_action, ctx) do
     filter = identity_filter(identity, resource, arguments)
 
     resource
@@ -556,6 +557,7 @@ defmodule AshAi.Tool.Execution do
       Keyword.merge(opts,
         return_errors?: true,
         notify?: true,
+        read_action: read_action,
         strategy: [:atomic, :stream, :atomic_batches],
         load: write_load(resource, ctx),
         allow_stream_with: :full_read,
@@ -572,7 +574,7 @@ defmodule AshAi.Tool.Execution do
     end
   end
 
-  defp run_destroy(resource, action, arguments, input, opts, identity, ctx) do
+  defp run_destroy(resource, action, arguments, input, opts, identity, read_action, ctx) do
     filter = identity_filter(identity, resource, arguments)
 
     resource
@@ -584,6 +586,7 @@ defmodule AshAi.Tool.Execution do
       Keyword.merge(opts,
         return_errors?: true,
         notify?: true,
+        read_action: read_action,
         load: write_load(resource, ctx),
         strategy: [:atomic, :stream, :atomic_batches],
         allow_stream_with: :full_read,

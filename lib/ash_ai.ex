@@ -33,6 +33,7 @@ defmodule AshAi do
       :domain,
       :identity,
       :get_by,
+      :read_action,
       :description,
       :title,
       :action_parameters,

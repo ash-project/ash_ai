@@ -41,6 +41,7 @@ spark_locals_without_parens = [
   output_schema?: 1,
   permissions: 1,
   prefers_border: 1,
+  read_action: 1,
   resource: 1,
   result_meta: 1,
   select: 1,
