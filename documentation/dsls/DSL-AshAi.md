@@ -140,7 +140,7 @@ An argument to be passed to the tool.
 | Name | Type | Default | Docs |
 |------|------|---------|------|
 | [`name`](#tools-tool-argument-name){: #tools-tool-argument-name .spark-required} | `atom` |  | The name of the argument. |
-| [`type`](#tools-tool-argument-type){: #tools-tool-argument-type .spark-required} | `any` |  | The Ash type of the argument (e.g., :string, :date, :integer). |
+| [`type`](#tools-tool-argument-type){: #tools-tool-argument-type .spark-required} | `module` |  | The Ash type of the argument (e.g., :string, :date, :integer). |
 ### Options
 
 | Name | Type | Default | Docs |
