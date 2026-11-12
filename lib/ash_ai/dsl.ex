@@ -19,7 +19,7 @@ defmodule AshAi.Dsl do
       doc: "The name of the argument."
     ],
     type: [
-      type: :any,
+      type: Ash.OptionsHelpers.ash_type(),
       required: true,
       doc: "The Ash type of the argument (e.g., :string, :date, :integer)."
     ],
@@ -313,7 +313,8 @@ defmodule AshAi.Dsl do
     schema: @tool_argument_schema,
     describe: "An argument to be passed to the tool.",
     target: AshAi.Tool.Argument,
-    args: [:name, :type]
+    args: [:name, :type],
+    transform: {AshAi.Tool.Argument, :transform, []}
   }
 
   @tool %Spark.Dsl.Entity{

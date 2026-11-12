@@ -65,6 +65,18 @@ defmodule AshAi do
         allow_nil?: true,
         __spark_metadata__: nil
       ]
+
+      @doc false
+      # Resolves a short type name like `:string` to its module, as Ash does for
+      # action arguments, so the input schema can describe the argument.
+      def transform(%__MODULE__{type: type, constraints: constraints} = argument) do
+        type = Ash.Type.get_type!(type)
+
+        case Ash.Type.init(type, constraints) do
+          {:ok, constraints} -> {:ok, %{argument | type: type, constraints: constraints}}
+          {:error, error} -> {:error, error}
+        end
+      end
     end
 
     def has_meta?(%__MODULE__{_meta: meta})
