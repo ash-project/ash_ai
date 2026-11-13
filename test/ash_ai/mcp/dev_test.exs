@@ -96,7 +96,7 @@ defmodule AshAi.Mcp.DevTest do
         |> Jason.decode!()
 
       assert %{"result" => %{"isError" => false, "content" => [%{"text" => text}]}} = body
-      assert Jason.decode!(text) == "echo: hi"
+      assert text == "echo: hi"
     end
 
     test "a dev_tool_domains tool is not callable without the option" do
