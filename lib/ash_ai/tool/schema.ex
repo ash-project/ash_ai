@@ -165,6 +165,7 @@ defmodule AshAi.Tool.Schema do
     end)
     |> Jason.encode!()
     |> Jason.decode!()
+    |> AshAi.OpenApi.hoist_defs()
     |> then(fn schema ->
       if strict? do
         make_strict_schema(schema)
@@ -215,6 +216,12 @@ defmodule AshAi.Tool.Schema do
       case s["items"] do
         nil -> s
         items -> Map.put(s, "items", make_strict_schema(items))
+      end
+    end)
+    |> then(fn s ->
+      case s["$defs"] do
+        nil -> s
+        defs -> Map.put(s, "$defs", Map.new(defs, fn {k, v} -> {k, make_strict_schema(v)} end))
       end
     end)
   end

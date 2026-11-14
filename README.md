@@ -390,6 +390,46 @@ Key distinction:
 - Private attributes CAN be included in responses when using the `load` option
 - The `load` option is primarily for loading relationships and calculations, but also makes any loaded attributes (including private ones) visible
 
+### Custom Types in Tool Inputs
+
+ash_ai builds each tool's input schema from the action's attribute and argument types. A custom `Ash.Type` it doesn't know is described as `{}` (any value). To describe it, implement `AshAi.Type`:
+
+```elixir
+defmodule MyApp.Condition do
+  use Ash.Type
+  @behaviour AshAi.Type
+
+  # The schema used wherever the type appears
+  @impl AshAi.Type
+  def ai_json_schema(_constraints), do: %{"$ref" => "#/$defs/Condition"}
+
+  # Optional: named definitions the schema references, such as itself
+  @impl AshAi.Type
+  def ai_json_schema_defs(_constraints) do
+    %{
+      "Condition" => %{
+        "anyOf" => [
+          %{
+            "type" => "object",
+            "properties" => %{
+              "all" => %{"type" => "array", "items" => %{"$ref" => "#/$defs/Condition"}}
+            }
+          },
+          %{
+            "type" => "object",
+            "properties" => %{"key" => %{"type" => "string"}, "eq" => %{}}
+          }
+        ]
+      }
+    }
+  end
+
+  # ... the rest of the Ash.Type callbacks
+end
+```
+
+The schema is also used inside arrays, maps, unions, embedded resources and `Ash.Type.NewType`s, and for prompt-backed action results. Definitions from all of a tool's inputs are merged by name under the input schema's root `$defs`; two different definitions with the same name raise an error.
+
 ### Read Tool Results
 
 List-style read tools (those without `get_by`) mirror `Ash.read/2`: when the action has no pagination configured the tool returns a bare array of records, limited by the `limit` argument (default `25`). When the action is paginated, the tool returns a page instead, so the LLM can tell whether more records exist and how to fetch them. Note that the default `read` action created by `defaults [:read]` supports offset and keyset pagination, so tools for it return pages.

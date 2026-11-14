@@ -507,7 +507,15 @@ if Code.ensure_loaded?(ReqLLM) do
                opts,
                context
              ) do
-        {:ok, wrap_result_schema(allow_nil?, inner_schema)}
+        schema = wrap_result_schema(allow_nil?, inner_schema)
+
+        # Only the return type's own schema can carry a type's `$defs`; a
+        # `response_schema` is used as given.
+        if opts[:response_schema] do
+          {:ok, schema}
+        else
+          {:ok, AshAi.OpenApi.hoist_defs(schema)}
+        end
       end
     end
 

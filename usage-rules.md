@@ -240,6 +240,15 @@ This provides flexibility while maintaining control over data access:
 - Private data can still be included in responses when explicitly loaded
 - The `load` option serves dual purposes: loading relationships/calculations and making any loaded attributes visible (including private ones)
 
+### Custom Types in Tool Inputs
+
+A custom `Ash.Type` is described as `{}` in tool input schemas unless it implements
+`AshAi.Type`: `ai_json_schema/1` returns its JSON Schema given its constraints, and the
+optional `ai_json_schema_defs/1` returns named definitions (`%{"Name" => schema}`) that the
+schema references with `"$ref": "#/$defs/Name"`, which is how a recursive type refers to
+itself. Definitions from all of a tool's inputs are merged under the root `$defs`; two
+different definitions with the same name raise an error.
+
 ### Read Tool Results
 
 List-style read tools (no `get_by`) mirror `Ash.read/2`:

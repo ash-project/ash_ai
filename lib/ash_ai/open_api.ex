@@ -136,6 +136,9 @@ defmodule AshAi.OpenApi do
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type) do
     cond do
+      ai_json_schema?(type) ->
+        ai_json_schema(type, attr.constraints)
+
       embedded?(type) ->
         embedded_type_input(attr, action_type)
 
@@ -153,6 +156,80 @@ defmodule AshAi.OpenApi do
         resource_attribute_type(attr, resource)
     end
     |> with_attribute_description(attr)
+  end
+
+  @doc false
+  # Moves every `$defs` in a string-keyed schema to its root, merged by name.
+  # A type's definitions travel with its schema (see `ai_json_schema/2`), but
+  # `"$ref": "#/$defs/..."` resolves from the root.
+  def hoist_defs(schema) do
+    case take_defs(schema, %{}) do
+      {schema, defs} when defs == %{} -> schema
+      {schema, defs} -> Map.put(schema, "$defs", defs)
+    end
+  end
+
+  defp take_defs(schema, defs) when is_map(schema) do
+    {nested, schema} = Map.pop(schema, "$defs", %{})
+
+    defs =
+      Enum.reduce(nested, defs, fn {name, definition}, defs ->
+        {definition, defs} = take_defs(definition, defs)
+        put_def(defs, name, definition)
+      end)
+
+    Enum.reduce(schema, {schema, defs}, fn {key, value}, {schema, defs} ->
+      {value, defs} = take_defs(value, defs)
+      {Map.put(schema, key, value), defs}
+    end)
+  end
+
+  defp take_defs(schema, defs) when is_list(schema),
+    do: Enum.map_reduce(schema, defs, &take_defs/2)
+
+  defp take_defs(schema, defs), do: {schema, defs}
+
+  defp put_def(defs, name, definition) do
+    case defs do
+      %{^name => ^definition} ->
+        defs
+
+      %{^name => other} ->
+        raise ArgumentError, """
+        Two different JSON Schema definitions are named #{inspect(name)} in `$defs`:
+
+        #{inspect(other, pretty: true)}
+
+        #{inspect(definition, pretty: true)}
+
+        Each name passed to `ai_json_schema_defs/1` must always mean the same schema.
+        """
+
+      defs ->
+        Map.put(defs, name, definition)
+    end
+  end
+
+  defp ai_json_schema?(type) do
+    is_atom(type) and Code.ensure_loaded?(type) and function_exported?(type, :ai_json_schema, 1)
+  end
+
+  # The definitions go under the schema's own `$defs` until `hoist_defs/1`.
+  defp ai_json_schema(type, constraints) do
+    schema = type.ai_json_schema(constraints)
+
+    defs =
+      if function_exported?(type, :ai_json_schema_defs, 1) do
+        type.ai_json_schema_defs(constraints)
+      else
+        %{}
+      end
+
+    if defs == %{} do
+      schema
+    else
+      Map.update(schema, "$defs", defs, &Map.merge(&1, defs))
+    end
   end
 
   # Include the tag before deduplicating anyOf branches, or fieldless variants
@@ -684,6 +761,9 @@ defmodule AshAi.OpenApi do
     constraints = attr.constraints
 
     cond do
+      ai_json_schema?(type) ->
+        ai_json_schema(type, constraints)
+
       embedded?(type) ->
         %{
           type: :object,
