@@ -546,8 +546,16 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp result_inner_schema(nil, _constraints, nil, _input, _opts, _context), do: {:ok, nil}
 
-    defp result_inner_schema(returns, constraints, nil, _input, _opts, _context) do
-      {:ok, return_inner_schema(%{returns: returns, constraints: constraints})}
+    defp result_inner_schema(returns, constraints, nil, _input, opts, _context) do
+      schema =
+        %{returns: returns, constraints: constraints}
+        |> return_inner_schema()
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      if Keyword.get(opts, :strict, true),
+        do: {:ok, AshAi.Tool.Schema.make_strict_schema(schema)},
+        else: {:ok, schema}
     end
 
     defp result_inner_schema(nil, _constraints, _response_schema, _input, _opts, _context) do
