@@ -207,11 +207,13 @@ defmodule AshAi.Tool.Schema do
 
   defp query_fields(_resource, _action, _get_by_fields, _opts), do: []
 
-  # Recursively transforms a JSON schema to be OpenAI strict-mode compliant:
-  # - Every object gets `additionalProperties: false`
-  # - Every non-required property is made nullable
-  # - Unsupported validation keywords (like `minLength` and `maxLength`) are stripped
-  defp make_strict_schema(schema) when is_map(schema) do
+  @doc """
+  Transforms a string-keyed JSON schema to be OpenAI strict-mode compliant: every object gets
+  `additionalProperties: false` and lists all its properties as required, making the optional ones nullable, and
+  validation keywords strict mode rejects (`minLength`, `maxLength`) are dropped.
+  """
+  @spec make_strict_schema(term()) :: term()
+  def make_strict_schema(schema) when is_map(schema) do
     schema =
       schema
       |> Map.drop(["minLength", "maxLength", :minLength, :maxLength])
@@ -258,10 +260,10 @@ defmodule AshAi.Tool.Schema do
     end)
   end
 
-  defp make_strict_schema(schema) when is_list(schema),
+  def make_strict_schema(schema) when is_list(schema),
     do: Enum.map(schema, &make_strict_schema/1)
 
-  defp make_strict_schema(schema), do: schema
+  def make_strict_schema(schema), do: schema
 
   # Makes a schema accept null, preferring the compact `"type": [..., "null"]`
   # form over an `anyOf` wrapper. `enum` validates independently of `type`, so

@@ -378,10 +378,8 @@ defmodule AshAi.OpenApiTest do
                name: %{type: :string},
                bio: %{
                  type: :object,
-                 properties: %{
-                   birth: %{"anyOf" => [%{type: :string, format: :date}, %{"type" => "null"}]}
-                 },
-                 required: [:birth],
+                 properties: %{birth: %{type: :string, format: :date}},
+                 required: [],
                  additionalProperties: false
                }
              }
@@ -615,9 +613,9 @@ defmodule AshAi.OpenApiTest do
                "type" => "object",
                "properties" => %{
                  "label" => %{"type" => "string"},
-                 "weight" => %{"anyOf" => [%{"type" => "integer"}, %{"type" => "null"}]}
+                 "weight" => %{"type" => "integer"}
                },
-               "required" => ["label", "weight"]
+               "required" => ["label"]
              }
 
       assert properties["destination"] == %{
@@ -628,6 +626,17 @@ defmodule AshAi.OpenApiTest do
                },
                "required" => ["lat", "lng"]
              }
+    end
+
+    test "strict schemas require every field of a keyword, making the optional ones nullable", %{
+      tool: tool
+    } do
+      properties =
+        AshAi.Tools.parameter_schema(tool, strict: true)["properties"]["input"]["properties"]
+
+      assert properties["package"]["required"] == ["label", "weight"]
+      assert properties["package"]["properties"]["weight"]["type"] == ["integer", "null"]
+      assert properties["package"]["additionalProperties"] == false
     end
 
     test "durations are ISO 8601 duration strings in input schemas", %{tool: tool} do

@@ -78,8 +78,6 @@ defmodule AshAi.OpenApi do
           |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
           |> Enum.map(&elem(&1, 0))
       }
-      |> add_null_for_non_required()
-      |> make_all_required()
     else
       %{type: :object}
     end
@@ -313,47 +311,6 @@ defmodule AshAi.OpenApi do
     end
   end
 
-  defp add_null_for_non_required(%{required: required} = schema)
-       when is_list(required) do
-    Map.update!(schema, :properties, fn
-      properties when is_map(properties) ->
-        Enum.reduce(properties, %{}, fn {key, value}, acc ->
-          if Enum.member?(required, key) do
-            Map.put(acc, key, value)
-          else
-            description = value |> Map.get(:description)
-            value = value |> Map.delete(:description)
-
-            new_value =
-              %{
-                "anyOf" => [
-                  %{
-                    "type" => "null"
-                  },
-                  value
-                ]
-              }
-              |> then(fn new_value ->
-                case description do
-                  nil -> new_value
-                  description -> Map.put(new_value, "description", description)
-                end
-              end)
-              |> unwrap_any_of()
-
-            Map.put(
-              acc,
-              key,
-              new_value
-            )
-          end
-        end)
-
-      properties ->
-        properties
-    end)
-  end
-
   @spec with_attribute_description(
           map(),
           Ash.Resource.Attribute.t() | Ash.Resource.Actions.Argument.t() | any
@@ -531,16 +488,6 @@ defmodule AshAi.OpenApi do
         end),
       required: required
     }
-    |> add_null_for_non_required()
-    |> make_all_required()
-  end
-
-  # this is kind of a hack, specifically because open ai requires that all fields
-  # be required. But the value can be `null`
-  defp make_all_required(map) do
-    required_list = map.properties |> Map.keys() |> Enum.sort()
-
-    Map.put(map, :required, required_list)
   end
 
   @doc false
@@ -671,8 +618,6 @@ defmodule AshAi.OpenApi do
           |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
           |> Enum.map(&elem(&1, 0))
       }
-      |> add_null_for_non_required()
-      |> make_all_required()
     else
       %{type: :object}
     end
@@ -794,8 +739,6 @@ defmodule AshAi.OpenApi do
           properties: resource_attributes(instance_of, false),
           required: required_attributes(instance_of)
         }
-        |> add_null_for_non_required()
-        |> make_all_required()
       else
         resource_attribute_type(%{attr | type: Ash.Type.Map}, resource)
       end
@@ -818,8 +761,6 @@ defmodule AshAi.OpenApi do
           properties: resource_attributes(type, false),
           required: required_attributes(type)
         }
-        |> add_null_for_non_required()
-        |> make_all_required()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, constraints)

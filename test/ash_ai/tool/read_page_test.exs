@@ -5,7 +5,14 @@
 defmodule AshAi.Tool.ReadPageTest do
   use ExUnit.Case, async: true
 
-  alias __MODULE__.{BothResource, Domain, KeysetResource, OffsetResource, PlainResource}
+  alias __MODULE__.{
+    BothResource,
+    CappedResource,
+    Domain,
+    KeysetResource,
+    OffsetResource,
+    PlainResource
+  }
 
   defmodule PlainResource do
     use Ash.Resource, domain: Domain, data_layer: Ash.DataLayer.Ets
@@ -96,6 +103,36 @@ defmodule AshAi.Tool.ReadPageTest do
     end
   end
 
+  defmodule CappedResource do
+    use Ash.Resource, domain: Domain, data_layer: Ash.DataLayer.Ets
+
+    ets do
+      private? true
+    end
+
+    attributes do
+      uuid_v7_primary_key :id
+      attribute :name, :string, public?: true
+    end
+
+    actions do
+      defaults create: [:name]
+
+      read :read do
+        primary? true
+        pagination offset?: true, default_limit: 3, max_page_size: 3
+
+        prepare fn query, _context ->
+          offset = min(query.offset || 0, 2)
+
+          query
+          |> Ash.Query.offset(offset)
+          |> Ash.Query.limit(min(query.limit || 2, 2 - offset))
+        end
+      end
+    end
+  end
+
   defmodule Domain do
     use Ash.Domain, extensions: [AshAi]
 
@@ -104,6 +141,7 @@ defmodule AshAi.Tool.ReadPageTest do
       resource OffsetResource
       resource KeysetResource
       resource BothResource
+      resource CappedResource
     end
 
     tools do
@@ -111,13 +149,14 @@ defmodule AshAi.Tool.ReadPageTest do
       tool :read_offset, OffsetResource, :read
       tool :read_keyset, KeysetResource, :read
       tool :read_both, BothResource, :read
+      tool :read_capped, CappedResource, :read
 
       tool :read_both_restricted, BothResource, :read, action_parameters: [:filter, :limit]
       tool :read_plain_restricted, PlainResource, :read, action_parameters: [:filter, :limit]
     end
   end
 
-  @resources [PlainResource, OffsetResource, KeysetResource, BothResource]
+  @resources [PlainResource, OffsetResource, KeysetResource, BothResource, CappedResource]
   @sort [%{"field" => "name", "direction" => "asc"}]
 
   setup do
@@ -157,6 +196,29 @@ defmodule AshAi.Tool.ReadPageTest do
   end
 
   describe "offset-paginated actions" do
+    test "page by the limit and offset the action's preparations set", %{registry: registry} do
+      {:ok, json, _page} =
+        registry["read_capped"].(%{"sort" => @sort, "limit" => 3, "offset" => 1}, context())
+
+      page = Jason.decode!(json)
+
+      assert Enum.map(page["results"], & &1["name"]) == ["b"]
+      assert page["limit"] == 1
+      assert page["offset"] == 1
+      assert page["next_offset"] == 2
+
+      {:ok, json, _page} =
+        registry["read_capped"].(%{"sort" => @sort, "offset" => 2}, context())
+
+      assert Jason.decode!(json) == %{
+               "results" => [],
+               "limit" => 0,
+               "offset" => 2,
+               "has_more" => false,
+               "next_offset" => nil
+             }
+    end
+
     test "return a page with the action's default_limit and a count when countable by default",
          %{registry: registry} do
       {:ok, json, %Ash.Page.Offset{} = page} =

@@ -229,7 +229,7 @@ defmodule AshAi.TypeJsonSchemaTest do
     assert properties["filter"] == ref
     assert properties["either"] == ref
 
-    assert ref in properties["wrapper"]["properties"]["condition"]["anyOf"]
+    assert properties["wrapper"]["properties"]["condition"] == ref
 
     assert properties["rule"]["properties"]["condition"] == ref
 
