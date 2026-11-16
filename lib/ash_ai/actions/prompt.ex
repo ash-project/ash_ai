@@ -507,7 +507,21 @@ if Code.ensure_loaded?(ReqLLM) do
                opts,
                context
              ) do
-        {:ok, wrap_result_schema(allow_nil?, inner_schema)}
+        schema = wrap_result_schema(allow_nil?, inner_schema)
+
+        # A `response_schema` is used as given
+        defs =
+          if opts[:response_schema] do
+            %{}
+          else
+            AshAi.OpenApi.json_schema_defs([%{type: returns, constraints: constraints}], nil)
+          end
+
+        if defs == %{} do
+          {:ok, schema}
+        else
+          {:ok, Map.put(schema, "$defs", defs)}
+        end
       end
     end
 
