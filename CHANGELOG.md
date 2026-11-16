@@ -11,6 +11,15 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.6](https://github.com/ash-project/ash_ai/compare/v1.5.5...v1.5.6) (2026-11-16)
+
+
+
+
+### Bug Fixes:
+
+* pull limit from query by [@zachdaniel](https://github.com/zachdaniel)
+
 ## [v1.5.5](https://github.com/ash-project/ash_ai/compare/v1.5.4...v1.5.5) (2026-11-15)
 
 
