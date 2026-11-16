@@ -103,6 +103,26 @@ defmodule AshAi.TypeJsonSchemaTest do
     end
   end
 
+  # Refers to itself, so collecting definitions has to stop at types it has seen
+  defmodule Tree do
+    @moduledoc false
+    use Ash.Type
+
+    @impl Ash.Type
+    def storage_type(_), do: :map
+    @impl Ash.Type
+    def cast_input(value, _), do: {:ok, value}
+    @impl Ash.Type
+    def cast_stored(value, _), do: {:ok, value}
+    @impl Ash.Type
+    def dump_to_native(value, _), do: {:ok, value}
+
+    @impl Ash.Type
+    def referenced_types(constraints) do
+      [{__MODULE__, constraints, :child}, {Condition, [], :condition}]
+    end
+  end
+
   defmodule Report do
     @moduledoc false
     use Ash.Resource, domain: Domain, data_layer: Ash.DataLayer.Ets, extensions: [AshAi]
@@ -214,6 +234,11 @@ defmodule AshAi.TypeJsonSchemaTest do
     assert properties["rule"]["properties"]["condition"] == ref
 
     refute schema |> Map.delete("$defs") |> inspect() =~ ~s("$defs" =>)
+  end
+
+  test "definitions are found through a type that references itself" do
+    assert AshAi.OpenApi.json_schema_defs([%{type: Tree, constraints: []}], nil) ==
+             %{"Condition" => @condition}
   end
 
   test "strict mode applies to the definitions" do

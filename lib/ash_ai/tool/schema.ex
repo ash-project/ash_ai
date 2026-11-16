@@ -71,28 +71,31 @@ defmodule AshAi.Tool.Schema do
         []
       end
 
-    attributes =
+    accepted_attributes =
       if action.type in [:action, :read] do
-        %{}
+        []
       else
         resource
         |> Ash.Resource.Info.attributes()
         |> Enum.filter(&(&1.name in action.accept && &1.writable?))
-        |> Map.new(fn attribute ->
-          value =
-            AshAi.OpenApi.resource_write_attribute_type(
-              attribute,
-              resource,
-              action.type
-            )
-
-          {attribute.name, value}
-        end)
       end
 
+    public_arguments = Enum.filter(action.arguments, & &1.public?)
+
+    attributes =
+      Map.new(accepted_attributes, fn attribute ->
+        value =
+          AshAi.OpenApi.resource_write_attribute_type(
+            attribute,
+            resource,
+            action.type
+          )
+
+        {attribute.name, value}
+      end)
+
     properties =
-      action.arguments
-      |> Enum.filter(& &1.public?)
+      public_arguments
       |> Enum.reduce(attributes, fn argument, attrs ->
         value = AshAi.OpenApi.resource_write_attribute_type(argument, resource, :create)
         Map.put(attrs, argument.name, value)
@@ -165,7 +168,17 @@ defmodule AshAi.Tool.Schema do
     end)
     |> Jason.encode!()
     |> Jason.decode!()
-    |> AshAi.OpenApi.hoist_defs()
+    |> put_defs(
+      AshAi.OpenApi.json_schema_defs(
+        accepted_attributes ++
+          public_arguments ++
+          tool_arguments ++
+          get_by_fields ++
+          Enum.map(identity_keys, &Ash.Resource.Info.attribute(resource, &1)) ++
+          query_fields(resource, action, get_by_fields, opts),
+        resource
+      )
+    )
     |> then(fn schema ->
       if strict? do
         make_strict_schema(schema)
@@ -174,6 +187,25 @@ defmodule AshAi.Tool.Schema do
       end
     end)
   end
+
+  defp put_defs(schema, defs) when defs == %{}, do: schema
+  defp put_defs(schema, defs), do: Map.put(schema, "$defs", defs)
+
+  # The fields a read tool's filter and sort take values of
+  defp query_fields(resource, %{type: :read}, [], opts) do
+    sort_arguments =
+      resource
+      |> AshAi.Tool.query_fields(:sortable_fields, opts[:sortable_fields])
+      |> Enum.flat_map(fn
+        %Ash.Resource.Calculation{arguments: arguments} -> arguments
+        _ -> []
+      end)
+
+    AshAi.Tool.query_fields(resource, :filterable_fields, opts[:filterable_fields]) ++
+      sort_arguments
+  end
+
+  defp query_fields(_resource, _action, _get_by_fields, _opts), do: []
 
   # Recursively transforms a JSON schema to be OpenAI strict-mode compliant:
   # - Every object gets `additionalProperties: false`

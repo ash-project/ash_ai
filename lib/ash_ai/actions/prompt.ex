@@ -509,12 +509,18 @@ if Code.ensure_loaded?(ReqLLM) do
              ) do
         schema = wrap_result_schema(allow_nil?, inner_schema)
 
-        # Only the return type's own schema can carry a type's `$defs`; a
-        # `response_schema` is used as given.
-        if opts[:response_schema] do
+        # A `response_schema` is used as given
+        defs =
+          if opts[:response_schema] do
+            %{}
+          else
+            AshAi.OpenApi.json_schema_defs([%{type: returns, constraints: constraints}], nil)
+          end
+
+        if defs == %{} do
           {:ok, schema}
         else
-          {:ok, AshAi.OpenApi.hoist_defs(schema)}
+          {:ok, Map.put(schema, "$defs", defs)}
         end
       end
     end

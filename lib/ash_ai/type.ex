@@ -19,6 +19,13 @@ defmodule AshAi.Type do
   root schema's `$defs`, merged with the definitions of every other input.
   Two different definitions with the same name raise an error.
 
+  ash_ai finds the types that contribute definitions by following each
+  input's type through arrays, `Ash.Type.NewType`s, the fields of embedded
+  resources, and `c:Ash.Type.referenced_types/1`. A custom type that wraps
+  other types needs `referenced_types/1` for their definitions to be found.
+  It stops at a type that implements `c:ai_json_schema/1`, since that schema
+  replaces whatever its subtypes would describe.
+
       defmodule MyApp.Condition do
         use Ash.Type
         @behaviour AshAi.Type
@@ -51,8 +58,8 @@ defmodule AshAi.Type do
         # ... the rest of the `Ash.Type` callbacks
       end
 
-  The callbacks are named so that a type can also implement
-  `AshJsonApi.Type.json_schema/1`.
+  The callbacks are named so that a type can also implement ash_json_api's
+  `json_schema/1`.
   """
 
   @doc "The JSON Schema for a value of this type, given its constraints."

@@ -428,7 +428,7 @@ defmodule MyApp.Condition do
 end
 ```
 
-The schema is also used inside arrays, maps, unions, embedded resources and `Ash.Type.NewType`s, and for prompt-backed action results. Definitions from all of a tool's inputs are merged by name under the input schema's root `$defs`; two different definitions with the same name raise an error.
+The schema is also used inside arrays, maps, unions, embedded resources and `Ash.Type.NewType`s, and for prompt-backed action results. Definitions from all of a tool's inputs are merged by name under the input schema's root `$defs`; two different definitions with the same name raise an error. ash_ai finds them by following each input's type through arrays, NewTypes, embedded resources and `c:Ash.Type.referenced_types/1`, so a custom type that wraps other types should implement `referenced_types/1`.
 
 ### Read Tool Results
 

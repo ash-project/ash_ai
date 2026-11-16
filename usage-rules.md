@@ -247,7 +247,9 @@ A custom `Ash.Type` is described as `{}` in tool input schemas unless it impleme
 optional `ai_json_schema_defs/1` returns named definitions (`%{"Name" => schema}`) that the
 schema references with `"$ref": "#/$defs/Name"`, which is how a recursive type refers to
 itself. Definitions from all of a tool's inputs are merged under the root `$defs`; two
-different definitions with the same name raise an error.
+different definitions with the same name raise an error. Definitions are found through arrays,
+NewTypes, embedded resources and `Ash.Type.referenced_types/1`, so a custom type that wraps
+other types should implement `referenced_types/1`.
 
 ### Read Tool Results
 
