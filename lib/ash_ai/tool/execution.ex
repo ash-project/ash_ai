@@ -141,7 +141,12 @@ defmodule AshAi.Tool.Execution do
       |> apply_select(ctx)
       |> Ash.Query.for_read(action.name, input, opts)
 
-    page_opts = build_page_opts(action.pagination, limit, arguments)
+    page_opts =
+      build_page_opts(
+        action.pagination,
+        query.limit || limit,
+        Map.put(arguments, "offset", query.offset)
+      )
 
     execute_read(query, action, arguments["result_type"] || "run_query", page_opts, ctx)
   end
@@ -346,13 +351,7 @@ defmodule AshAi.Tool.Execution do
   # counts automatically).
   defp execute_read(query, _action, "run_query", page_opts, ctx) when is_list(page_opts) do
     query
-    |> Ash.Query.unset([:limit, :offset])
-    |> Ash.Query.page(page_opts)
-    |> Ash.read(load: ctx.load, strict?: ctx.load_strict?)
-    |> case do
-      {:ok, %struct{} = page} when struct in [Ash.Page.Offset, Ash.Page.Keyset] -> page
-      {:error, error} -> raise Ash.Error.to_error_class(error)
-    end
+    |> read_page(page_opts, ctx)
     |> as_requested_page(page_opts)
     |> then(fn page ->
       page
@@ -472,6 +471,23 @@ defmodule AshAi.Tool.Execution do
   # paginates by keyset but wraps the result according to the global
   # `config :ash, :default_page_type` (offset unless configured). The tool asked
   # for keyset, so rebuild the page as one; the records already carry keysets.
+  defp read_page(query, page_opts, ctx) do
+    if page_opts[:limit] == 0,
+      do: %Ash.Page.Offset{results: [], limit: 0, offset: page_opts[:offset] || 0, more?: false},
+      else: run_page(query, page_opts, ctx)
+  end
+
+  defp run_page(query, page_opts, ctx) do
+    query
+    |> Ash.Query.unset([:limit, :offset])
+    |> Ash.Query.page(page_opts)
+    |> Ash.read(load: ctx.load, strict?: ctx.load_strict?)
+    |> case do
+      {:ok, %struct{} = page} when struct in [Ash.Page.Offset, Ash.Page.Keyset] -> page
+      {:error, error} -> raise Ash.Error.to_error_class(error)
+    end
+  end
+
   defp as_requested_page(%Ash.Page.Offset{} = page, page_opts) do
     if Keyword.has_key?(page_opts, :offset) do
       page
