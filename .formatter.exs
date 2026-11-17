@@ -13,6 +13,7 @@ spark_locals_without_parens = [
   ash_oban_trigger_name: 1,
   async: 1,
   attributes: 1,
+  calculation: 1,
   compact_field_list?: 1,
   constraints: 1,
   contents: 1,

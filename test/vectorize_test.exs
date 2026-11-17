@@ -95,4 +95,17 @@ defmodule AshAiVectorizeTest do
     assert is_list(Ash.Vector.to_list(artist.full_text_vector))
     assert is_list(Ash.Vector.to_list(artist.name_full_text_vector))
   end
+
+  test "calculation full_text is sent to the embedding model" do
+    artist =
+      Music.create_artist_calculation!(%{
+        name: "John Doe",
+        bio: "John Doe is a musician"
+      })
+      |> Ash.load!(:full_text_vector)
+
+    assert is_list(Ash.Vector.to_list(artist.full_text_vector))
+
+    assert "John Doe - John Doe is a musician" in Process.get(:ash_ai_embedding_texts)
+  end
 end

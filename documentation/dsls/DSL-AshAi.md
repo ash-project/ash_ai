@@ -199,9 +199,10 @@ Target: `AshAi.Tool`
 
 | Name | Type | Default | Docs |
 |------|------|---------|------|
-| [`text`](#vectorize-full_text-text){: #vectorize-full_text-text .spark-required} | `(any -> any)` |  | A function or expr that takes a list of records and computes a full text string that will be vectorized. If given an expr, use `atomic_ref` to refer to new values, as this is set as an atomic update. |
 | [`name`](#vectorize-full_text-name){: #vectorize-full_text-name } | `atom` | `:full_text_vector` | The name of the attribute to store the text vector in |
 | [`used_attributes`](#vectorize-full_text-used_attributes){: #vectorize-full_text-used_attributes } | `list(atom)` |  | If set, a vector is only regenerated when these attributes are changed |
+| [`text`](#vectorize-full_text-text){: #vectorize-full_text-text } | `(any -> any)` |  | A function or expr that takes a list of records and computes a full text string that will be vectorized. If given an expr, use `atomic_ref` to refer to new values, as this is set as an atomic update. |
+| [`calculation`](#vectorize-full_text-calculation){: #vectorize-full_text-calculation } | `atom` |  | The name of a calculation whose value will be vectorized |
 
 
 

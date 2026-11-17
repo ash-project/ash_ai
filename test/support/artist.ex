@@ -56,6 +56,46 @@ defmodule AshAi.Test.Music.ArtistAfterAction do
   end
 end
 
+defmodule AshAi.Test.Music.ArtistCalculation do
+  @moduledoc false
+
+  use Ash.Resource,
+    domain: AshAi.Test.Music,
+    extensions: [AshAi],
+    data_layer: AshPostgres.DataLayer
+
+  postgres do
+    table("artists")
+    repo(AshAi.TestRepo)
+  end
+
+  calculations do
+    calculate :embedding_text, :string, expr(name <> " - " <> bio)
+  end
+
+  vectorize do
+    strategy :after_action
+
+    full_text do
+      calculation :embedding_text
+      used_attributes [:name, :bio]
+    end
+
+    embedding_model(AshAi.Test.EmbeddingModel)
+  end
+
+  attributes do
+    uuid_v7_primary_key :id, writable?: true
+    attribute :name, :string, public?: true
+    attribute :bio, :string, public?: true
+  end
+
+  actions do
+    default_accept [:*]
+    defaults [:create, :read, :update, :destroy]
+  end
+end
+
 defmodule AshAi.Test.Music.ArtistManual do
   @moduledoc false
   use Ash.Resource,
