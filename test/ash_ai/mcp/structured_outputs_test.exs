@@ -69,6 +69,18 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
         run fn _input, _context -> {:ok, Ash.CiString.new("{Case Insensitive}")} end
       end
 
+      action :uuid_result, :uuid do
+        run fn _input, _context -> {:ok, "0b1e2a3c-4d5e-4f60-8a7b-9c0d1e2f3a4b"} end
+      end
+
+      action :term_result, :term do
+        run fn _input, _context -> {:ok, "{not JSON}\n- a list item"} end
+      end
+
+      action :invalid_utf8_result, :binary do
+        run fn _input, _context -> {:ok, <<0xFF, 0xFE>>} end
+      end
+
       action :datetime_result, :utc_datetime do
         run fn _input, _context -> {:ok, ~U[2026-08-11 12:30:00Z]} end
       end
@@ -133,6 +145,9 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
       tool :scalar_result, Resource, :scalar_result
       tool :markdown_result, Resource, :markdown_result
       tool :ci_string_result, Resource, :ci_string_result
+      tool :uuid_result, Resource, :uuid_result
+      tool :term_result, Resource, :term_result
+      tool :invalid_utf8_result, Resource, :invalid_utf8_result
       tool :datetime_result, Resource, :datetime_result
       tool :array_result, Resource, :array_result
       tool :nil_result, Resource, :nil_result
@@ -200,7 +215,9 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
 
       for {name, text} <- [
             {"markdown_result", "# Title\n\nFirst \"quoted\" paragraph."},
-            {"ci_string_result", "{Case Insensitive}"}
+            {"ci_string_result", "{Case Insensitive}"},
+            {"uuid_result", "0b1e2a3c-4d5e-4f60-8a7b-9c0d1e2f3a4b"},
+            {"term_result", "{not JSON}\n- a list item"}
           ] do
         call_result = call_tool(session_id, name)
 
@@ -208,6 +225,17 @@ defmodule AshAi.Mcp.StructuredOutputsTest do
         assert call_result["content"] == [%{"type" => "text", "text" => text}]
         refute Map.has_key?(call_result, "structuredContent")
       end
+    end
+
+    @tag :capture_log
+    test "doesn't send a binary result that isn't valid UTF-8 as text" do
+      session_id = initialize()
+      call_result = call_tool(session_id, "invalid_utf8_result")
+
+      assert call_result["isError"] == true
+      assert [%{"type" => "text", "text" => text}] = call_result["content"]
+      assert text =~ "unexpected error occurred"
+      refute Map.has_key?(call_result, "structuredContent")
     end
 
     test "keeps other results JSON-encoded" do

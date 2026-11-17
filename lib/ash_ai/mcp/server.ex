@@ -1478,9 +1478,10 @@ defmodule AshAi.Mcp.Server do
   defp encode_tool_result(%{action: %{type: :action, returns: nil}}, result), do: {:ok, result}
 
   # A string result is the text content itself. JSON-encoding it would hand the
-  # client a quoted literal with every newline escaped.
-  defp encode_tool_result(tool, result) do
-    if text_result?(tool, result) do
+  # client a quoted literal with every newline escaped. A binary that isn't
+  # valid UTF-8 can't be text, so it still goes through `Jason.encode!/1`.
+  defp encode_tool_result(_tool, result) do
+    if text_result?(result) do
       {:ok, to_string(result)}
     else
       {:ok, Jason.encode!(result)}
@@ -1489,22 +1490,9 @@ defmodule AshAi.Mcp.Server do
     error -> {:error, AshAi.Tool.Errors.format(error)}
   end
 
-  defp text_result?(%{action: %{type: :action, returns: returns}}, result)
-       when is_binary(result) or is_struct(result, Ash.CiString) do
-    string_type?(returns) and String.valid?(to_string(result))
-  end
-
-  defp text_result?(_tool, _result), do: false
-
-  defp string_type?(type) do
-    type = Ash.Type.get_type(type)
-
-    cond do
-      type in [Ash.Type.String, Ash.Type.CiString] -> true
-      Ash.Type.NewType.new_type?(type) -> string_type?(Ash.Type.NewType.subtype_of(type))
-      true -> false
-    end
-  end
+  defp text_result?(result) when is_binary(result), do: String.valid?(result)
+  defp text_result?(%Ash.CiString{} = result), do: String.valid?(to_string(result))
+  defp text_result?(_result), do: false
 
   # `is_map/1` also holds for structs such as DateTime, which Jason encodes as
   # a string, so the encoded text decides whether the result is an object or
