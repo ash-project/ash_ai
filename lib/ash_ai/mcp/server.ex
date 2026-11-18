@@ -1477,17 +1477,28 @@ defmodule AshAi.Mcp.Server do
 
   defp encode_tool_result(%{action: %{type: :action, returns: nil}}, result), do: {:ok, result}
 
+  # A string result is the text content itself. JSON-encoding it would hand the
+  # client a quoted literal with every newline escaped. A binary that isn't
+  # valid UTF-8 can't be text, so it still goes through `Jason.encode!/1`.
   defp encode_tool_result(_tool, result) do
-    {:ok, Jason.encode!(result)}
+    if text_result?(result) do
+      {:ok, to_string(result)}
+    else
+      {:ok, Jason.encode!(result)}
+    end
   rescue
     error -> {:error, AshAi.Tool.Errors.format(error)}
   end
 
+  defp text_result?(result) when is_binary(result), do: String.valid?(result)
+  defp text_result?(%Ash.CiString{} = result), do: String.valid?(to_string(result))
+  defp text_result?(_result), do: false
+
   # `is_map/1` also holds for structs such as DateTime, which Jason encodes as
   # a string, so the encoded text decides whether the result is an object or
-  # an array
+  # an array. A CiString is sent as plain text, which may itself start with "{".
   defp maybe_put_structured_content(result, structured_content, "{" <> _, _lists?)
-       when is_map(structured_content),
+       when is_map(structured_content) and not is_struct(structured_content, Ash.CiString),
        do: Map.put(result, "structuredContent", structured_content)
 
   defp maybe_put_structured_content(result, structured_content, "[" <> _, true)
