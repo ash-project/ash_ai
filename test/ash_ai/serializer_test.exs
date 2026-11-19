@@ -79,6 +79,22 @@ defmodule AshAi.SerializerTest do
     end
   end
 
+  defmodule DecimalResource do
+    use Ash.Resource,
+      domain: AshAi.SerializerTest.TestDomain,
+      data_layer: Ash.DataLayer.Ets
+
+    attributes do
+      uuid_v7_primary_key(:id, writable?: true)
+      attribute :name, :string, public?: true
+      attribute :amount, :decimal, public?: true
+    end
+
+    actions do
+      defaults [:read, create: [:name, :amount]]
+    end
+  end
+
   defmodule FieldPolicyResource do
     use Ash.Resource,
       domain: AshAi.SerializerTest.TestDomain,
@@ -141,6 +157,7 @@ defmodule AshAi.SerializerTest do
       resource UnionResource
       resource PartialSelectResource
       resource AggregateResource
+      resource DecimalResource
       resource FieldPolicyResource
       resource NestedFieldPolicyResource
     end
@@ -149,6 +166,7 @@ defmodule AshAi.SerializerTest do
       tool :read_union_resources, UnionResource, :read
       tool :read_partial_select, PartialSelectResource, :read_name_only
       tool :read_aggregate_resources, AggregateResource, :read
+      tool :read_decimal_resources, DecimalResource, :read
       tool :read_field_policy_resources, FieldPolicyResource, :read
       tool :read_nested_field_policy_resources, NestedFieldPolicyResource, :read, load: [:user]
     end
@@ -315,6 +333,34 @@ defmodule AshAi.SerializerTest do
                )
 
       assert Jason.decode!(json) == "19.75"
+    end
+  end
+
+  describe "Tools.execute with decimal attributes" do
+    test "writes decimals in normal notation, keeping their scale" do
+      for {name, amount} <- [{"zero", "0.000000000"}, {"small", "0.0000001"}, {"plain", "12.50"}] do
+        DecimalResource
+        |> Ash.Changeset.for_create(:create, %{
+          name: name,
+          amount: Decimal.new(amount)
+        })
+        |> Ash.create!()
+      end
+
+      [tool] = AshAi.exposed_tools(actions: [{DecimalResource, [:read]}])
+
+      assert {:ok, json, _result} = AshAi.Tools.execute(tool, %{}, %{})
+
+      by_name =
+        json
+        |> Jason.decode!()
+        |> Map.fetch!("results")
+        |> Map.new(&{&1["name"], &1["amount"]})
+
+      # `Decimal.to_string/1` would give "0E-9" and "1E-7" for the first two.
+      assert by_name["zero"] == "0.000000000"
+      assert by_name["small"] == "0.0000001"
+      assert by_name["plain"] == "12.50"
     end
   end
 end

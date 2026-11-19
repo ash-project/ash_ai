@@ -19,7 +19,7 @@ defmodule AshAi.Dsl do
       doc: "The name of the argument."
     ],
     type: [
-      type: :any,
+      type: Ash.OptionsHelpers.ash_type(),
       required: true,
       doc: "The Ash type of the argument (e.g., :string, :date, :integer)."
     ],
@@ -144,6 +144,11 @@ defmodule AshAi.Dsl do
       default: nil,
       doc:
         "The identity to use for update/destroy actions. Defaults to the primary key. Set to `false` to disable entirely."
+    ],
+    read_action: [
+      type: :atom,
+      doc:
+        "For update/destroy actions, the read action used to find the record. Its filters, preparations and policies apply to the lookup, so a record it cannot see is reported as not found. Defaults to the action's `atomic_upgrade_with`, or the primary read action."
     ],
     get_by: [
       type: {:or, [:atom, {:list, :atom}]},
@@ -311,7 +316,8 @@ defmodule AshAi.Dsl do
     schema: @tool_argument_schema,
     describe: "An argument to be passed to the tool.",
     target: AshAi.Tool.Argument,
-    args: [:name, :type]
+    args: [:name, :type],
+    transform: {AshAi.Tool.Argument, :transform, []}
   }
 
   @tool %Spark.Dsl.Entity{
@@ -328,6 +334,7 @@ defmodule AshAi.Dsl do
       ~s(tool :get_artist_by_id, Artist, :read, get_by: :id),
       ~s(tool :create_artist, Artist, :create, description: "Create a new artist"),
       ~s(tool :update_artist, Artist, :update, identity: :id, load: [:albums]),
+      ~s(tool :update_artist, Artist, :update, read_action: :read_in_scope),
       ~s(tool :delete_artist, Artist, :destroy, title: "Delete artist", annotations: [destructive_hint: true, idempotent_hint: true]),
       ~s(tool :list_artists, Artist, :read, load: [albums: [:title]], load_strict?: true),
       ~s(tool :list_artists, Artist, :read, select: [:name]),

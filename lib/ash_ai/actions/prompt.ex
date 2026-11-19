@@ -507,7 +507,21 @@ if Code.ensure_loaded?(ReqLLM) do
                opts,
                context
              ) do
-        {:ok, wrap_result_schema(allow_nil?, inner_schema)}
+        schema = wrap_result_schema(allow_nil?, inner_schema)
+
+        # A `response_schema` is used as given
+        defs =
+          if opts[:response_schema] do
+            %{}
+          else
+            AshAi.OpenApi.json_schema_defs([%{type: returns, constraints: constraints}], nil)
+          end
+
+        if defs == %{} do
+          {:ok, schema}
+        else
+          {:ok, Map.put(schema, "$defs", defs)}
+        end
       end
     end
 
@@ -546,8 +560,16 @@ if Code.ensure_loaded?(ReqLLM) do
 
     defp result_inner_schema(nil, _constraints, nil, _input, _opts, _context), do: {:ok, nil}
 
-    defp result_inner_schema(returns, constraints, nil, _input, _opts, _context) do
-      {:ok, return_inner_schema(%{returns: returns, constraints: constraints})}
+    defp result_inner_schema(returns, constraints, nil, _input, opts, _context) do
+      schema =
+        %{returns: returns, constraints: constraints}
+        |> return_inner_schema()
+        |> Jason.encode!()
+        |> Jason.decode!()
+
+      if Keyword.get(opts, :strict, true),
+        do: {:ok, AshAi.Tool.Schema.make_strict_schema(schema)},
+        else: {:ok, schema}
     end
 
     defp result_inner_schema(nil, _constraints, _response_schema, _input, _opts, _context) do

@@ -364,6 +364,7 @@ end
 **Important**: Tools have different access levels for different operations:
 - **Filtering/Sorting/Aggregation**: Only public attributes (`public?: true`) can be used
 - **Single-record lookup**: Use `get_by` on read tools to look up one record by filterable fields
+- **Finding the record to change**: Update and destroy tools find their record through the primary read action. Use `read_action` to find it through another read action, whose filters and policies then apply
 - **Arguments**: Only public action arguments are exposed
 - **Response data**: Public attributes are returned by default
 - **Loading data**: Use the `load` option to include relationships, calculations, or additional attributes (including private ones) in responses
@@ -388,6 +389,46 @@ Key distinction:
 - Private attributes cannot be used for filtering, sorting, or aggregation
 - Private attributes CAN be included in responses when using the `load` option
 - The `load` option is primarily for loading relationships and calculations, but also makes any loaded attributes (including private ones) visible
+
+### Custom Types in Tool Inputs
+
+ash_ai builds each tool's input schema from the action's attribute and argument types. A custom `Ash.Type` it doesn't know is described as `{}` (any value). To describe it, implement `AshAi.Type`:
+
+```elixir
+defmodule MyApp.Condition do
+  use Ash.Type
+  @behaviour AshAi.Type
+
+  # The schema used wherever the type appears
+  @impl AshAi.Type
+  def ai_json_schema(_constraints), do: %{"$ref" => "#/$defs/Condition"}
+
+  # Optional: named definitions the schema references, such as itself
+  @impl AshAi.Type
+  def ai_json_schema_defs(_constraints) do
+    %{
+      "Condition" => %{
+        "anyOf" => [
+          %{
+            "type" => "object",
+            "properties" => %{
+              "all" => %{"type" => "array", "items" => %{"$ref" => "#/$defs/Condition"}}
+            }
+          },
+          %{
+            "type" => "object",
+            "properties" => %{"key" => %{"type" => "string"}, "eq" => %{}}
+          }
+        ]
+      }
+    }
+  end
+
+  # ... the rest of the Ash.Type callbacks
+end
+```
+
+The schema is also used inside arrays, maps, unions, embedded resources and `Ash.Type.NewType`s, and for prompt-backed action results. Definitions from all of a tool's inputs are merged by name under the input schema's root `$defs`; two different definitions with the same name raise an error. ash_ai finds them by following each input's type through arrays, NewTypes, embedded resources and `c:Ash.Type.referenced_types/1`, so a custom type that wraps other types should implement `referenced_types/1`.
 
 ### Read Tool Results
 

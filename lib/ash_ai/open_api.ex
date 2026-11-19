@@ -78,8 +78,6 @@ defmodule AshAi.OpenApi do
           |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
           |> Enum.map(&elem(&1, 0))
       }
-      |> add_null_for_non_required()
-      |> make_all_required()
     else
       %{type: :object}
     end
@@ -136,6 +134,9 @@ defmodule AshAi.OpenApi do
 
   def resource_write_attribute_type(%{type: type} = attr, resource, action_type) do
     cond do
+      ai_json_schema?(type) ->
+        type.ai_json_schema(attr.constraints)
+
       embedded?(type) ->
         embedded_type_input(attr, action_type)
 
@@ -153,6 +154,125 @@ defmodule AshAi.OpenApi do
         resource_attribute_type(attr, resource)
     end
     |> with_attribute_description(attr)
+  end
+
+  @doc false
+  # The definitions referenced by the schemas of `fields`, merged by name: the
+  # `c:AshAi.Type.ai_json_schema_defs/1` of each `AshAi.Type` reachable from the
+  # fields' types through NewTypes, `c:Ash.Type.referenced_types/1` and the
+  # fields of embedded resources.
+  def json_schema_defs(fields, resource) do
+    {defs, _seen} =
+      Enum.reduce(fields, {%{}, MapSet.new()}, fn field, acc ->
+        {type, constraints} = field_type(field, resource)
+        collect_defs(type, constraints, acc)
+      end)
+
+    defs
+  end
+
+  defp collect_defs(type, constraints, {defs, seen} = acc) do
+    constraints = constraints || []
+
+    case Ash.Type.get_type(type) do
+      {:array, type} ->
+        collect_defs(type, constraints[:items], acc)
+
+      type when is_nil(type) or not is_atom(type) ->
+        acc
+
+      type ->
+        key = {type, constraints}
+
+        cond do
+          MapSet.member?(seen, key) ->
+            acc
+
+          ai_json_schema?(type) ->
+            {type |> type_defs(constraints) |> Enum.reduce(defs, &put_def/2),
+             MapSet.put(seen, key)}
+
+          true ->
+            type
+            |> referenced_types(constraints)
+            |> Enum.reduce({defs, MapSet.put(seen, key)}, fn {type, constraints}, acc ->
+              collect_defs(type, constraints, acc)
+            end)
+        end
+    end
+  end
+
+  defp type_defs(type, constraints) do
+    if function_exported?(type, :ai_json_schema_defs, 1) do
+      # Compare definitions as JSON, so atom and string keys are the same
+      constraints |> type.ai_json_schema_defs() |> Jason.encode!() |> Jason.decode!()
+    else
+      %{}
+    end
+  end
+
+  defp put_def({name, definition}, defs) do
+    case defs do
+      %{^name => ^definition} ->
+        defs
+
+      %{^name => other} ->
+        raise ArgumentError, """
+        Two different JSON Schema definitions are named #{inspect(name)} in `$defs`:
+
+        #{inspect(other, pretty: true)}
+
+        #{inspect(definition, pretty: true)}
+
+        Each name returned by `ai_json_schema_defs/1` must always mean the same schema.
+        """
+
+      defs ->
+        Map.put(defs, name, definition)
+    end
+  end
+
+  # The types whose schemas can appear inside this type's schema
+  defp referenced_types(type, constraints) do
+    cond do
+      Ash.Type.NewType.new_type?(type) ->
+        [{Ash.Type.NewType.subtype_of(type), Ash.Type.NewType.constraints(type, constraints)}]
+
+      Ash.Resource.Info.resource?(type) ->
+        embedded_fields(type)
+
+      type == Ash.Type.Struct && constraints[:instance_of] && !constraints[:fields] ->
+        [{constraints[:instance_of], []}]
+
+      function_exported?(type, :referenced_types, 1) ->
+        Enum.map(type.referenced_types(constraints), fn {type, constraints, _via} ->
+          {type, constraints}
+        end)
+
+      true ->
+        []
+    end
+  end
+
+  # The attributes, calculations, aggregates and action arguments that an
+  # embedded resource's schemas are built from
+  defp embedded_fields(resource) do
+    arguments =
+      resource
+      |> Ash.Resource.Info.actions()
+      |> Enum.filter(&(&1.type in [:create, :update]))
+      |> Enum.flat_map(& &1.arguments)
+
+    resource
+    |> Ash.Resource.Info.attributes()
+    |> Enum.concat(Ash.Resource.Info.public_calculations(resource))
+    |> Enum.concat(Ash.Resource.Info.public_aggregates(resource))
+    |> Enum.concat(arguments)
+    |> Enum.map(&field_type(&1, resource))
+  end
+
+  defp ai_json_schema?(type) do
+    is_atom(type) and Code.ensure_loaded?(type) and function_exported?(type, :ai_json_schema, 1)
   end
 
   # Include the tag before deduplicating anyOf branches, or fieldless variants
@@ -189,47 +309,6 @@ defmodule AshAi.OpenApi do
       [] -> subtypes
       matchable -> matchable
     end
-  end
-
-  defp add_null_for_non_required(%{required: required} = schema)
-       when is_list(required) do
-    Map.update!(schema, :properties, fn
-      properties when is_map(properties) ->
-        Enum.reduce(properties, %{}, fn {key, value}, acc ->
-          if Enum.member?(required, key) do
-            Map.put(acc, key, value)
-          else
-            description = value |> Map.get(:description)
-            value = value |> Map.delete(:description)
-
-            new_value =
-              %{
-                "anyOf" => [
-                  %{
-                    "type" => "null"
-                  },
-                  value
-                ]
-              }
-              |> then(fn new_value ->
-                case description do
-                  nil -> new_value
-                  description -> Map.put(new_value, "description", description)
-                end
-              end)
-              |> unwrap_any_of()
-
-            Map.put(
-              acc,
-              key,
-              new_value
-            )
-          end
-        end)
-
-      properties ->
-        properties
-    end)
   end
 
   @spec with_attribute_description(
@@ -287,6 +366,8 @@ defmodule AshAi.OpenApi do
 
     {aggregate_type, constraints}
   end
+
+  defp field_type(%{type: type} = field, _resource), do: {type, Map.get(field, :constraints)}
 
   defp unwrap_any_of(%{"anyOf" => options} = schema) do
     {options_remaining, options_to_add} =
@@ -407,16 +488,6 @@ defmodule AshAi.OpenApi do
         end),
       required: required
     }
-    |> add_null_for_non_required()
-    |> make_all_required()
-  end
-
-  # this is kind of a hack, specifically because open ai requires that all fields
-  # be required. But the value can be `null`
-  defp make_all_required(map) do
-    required_list = map.properties |> Map.keys() |> Enum.sort()
-
-    Map.put(map, :required, required_list)
   end
 
   @doc false
@@ -547,8 +618,6 @@ defmodule AshAi.OpenApi do
           |> Enum.filter(fn {_, config} -> !config[:allow_nil?] end)
           |> Enum.map(&elem(&1, 0))
       }
-      |> add_null_for_non_required()
-      |> make_all_required()
     else
       %{type: :object}
     end
@@ -670,8 +739,6 @@ defmodule AshAi.OpenApi do
           properties: resource_attributes(instance_of, false),
           required: required_attributes(instance_of)
         }
-        |> add_null_for_non_required()
-        |> make_all_required()
       else
         resource_attribute_type(%{attr | type: Ash.Type.Map}, resource)
       end
@@ -684,6 +751,9 @@ defmodule AshAi.OpenApi do
     constraints = attr.constraints
 
     cond do
+      ai_json_schema?(type) ->
+        type.ai_json_schema(constraints)
+
       embedded?(type) ->
         %{
           type: :object,
@@ -691,8 +761,6 @@ defmodule AshAi.OpenApi do
           properties: resource_attributes(type, false),
           required: required_attributes(type)
         }
-        |> add_null_for_non_required()
-        |> make_all_required()
 
       Ash.Type.NewType.new_type?(type) ->
         new_constraints = Ash.Type.NewType.constraints(type, constraints)

@@ -11,6 +11,32 @@ See [Conventional Commits](Https://conventionalcommits.org) for commit guideline
 
 <!-- changelog -->
 
+## [v1.5.6](https://github.com/ash-project/ash_ai/compare/v1.5.5...v1.5.6) (2026-11-16)
+
+
+
+
+### Bug Fixes:
+
+* pull limit from query by [@zachdaniel](https://github.com/zachdaniel)
+
+## [v1.5.5](https://github.com/ash-project/ash_ai/compare/v1.5.4...v1.5.5) (2026-11-15)
+
+
+
+
+### Improvements:
+
+* add `read_action` option to update and destroy tools by [@sebastianseilund](https://github.com/sebastianseilund) [(#271)](https://github.com/ash-project/ash_ai/pull/271)
+
+### Bug Fixes:
+
+* don't require all keys for embedded attributes by [@zachdaniel](https://github.com/zachdaniel)
+
+* resolve the type of a tool's own arguments by [@sebastianseilund](https://github.com/sebastianseilund) [(#273)](https://github.com/ash-project/ash_ai/pull/273)
+
+* write decimals in normal notation, not scientific by [@sebastianseilund](https://github.com/sebastianseilund) [(#270)](https://github.com/ash-project/ash_ai/pull/270)
+
 ## [v1.5.4](https://github.com/ash-project/ash_ai/compare/v1.5.3...v1.5.4) (2026-11-10)
 
 
