@@ -154,6 +154,18 @@ defmodule AshAiTest do
       assert Map.has_key?(schema["properties"], "before")
     end
 
+    test "strict mode keeps annotations on a nullable union result_type" do
+      [tool] = AshAi.list_tools(actions: [{Artist, [:read]}], strict: true)
+
+      result_type = tool.parameter_schema["properties"]["result_type"]
+
+      assert result_type["default"] == "run_query"
+      assert result_type["description"] == "The type of result to return"
+      assert [%{"type" => "null"}, %{"anyOf" => [_, _]} = inner] = result_type["anyOf"]
+      refute Map.has_key?(inner, "default")
+      refute Map.has_key?(inner, "description")
+    end
+
     test "full_filter_schema? generates the full strict filter schema" do
       tool =
         [actions: [{Artist, [:read]}]]
