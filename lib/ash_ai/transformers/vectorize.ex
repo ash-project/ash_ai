@@ -22,7 +22,7 @@ defmodule AshAi.Transformers.Vectorize do
 
     full_text_entities =
       AshAi.Info.vectorize(dsl)
-      |> Enum.reject(&is_nil(&1.text))
+      |> Enum.reject(&(is_nil(&1.text) && is_nil(&1.calculation)))
 
     if Enum.empty?(attrs) && Enum.empty?(full_text_entities) do
       {:ok, dsl}
@@ -33,7 +33,7 @@ defmodule AshAi.Transformers.Vectorize do
 
       full_text_entities =
         full_text_entities
-        |> Enum.map(&{:full_text, &1.name, &1.used_attributes, &1.text})
+        |> Enum.map(&{:full_text, &1.name, &1.used_attributes, &1.text, &1.calculation})
 
       names =
         full_text_entities

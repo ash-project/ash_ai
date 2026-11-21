@@ -257,9 +257,12 @@ defmodule AshAi.Dsl do
     ],
     text: [
       type: {:fun, 1},
-      required: true,
       doc:
         "A function or expr that takes a list of records and computes a full text string that will be vectorized. If given an expr, use `atomic_ref` to refer to new values, as this is set as an atomic update."
+    ],
+    calculation: [
+      type: :atom,
+      doc: "The name of a calculation whose value will be vectorized"
     ]
   ]
 
