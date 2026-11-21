@@ -265,6 +265,8 @@ defmodule AshAi.Tool.Schema do
 
   def make_strict_schema(schema), do: schema
 
+  @annotation_keywords ~w(title description default examples deprecated readOnly writeOnly)
+
   # Makes a schema accept null, preferring the compact `"type": [..., "null"]`
   # form over an `anyOf` wrapper. `enum` validates independently of `type`, so
   # null is appended there too.
@@ -285,7 +287,12 @@ defmodule AshAi.Tool.Schema do
     end
   end
 
-  defp make_nullable(schema), do: %{"anyOf" => [%{"type" => "null"}, schema]}
+  # Annotations stay on the wrapper so they still describe the property, rather
+  # than being buried in the non-null branch.
+  defp make_nullable(schema) do
+    {annotations, inner} = Map.split(schema, @annotation_keywords)
+    Map.put(annotations, "anyOf", [%{"type" => "null"}, inner])
+  end
 
   # Recursively removes `additionalProperties` from a schema map.
   defp strip_additional_properties(schema) when is_map(schema) do
