@@ -399,7 +399,6 @@ defmodule AshAi do
     defstruct [
       :used_attributes,
       :text,
-      :calculation,
       :__identifier__,
       name: :full_text_vector,
       __spark_metadata__: nil

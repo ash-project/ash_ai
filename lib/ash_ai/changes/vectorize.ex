@@ -22,26 +22,21 @@ defmodule AshAi.Changes.Vectorize do
 
     changes =
       AshAi.Info.vectorize(changeset.resource)
-      |> Enum.map(&{:full_text, &1.name, &1.text, &1.calculation})
+      |> Enum.map(&{:full_text, &1.name, &1.text})
       |> Enum.concat(attrs)
       |> Enum.map(fn
         {source, dest} ->
           text = Map.get(changeset.data, source)
           {dest, text}
 
-        {:full_text, name, fun, calculation} ->
-          record =
-            if calculation do
-              Ash.load!(changeset.data, calculation, reuse_values?: true)
+        {:full_text, name, text} ->
+          text =
+            if is_function(text) do
+              text.(changeset.data)
             else
               changeset.data
-            end
-
-          text =
-            if calculation do
-              Map.get(record, calculation)
-            else
-              fun.(record)
+              |> Ash.load!(text, reuse_values?: true)
+              |> Map.get(text)
             end
 
           {name, text}

@@ -77,7 +77,7 @@ defmodule AshAi.Test.Music.ArtistCalculation do
     strategy :after_action
 
     full_text do
-      calculation :embedding_text
+      text :embedding_text
       used_attributes [:name, :bio]
     end
 
