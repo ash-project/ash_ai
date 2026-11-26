@@ -268,28 +268,27 @@ defmodule AshAi.Tool.Schema do
   @annotation_keywords ~w(title description default examples deprecated readOnly writeOnly)
 
   # Makes a schema accept null, preferring the compact `"type": [..., "null"]`
-  # form over an `anyOf` wrapper. `enum` validates independently of `type`, so
-  # null is appended there too.
+  # form over an `anyOf` wrapper. An enum is wrapped instead: Anthropic's structured
+  # output refuses an enum whose `type` is a list, even with null among its values.
+  defp make_nullable(%{"enum" => enum} = schema) when is_list(enum) do
+    if nil in enum, do: schema, else: wrap_nullable(schema)
+  end
+
   defp make_nullable(%{"type" => type} = schema) when is_binary(type) or is_list(type) do
     types = List.wrap(type)
 
     if "null" in types do
       schema
     else
-      schema
-      |> Map.put("type", types ++ ["null"])
-      |> then(fn s ->
-        case s["enum"] do
-          enum when is_list(enum) -> Map.put(s, "enum", enum ++ [nil])
-          _ -> s
-        end
-      end)
+      Map.put(schema, "type", types ++ ["null"])
     end
   end
 
+  defp make_nullable(schema), do: wrap_nullable(schema)
+
   # Annotations stay on the wrapper so they still describe the property, rather
   # than being buried in the non-null branch.
-  defp make_nullable(schema) do
+  defp wrap_nullable(schema) do
     {annotations, inner} = Map.split(schema, @annotation_keywords)
     Map.put(annotations, "anyOf", [%{"type" => "null"}, inner])
   end

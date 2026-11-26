@@ -27,6 +27,20 @@ defmodule AshAi.LiveLLM.StructuredOutputTest do
     end
   end
 
+  # An optional enum: strict mode makes it nullable, which Anthropic only accepts as an
+  # `anyOf` with null, not as a `type` list.
+  defmodule MealGuess do
+    use Ash.Resource, data_layer: :embedded
+
+    attributes do
+      attribute :name, :string, public?: true, allow_nil?: false
+
+      attribute :meal_type, :atom,
+        public?: true,
+        constraints: [one_of: [:breakfast, :lunch, :dinner, :snack]]
+    end
+  end
+
   defmodule AnalysisResource do
     use Ash.Resource, domain: AshAi.LiveLLM.StructuredOutputTest.TestDomain
 
@@ -58,6 +72,16 @@ defmodule AshAi.LiveLLM.StructuredOutputTest do
               prompt:
                 {"You are a sentiment analyzer. Respond only with the sentiment.",
                  "Analyze the sentiment of: <%= @input.arguments.text %>"}
+            )
+      end
+
+      action :guess_meal_anthropic, MealGuess do
+        argument :text, :string, allow_nil?: false
+
+        description "Name the meal and say which meal it was, if that's clear."
+
+        run AshAi.Actions.prompt("anthropic:claude-opus-5-5",
+              prompt: {"You name meals.", "The meal: <%= @input.arguments.text %>"}
             )
       end
 
@@ -246,6 +270,21 @@ defmodule AshAi.LiveLLM.StructuredOutputTest do
 
       assert result in [:positive, :negative, :neutral]
       assert result == :negative
+    end
+  end
+
+  describe "Anthropic structured outputs with an optional enum" do
+    @tag :live_llm
+    @tag live_llm: :anthropic
+    test "an optional enum field is accepted and filled in" do
+      assert {:ok, %MealGuess{meal_type: :breakfast, name: name}} =
+               AnalysisResource
+               |> Ash.ActionInput.for_action(:guess_meal_anthropic, %{
+                 text: "Oatmeal with blueberries, eaten at 7am"
+               })
+               |> Ash.run_action(domain: TestDomain)
+
+      assert is_binary(name)
     end
   end
 

@@ -140,10 +140,13 @@ defmodule AshAiTest do
 
       schema = AshAi.Tools.parameter_schema(tool, strict: true)
 
-      # strict mode makes the optional result_type nullable, including in the enum
-      result_type = schema["properties"]["result_type"]
-      assert result_type["type"] == ["string", "null"]
-      assert result_type["enum"] == ["run_query", "count", nil]
+      # strict mode makes the optional result_type nullable; an enum is wrapped in anyOf
+      # (Anthropic refuses an enum whose type is a list)
+      assert %{"anyOf" => [%{"type" => "null"}, result_type]} =
+               schema["properties"]["result_type"]
+
+      assert result_type["type"] == "string"
+      assert result_type["enum"] == ["run_query", "count"]
       refute Map.has_key?(schema["properties"], "sort")
       assert Map.has_key?(schema["properties"], "filter")
       assert Map.has_key?(schema["properties"], "limit")
