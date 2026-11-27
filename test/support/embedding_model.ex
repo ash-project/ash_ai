@@ -11,6 +11,8 @@ defmodule AshAi.Test.EmbeddingModel do
 
   @impl true
   def generate(texts, _opts) do
+    Process.put(:ash_ai_embedding_texts, texts)
+
     if Enum.any?(texts, &(is_binary(&1) and String.contains?(&1, "FORCE_EMBED_ERROR"))) do
       # Mimics a provider HTTP client error whose inspected form carries the
       # outbound Authorization header, request URL, and provider response body.

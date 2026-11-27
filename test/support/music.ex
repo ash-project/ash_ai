@@ -123,6 +123,10 @@ defmodule AshAi.Test.Music do
       define :update_artist_oban, action: :update
     end
 
+    resource AshAi.Test.Music.ArtistCalculation do
+      define :create_artist_calculation, action: :create
+    end
+
     resource AshAi.Test.Music.ArtistUi
   end
 end

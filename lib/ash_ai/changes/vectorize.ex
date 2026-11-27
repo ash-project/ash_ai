@@ -29,8 +29,16 @@ defmodule AshAi.Changes.Vectorize do
           text = Map.get(changeset.data, source)
           {dest, text}
 
-        {:full_text, name, fun} ->
-          text = fun.(changeset.data)
+        {:full_text, name, text} ->
+          text =
+            if is_function(text) do
+              text.(changeset.data)
+            else
+              changeset.data
+              |> Ash.load!(text, reuse_values?: true)
+              |> Map.get(text)
+            end
+
           {name, text}
       end)
 

@@ -28,10 +28,17 @@ defmodule AshAi.Changes.VectorizeAfterAction do
                   []
                 end
 
-              {:full_text, name, used_attrs, fun} ->
+              {:full_text, name, used_attrs, text} ->
                 if is_nil(used_attrs) ||
                      Enum.any?(used_attrs, &Ash.Changeset.changing_attribute?(changeset, &1)) do
-                  text = fun.(record)
+                  text =
+                    if is_function(text) do
+                      text.(record)
+                    else
+                      record
+                      |> Ash.load!(text, reuse_values?: true)
+                      |> Map.get(text)
+                    end
 
                   [{name, text}]
                 else

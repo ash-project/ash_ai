@@ -256,10 +256,9 @@ defmodule AshAi.Dsl do
       doc: "If set, a vector is only regenerated when these attributes are changed"
     ],
     text: [
-      type: {:fun, 1},
+      type: {:or, [{:fun, 1}, :atom]},
       required: true,
-      doc:
-        "A function or expr that takes a list of records and computes a full text string that will be vectorized. If given an expr, use `atomic_ref` to refer to new values, as this is set as an atomic update."
+      doc: "A function or the name of a calculation whose value will be vectorized"
     ]
   ]
 
